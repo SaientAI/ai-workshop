@@ -30,14 +30,25 @@ def main():
     try:
         emit({"loading_status": "importing torch + diffusers…"})
         import torch
-        from diffusers import WanPipeline
+        from diffusers import DiffusionPipeline
         from diffusers.utils import export_to_video
 
+        # Auto-pick the pipeline from model_index.json (_class_name): works for
+        # LTX, CogVideoX, Wan, etc. — no hardcoded pipeline class. Prefer lighter
+        # models (LTX) on limited-RAM boxes: Wan's UMT5-XXL text encoder is ~21 GB
+        # in fp16 and can swap-thrash a 32-40 GB machine to a hard freeze on load.
         emit({"loading_status": f"loading {os.path.basename(model_path)} (first load is slow)…"})
-        pipe = WanPipeline.from_pretrained(model_path, torch_dtype=torch.bfloat16)
-        # Fit 16 GB: stream components on/off the GPU + tile the VAE decode.
-        pipe.enable_model_cpu_offload()
-        pipe.vae.enable_tiling()
+        pipe = DiffusionPipeline.from_pretrained(
+            model_path, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True
+        )
+        # sequential offload streams at the submodule level — lower peak memory
+        # (and avoids pinning the whole text encoder) than enable_model_cpu_offload.
+        try:
+            pipe.enable_sequential_cpu_offload()
+        except Exception:
+            pipe.enable_model_cpu_offload()
+        if hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_tiling"):
+            pipe.vae.enable_tiling()
         pipe.set_progress_bar_config(disable=True)
         device = "cuda" if torch.cuda.is_available() else "cpu"
         emit({"ready": True, "device": device})
