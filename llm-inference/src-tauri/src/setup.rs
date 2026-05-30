@@ -329,6 +329,70 @@ pub async fn run_setup(window: WebviewWindow, profile: String) -> Result<(), Str
     Ok(())
 }
 
+// ── Starter model download ─────────────────────────────────────────────────────
+
+/// Stream-download a GGUF from HuggingFace into the models dir, emitting
+/// "model-progress" {downloaded, total, done} events. Writes to a .part file and
+/// atomically renames on completion. Skips if the file already exists.
+#[tauri::command]
+pub async fn download_starter_model(
+    window: WebviewWindow,
+    repo: String,
+    file: String,
+    models_dir: String,
+) -> Result<String, String> {
+    use futures::StreamExt;
+    use tokio::io::AsyncWriteExt;
+
+    // Each model in its own folder so scan_models_dir uses the folder as the name.
+    let folder = file.strip_suffix(".gguf").unwrap_or(&file);
+    let dest_dir = PathBuf::from(&models_dir).join(folder);
+    std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
+    let dest = dest_dir.join(&file);
+
+    // Already downloaded? report done and return.
+    if let Ok(m) = std::fs::metadata(&dest) {
+        if m.len() > 0 {
+            let _ = window.emit("model-progress",
+                serde_json::json!({"downloaded": m.len(), "total": m.len(), "done": true}));
+            return Ok(dest.to_string_lossy().into_owned());
+        }
+    }
+
+    let url = format!("https://huggingface.co/{}/resolve/main/{}?download=true", repo, file);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3600))
+        .build().map_err(|e| e.to_string())?;
+    let resp = client.get(&url).send().await.map_err(|e| format!("request failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("download failed: HTTP {}", resp.status()));
+    }
+    let total = resp.content_length().unwrap_or(0);
+
+    let part = dest.with_extension("part");
+    let mut out = tokio::fs::File::create(&part).await.map_err(|e| e.to_string())?;
+    let mut stream = resp.bytes_stream();
+    let mut downloaded: u64 = 0;
+    let mut last = std::time::Instant::now();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| e.to_string())?;
+        out.write_all(&chunk).await.map_err(|e| e.to_string())?;
+        downloaded += chunk.len() as u64;
+        // Throttle UI updates to ~5/sec.
+        if last.elapsed().as_millis() >= 200 {
+            let _ = window.emit("model-progress",
+                serde_json::json!({"downloaded": downloaded, "total": total}));
+            last = std::time::Instant::now();
+        }
+    }
+    out.flush().await.map_err(|e| e.to_string())?;
+    drop(out);
+    std::fs::rename(&part, &dest).map_err(|e| e.to_string())?;
+    let _ = window.emit("model-progress",
+        serde_json::json!({"downloaded": downloaded, "total": total, "done": true}));
+    Ok(dest.to_string_lossy().into_owned())
+}
+
 /// Mark setup as complete without installing (e.g. user already has everything).
 #[tauri::command]
 pub fn skip_setup() -> Result<(), String> {

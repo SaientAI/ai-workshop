@@ -6,7 +6,7 @@
 
   let { onDone }: { onDone: () => void } = $props();
 
-  type Step = "choose" | "installing" | "done";
+  type Step = "choose" | "installing" | "model" | "done";
   let step = $state<Step>("choose");
   let info = $state<SystemInfo | null>(null);
   let profile = $state<"full" | "fast">("full");
@@ -49,7 +49,7 @@
       (e) => { steps = { ...steps, [e.payload.step]: e.payload.status }; });
     try {
       await T.runSetup(p);
-      step = "done";
+      step = "model";   // stack installed → offer a starter model
     } catch (e) {
       error = String(e);
     } finally {
@@ -58,6 +58,36 @@
   }
 
   async function skip() { await T.skipSetup().catch(() => {}); onDone(); }
+
+  // ── Starter model download ───────────────────────────────────────────────
+  const MODELS = [
+    { name: "Qwen2.5-7B Instruct", repo: "bartowski/Qwen2.5-7B-Instruct-GGUF",
+      file: "Qwen2.5-7B-Instruct-Q4_K_M.gguf", size: "4.7 GB",
+      desc: "Smart all-rounder — chat, writing, reasoning. Recommended." },
+    { name: "Qwen2.5-Coder-7B", repo: "bartowski/Qwen2.5-Coder-7B-Instruct-GGUF",
+      file: "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf", size: "4.7 GB",
+      desc: "Tuned for code — best for the Kairo coding agent." },
+  ];
+  let downloading = $state("");
+  let dlProgress = $state<{ downloaded: number; total: number; done?: boolean }>({ downloaded: 0, total: 0 });
+  let dlError = $state("");
+  const dlPct = $derived(dlProgress.total > 0 ? Math.round((dlProgress.downloaded / dlProgress.total) * 100) : 0);
+  const fmtGB = (b: number) => (b / 1e9).toFixed(2) + " GB";
+
+  async function downloadModel(m: typeof MODELS[number]) {
+    downloading = m.file; dlError = ""; dlProgress = { downloaded: 0, total: 0 };
+    const dir = await T.getModelsDir().catch(() => "");
+    const unlisten = await listen<{ downloaded: number; total: number; done?: boolean }>(
+      "model-progress", (e) => { dlProgress = e.payload; });
+    try {
+      await T.downloadStarterModel(m.repo, m.file, dir);
+      step = "done";
+    } catch (e) {
+      dlError = String(e);
+    } finally {
+      unlisten(); downloading = "";
+    }
+  }
 
   const gpuOk    = $derived(!!info?.gpu_name);
   const pyOk     = $derived(!!info?.system_python);
@@ -145,6 +175,31 @@
         <div class="wz-actions">
           <button class="wz-btn" onclick={() => (step = "choose")}>← Back</button>
         </div>
+      {/if}
+
+    {:else if step === "model"}
+      <!-- ── Starter model ────────────────────────────────────────────── -->
+      {#if downloading}
+        <div class="wz-dl">
+          <div class="wz-dl-name">Downloading {downloading}</div>
+          <div class="wz-dl-bar"><div class="wz-dl-fill" style="width:{dlPct}%"></div></div>
+          <div class="wz-dl-meta">
+            {dlPct}% · {fmtGB(dlProgress.downloaded)}{dlProgress.total ? ` / ${fmtGB(dlProgress.total)}` : ""}
+          </div>
+        </div>
+      {:else}
+        <div class="wz-model-intro">Pick a model to download, or skip and add your own later.</div>
+        <div class="wz-models">
+          {#each MODELS as m}
+            <button class="wz-card" onclick={() => downloadModel(m)}>
+              <div class="wz-card-title">{m.name}</div>
+              <div class="wz-card-desc">{m.desc}</div>
+              <div class="wz-card-meta">⬇ {m.size}</div>
+            </button>
+          {/each}
+        </div>
+        {#if dlError}<div class="wz-err">{dlError}</div>{/if}
+        <button class="wz-skip" onclick={() => (step = "done")}>Skip — I'll add a model myself</button>
       {/if}
 
     {:else}
@@ -240,6 +295,16 @@
     color: var(--red); font-size: 12px; padding: 10px 12px;
     border-radius: var(--radius-sm); margin: 12px 0; line-height: 1.5;
   }
+
+  /* Starter model step */
+  .wz-model-intro { font-size: 12px; color: var(--text2); margin-bottom: 14px; }
+  .wz-models { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+  .wz-models .wz-card { flex: none; }
+  .wz-dl { padding: 24px 0; }
+  .wz-dl-name { font-size: 13px; color: var(--text); margin-bottom: 12px; font-family: var(--mono); word-break: break-all; }
+  .wz-dl-bar { height: 8px; background: var(--bg3); border-radius: 4px; overflow: hidden; }
+  .wz-dl-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.3s ease; }
+  .wz-dl-meta { font-size: 11px; color: var(--text3); font-family: var(--mono); margin-top: 8px; }
 
   .wz-done { text-align: center; padding: 16px 0; }
   .wz-done-ic {

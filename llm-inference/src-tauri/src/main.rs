@@ -1441,6 +1441,7 @@ fn main() {
             pty::pty_spawn, pty::pty_write, pty::pty_resize, pty::pty_kill,
             // Setup wizard
             setup::detect_system, setup::run_setup, setup::skip_setup, setup::reset_setup,
+            setup::download_starter_model,
             // Image Gen
             imggen::imggen_scan_models, imggen::imggen_scan_checkpoints,
             imggen::imggen_scan_loras, imggen::imggen_generate,

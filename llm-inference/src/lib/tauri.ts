@@ -318,6 +318,10 @@ export const runSetup = (profile: "full" | "fast") => invoke<void>("run_setup", 
 export const skipSetup  = () => invoke<void>("skip_setup");
 export const resetSetup = () => invoke<void>("reset_setup");
 
+/** Download a starter GGUF from HuggingFace into the models dir. Streams "model-progress". */
+export const downloadStarterModel = (repo: string, file: string, modelsDir: string) =>
+  invoke<string>("download_starter_model", { repo, file, modelsDir });
+
 // ── PTY terminal ──────────────────────────────────────────────────────────────
 
 /** Spawn $SHELL at cwd in a real PTY. Emits "pty-data" events for output. */
