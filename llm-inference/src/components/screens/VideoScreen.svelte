@@ -34,8 +34,13 @@
     if (!loaded || video.generating || !video.prompt.trim()) return;
     video.generating = true; video.error = ""; video.resultB64 = "";
     video.progress = 0; video.progressTotal = video.steps;
+    video.loadStatus = "Preparing…";
+    // Phase messages (text-encoder load, then denoise) come over vidload-progress;
+    // step progress comes over video_progress. The first real step clears the phase text.
+    const unStatus = await listen<string>("vidload-progress", (e) => { video.loadStatus = e.payload; });
     const un = await listen<{ step: number; total: number }>("video_progress", (e) => {
       video.progress = e.payload.step; video.progressTotal = e.payload.total;
+      video.loadStatus = "";
     });
     try {
       const r = await T.videoGenerate({
@@ -45,7 +50,7 @@
       });
       video.resultB64 = r.base64_mp4; video.frames = r.frames; video.elapsed = r.elapsed;
     } catch (e) { video.error = String(e); }
-    finally { un(); video.generating = false; }
+    finally { un(); unStatus(); video.generating = false; video.loadStatus = ""; }
   }
 
   async function saveMp4() {
@@ -85,12 +90,17 @@
     <textarea class="vprompt" placeholder="Describe the video…" bind:value={video.prompt}></textarea>
     <textarea class="vprompt vneg" placeholder="Negative prompt (what to avoid)" bind:value={video.negPrompt}></textarea>
     <button class="vgen" onclick={generate} disabled={!loaded || video.generating || !video.prompt.trim()}>
-      {video.generating ? `Generating… ${pct}%` : loaded ? "🎬 Generate" : "Load a model first"}
+      {video.generating ? (video.progress > 0 ? `Generating… ${pct}%` : video.loadStatus || "Preparing…") : loaded ? "🎬 Generate" : "Load a model first"}
     </button>
 
     {#if video.generating}
-      <div class="vbar"><div class="vbar-fill" style="width:{pct}%"></div></div>
-      <div class="vbar-label">Step {video.progress} / {video.progressTotal}</div>
+      {#if video.progress > 0}
+        <div class="vbar"><div class="vbar-fill" style="width:{pct}%"></div></div>
+        <div class="vbar-label">Step {video.progress} / {video.progressTotal}</div>
+      {:else}
+        <div class="vbar vbar-indet"><div class="vbar-fill"></div></div>
+        <div class="vbar-label">{video.loadStatus || "Preparing…"}</div>
+      {/if}
     {/if}
 
     {#if video.error}
@@ -130,6 +140,9 @@
 
   .vbar { height: 5px; background: var(--bg3); border-radius: 3px; overflow: hidden; }
   .vbar-fill { height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.3s; }
+  /* Indeterminate (no step count yet — e.g. text-encoder loading): sliding sweep. */
+  .vbar-indet .vbar-fill { width: 35%; transition: none; animation: vbar-sweep 1.1s ease-in-out infinite; }
+  @keyframes vbar-sweep { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
   .vbar-label { font-size: 11px; color: var(--text3); font-family: var(--mono); }
   .verr { background: rgba(248,113,113,0.08); border: 1px solid rgba(248,113,113,0.3); color: var(--red); font-size: 12px; padding: 10px 12px; border-radius: var(--radius-sm); line-height: 1.5; white-space: pre-wrap; }
 

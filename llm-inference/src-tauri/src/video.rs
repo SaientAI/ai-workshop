@@ -221,6 +221,11 @@ fn do_generate(arc: VideoHandle, payload: VideoPayload, window: WebviewWindow) -
             });
         }
         if let Some(err) = v["error"].as_str() { return Err(err.to_string()); }
+        // Staged generate loads the text encoder on first use, then denoises —
+        // surface those phase messages so the UI isn't stuck at 0% for ~1 min.
+        if let Some(s) = v["loading_status"].as_str() {
+            let _ = window.emit("vidload-progress", s);
+        }
         if v["step"].is_number() {
             let _ = window.emit("video_progress", VideoProgress {
                 step: v["step"].as_u64().unwrap_or(0) as u32,
