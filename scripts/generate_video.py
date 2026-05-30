@@ -29,26 +29,59 @@ def main():
     model_path = cfg.get("model_path", "")
     try:
         emit({"loading_status": "importing torch + diffusers…"})
-        import torch
-        from diffusers import DiffusionPipeline
+        import torch, gc, json as _json
         from diffusers.utils import export_to_video
 
-        # Auto-pick the pipeline from model_index.json (_class_name): works for
-        # LTX, CogVideoX, Wan, etc. — no hardcoded pipeline class. Prefer lighter
-        # models (LTX) on limited-RAM boxes: Wan's UMT5-XXL text encoder is ~21 GB
-        # in fp16 and can swap-thrash a 32-40 GB machine to a hard freeze on load.
-        emit({"loading_status": f"loading {os.path.basename(model_path)} (first load is slow)…"})
-        pipe = DiffusionPipeline.from_pretrained(
-            model_path, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True
-        )
-        # sequential offload streams at the submodule level — lower peak memory
-        # (and avoids pinning the whole text encoder) than enable_model_cpu_offload.
+        # Which pipeline does this model use? (model_index.json _class_name)
+        pipe_cls = ""
         try:
-            pipe.enable_sequential_cpu_offload()
+            pipe_cls = _json.load(open(os.path.join(model_path, "model_index.json"))).get("_class_name", "")
         except Exception:
-            pipe.enable_model_cpu_offload()
-        if hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_tiling"):
-            pipe.vae.enable_tiling()
+            pass
+
+        pipe = None
+        if "Wan" in pipe_cls:
+            # ── 4-bit (nf4) — the "runs on a phone" trick ──────────────────────
+            # Wan's UMT5-XXL text encoder is ~21 GB at fp16 (~5.5 GB at 4-bit) and
+            # the transformer ~2.6 GB (~1 GB). At fp16 + pinned offload it froze a
+            # 39 GB box on load. Quantized, the WHOLE model fits resident in ~8 GB
+            # VRAM — same idea tinyq4 already uses for LLM weights. Falls back to a
+            # plain load if bitsandbytes isn't available.
+            try:
+                from diffusers import WanPipeline, WanTransformer3DModel
+                from diffusers import BitsAndBytesConfig as DiffBnb
+                from transformers import UMT5EncoderModel
+                from transformers import BitsAndBytesConfig as TfBnb
+                d_nf4 = DiffBnb(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=torch.bfloat16)
+                t_nf4 = TfBnb(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=torch.bfloat16)
+                emit({"loading_status": "loading text encoder (4-bit nf4)…"})
+                te = UMT5EncoderModel.from_pretrained(model_path, subfolder="text_encoder",
+                        quantization_config=t_nf4, torch_dtype=torch.bfloat16)
+                emit({"loading_status": "loading transformer (4-bit nf4)…"})
+                tr = WanTransformer3DModel.from_pretrained(model_path, subfolder="transformer",
+                        quantization_config=d_nf4, torch_dtype=torch.bfloat16)
+                emit({"loading_status": "assembling pipeline…"})
+                pipe = WanPipeline.from_pretrained(model_path, text_encoder=te, transformer=tr,
+                        torch_dtype=torch.bfloat16)
+                pipe.vae.to("cuda")                 # quantized parts already on GPU
+                pipe.vae.enable_tiling()
+                gc.collect()
+            except Exception as qe:
+                emit({"loading_status": f"4-bit load failed ({qe}); using fallback…"})
+                pipe = None
+
+        if pipe is None:
+            # Generic / lighter models (LTX, CogVideoX) — sequential offload, no pin.
+            from diffusers import DiffusionPipeline
+            emit({"loading_status": f"loading {os.path.basename(model_path)} (sequential offload)…"})
+            pipe = DiffusionPipeline.from_pretrained(model_path, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True)
+            try:
+                pipe.enable_sequential_cpu_offload()
+            except Exception:
+                pipe.enable_model_cpu_offload()
+            if hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_tiling"):
+                pipe.vae.enable_tiling()
+
         pipe.set_progress_bar_config(disable=True)
         device = "cuda" if torch.cuda.is_available() else "cpu"
         emit({"ready": True, "device": device})
