@@ -1,0 +1,47 @@
+# ── Node / frontend ──
+node_modules/
+dist/
+.svelte-kit/
+*.tsbuildinfo
+
+# ── Rust / Tauri ──
+target/
+**/src-tauri/gen/
+
+# ── Python ──
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# ── Models & weights (never commit multi-GB binaries) ──
+*.gguf
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.bin
+*.onnx
+models/
+
+# ── Generated media / runs ──
+*.wav
+*.png.tmp
+runs/
+outputs/
+
+# ── Logs / OS / editor ──
+*.log
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# ── Local config / secrets (defensive — should never be here, but just in case) ──
+.env
+.env.*
+*.pem
+id_rsa*
+*.key
+.git-credentials

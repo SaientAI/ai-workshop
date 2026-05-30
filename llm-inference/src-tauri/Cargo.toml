@@ -1,0 +1,39 @@
+[package]
+name = "llm-inference"
+version = "1.0.0"
+description = "Local LLM inference + autonomous agent runtime — GPU accelerated"
+authors = ["you"]
+license = "Apache-2.0"
+edition = "2021"
+default-run = "llm-inference"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+
+# ── llama-server HTTP client ───────────────────────────────────────────────────
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+futures = "0.3"
+
+# ── GGUF metadata reader (no inference, just reads model info) ─────────────────
+memmap2 = "0.9"
+
+# ── Agent runtime deps ─────────────────────────────────────────────────────────
+similar     = "2"
+walkdir     = "2"
+glob        = "0.3"
+regex       = "1"
+sha2        = "0.10"
+base64      = "0.22"
+tempfile    = "3"
+libc        = "0.2"
+portable-pty = "0.8"

@@ -1,0 +1,180 @@
+/*
+ * GLOBAL BASE STYLES — imported once from main.ts.
+ *
+ * ⚠️  SVELTE 5 HMR / DEV-MODE CSS RULE — READ BEFORE ADDING COMPONENT STYLES ⚠️
+ *
+ * Svelte 5 in HMR dev mode does NOT reliably inject scoped CSS for components
+ * that are conditionally rendered (e.g. inside {#if ui.screen === "chat"}).
+ * The scoped hash class is never added to the element, so the rules never fire.
+ * This causes silent layout breaks: elements show at wrong widths, flex containers
+ * don't flex, backgrounds are transparent, etc. The production build is unaffected.
+ *
+ * RULE: Any CSS that controls LAYOUT (display, flex, width, min-width, position,
+ * overflow) on the TOP-LEVEL containers of each screen MUST live here, not in the
+ * component's <style> block. Add it below under its labelled section.
+ *
+ * Component <style> blocks are still fine for:
+ *   - Internal child elements (buttons, labels, cards inside a screen)
+ *   - Visual properties (color, background, border, font) on those children
+ *   - Anything NOT on the outermost container of a conditionally-rendered screen
+ *
+ * Screens confirmed broken and fixed here (2026-05-29):
+ *   TitleBar → .titlebar (justify-content:space-between; window buttons landed left of logo)
+ *   Chat     → .chat-area, .input-area, .messages, .sidebar (width)
+ *   TTS      → .ig-layout, .ig-sidebar, .ig-main
+ *   ImgGen   → .ig-layout, .ig-sidebar, .ig-main
+ *   LoRA     → .ig-layout, .ig-sidebar, .ig-main
+ *   Merge    → .ig-layout, .ig-sidebar, .ig-main
+ *   Agent    → .agent-sidebar, .agent-main, .tabbar (fixed via inline style in component)
+ */
+
+:root {
+  --bg:     #0d0d0f;
+  --bg2:    #141418;
+  --bg3:    #1a1a20;
+  --border: #2a2a35;
+  --text:   #e8e8f0;
+  --text2:  #a0a0b8;
+  --text3:  #606078;
+  --accent: #6c8ef5;
+  --green:  #00d68f;
+  --amber:  #f5a623;
+  --red:    #f87171;
+  --sans:   -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --mono:   "JetBrains Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
+  --radius:    8px;
+  --radius-sm: 5px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+  height: 100vh;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* ── Shared layout primitives used across components ── */
+
+.sidebar {
+  width: 240px;
+  min-width: 200px;
+  background: var(--bg2);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+/* ── Titlebar ── */
+.titlebar { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+
+/* ── Two-panel screen layout (ImgGen, TTS, LoRA, Merge) ── */
+.ig-layout  { display: flex; flex: 1; overflow: hidden; }
+.ig-sidebar { flex-shrink: 0; overflow-y: auto; background: var(--bg2); border-right: 1px solid var(--border); padding: 16px; }
+.ig-main    { flex: 1; display: flex; flex-direction: column; overflow-y: auto; padding: 16px; gap: 12px; }
+
+/* ── Chat screen layout ── */
+.chat-area    { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.input-area   { border-top: 1px solid var(--border); background: var(--bg2); flex-shrink: 0; padding: 10px 14px 12px; }
+.input-row    { display: flex; gap: 8px; align-items: flex-end; }
+.messages     { flex: 1; overflow-y: auto; }
+
+.sidebar-section {
+  padding: 14px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 14px;
+}
+
+.section-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text3);
+  margin-bottom: 10px;
+}
+
+.field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
+.field label { font-size: 11px; color: var(--text2); }
+
+/* ── Inputs ── */
+input[type="text"],
+input[type="number"],
+textarea,
+select {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 5px 8px;
+  outline: none;
+}
+input:focus, textarea:focus, select:focus { border-color: var(--accent); }
+
+/* ── Buttons ── */
+button {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text2);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 5px 10px;
+  transition: border-color 0.15s, color 0.15s;
+}
+button:hover  { border-color: var(--accent); color: var(--text); }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.btn-primary:hover { background: #7a9cf7; border-color: #7a9cf7; color: #fff; }
+.btn-danger { color: var(--red); border-color: rgba(248,113,113,0.3); }
+
+/* ── Shared component classes ── */
+.tab-action { font-size: 11px; padding: 4px 8px; border-radius: 4px; }
+
+.load-btn {
+  width: 100%;
+  padding: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(108,142,245,0.12);
+  border-color: rgba(108,142,245,0.4);
+  color: var(--accent);
+  border-radius: var(--radius);
+}
+.load-btn:hover { background: rgba(108,142,245,0.22); border-color: var(--accent); color: #fff; }
+.load-btn.loading { opacity: 0.7; cursor: not-allowed; }
+
+.model-card {
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 11px;
+  transition: border-color 0.15s;
+  background: transparent;
+}
+.model-card:hover  { border-color: var(--accent); }
+.model-card-sel    { border-color: var(--green) !important; background: rgba(0,214,143,0.06); }
+
+.sl-field  { margin-bottom: 10px; }
+.sl-row    { display: flex; justify-content: space-between; font-size: 11px; color: var(--text2); margin-bottom: 4px; }
+.sl-row span { color: var(--text); font-family: var(--mono); }
+
+.perf-row  { display: flex; justify-content: space-between; font-size: 11px; color: var(--text2); margin-bottom: 4px; font-family: var(--mono); }
+.perf-row span { color: var(--text); }
+
+input[type="range"] { width: 100%; accent-color: var(--accent); height: 2px; }
