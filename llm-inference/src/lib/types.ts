@@ -1,6 +1,6 @@
 // Shared TypeScript types for AI Workshop
 
-export type Screen = "chat" | "agent" | "imggen" | "tts" | "lora" | "merge";
+export type Screen = "chat" | "agent" | "imggen" | "video" | "tts" | "lora" | "merge";
 export type AgentTab = "files" | "terminal" | "planner" | "memory";
 export type ChatTab = "chat" | "system";
 export type StepStatus = "pending" | "running" | "done" | "failed" | "skipped" | "retrying";

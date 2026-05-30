@@ -144,6 +144,32 @@ export const ig = $state<IgState>({
   vramFreed: false,
 });
 
+// ── Video gen ───────────────────────────────────────────────────────────────
+
+export const video = $state({
+  models: [] as Array<{ path: string; label: string; pipeline: string }>,
+  modelPath: "",
+  loadedPath: "",
+  loading: false,
+  loadStatus: "",
+  prompt: "",
+  negPrompt: "blurry, distorted, low quality, static, watermark",
+  numFrames: 49,
+  steps: 30,
+  cfg: 6.0,
+  width: 832,
+  height: 480,
+  fps: 16,
+  seed: -1,
+  generating: false,
+  progress: 0,
+  progressTotal: 30,
+  resultB64: "",
+  frames: 0,
+  elapsed: 0,
+  error: "",
+});
+
 // ── TTS ───────────────────────────────────────────────────────────────────────
 
 export const tts = $state<TtsState>({

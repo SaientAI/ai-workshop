@@ -14,6 +14,7 @@ mod merge;
 mod pty;
 mod resolve;
 mod setup;
+mod video;
 mod tts;
 mod tools;
 mod memory;
@@ -1407,6 +1408,7 @@ fn main() {
         .manage(lora::new_lora_handle())
         .manage(merge::new_merge_handle())
         .manage(imggen::new_daemon_handle())
+        .manage(video::new_video_handle())
         .manage(pty::new_handle())
         .invoke_handler(tauri::generate_handler![
             // Inference — single
@@ -1446,6 +1448,9 @@ fn main() {
             imggen::imggen_scan_models, imggen::imggen_scan_checkpoints,
             imggen::imggen_scan_loras, imggen::imggen_generate,
             imggen::imggen_load, imggen::imggen_unload, imggen::imggen_loaded_model,
+            // Video gen
+            video::video_scan_models, video::video_load, video::video_unload,
+            video::video_loaded_model, video::video_generate,
             // TTS
             tts::tts_voices, tts::tts_generate,
             // LoRA trainer

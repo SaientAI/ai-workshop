@@ -9,7 +9,7 @@ import { ui, chat, agent } from "./state.svelte.js";
 import type { Screen, AgentTab, ChatTab } from "./types.js";
 import * as T from "./tauri.js";
 
-const SCREENS: Screen[]       = ["chat", "agent", "imggen", "tts", "lora", "merge"];
+const SCREENS: Screen[]       = ["chat", "agent", "imggen", "video", "tts", "lora", "merge"];
 const AGENT_TABS: AgentTab[]  = ["files", "terminal", "planner", "memory"];
 
 export interface Shortcut { keys: string[]; desc: string; group: string; }

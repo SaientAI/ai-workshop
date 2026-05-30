@@ -228,6 +228,29 @@ export const imggenUnload = () => invoke<void>("imggen_unload");
 
 export const imggenLoadedModel = () => invoke<string | null>("imggen_loaded_model");
 
+// ── Video gen ───────────────────────────────────────────────────────────────
+
+export interface VideoModelEntry { path: string; label: string; pipeline: string }
+export interface VideoPayload {
+  prompt: string;
+  neg_prompt?: string;
+  model_path: string;
+  num_frames?: number;
+  steps?: number;
+  cfg_scale?: number;
+  width?: number;
+  height?: number;
+  fps?: number;
+  seed?: number;
+}
+export interface VideoResult { base64_mp4: string; frames: number; elapsed: number }
+
+export const videoScanModels  = () => invoke<VideoModelEntry[]>("video_scan_models");
+export const videoLoad        = (modelPath: string) => invoke<string>("video_load", { modelPath });
+export const videoUnload      = () => invoke<void>("video_unload");
+export const videoLoadedModel = () => invoke<string | null>("video_loaded_model");
+export const videoGenerate    = (payload: VideoPayload) => invoke<VideoResult>("video_generate", { payload });
+
 // ── TTS ───────────────────────────────────────────────────────────────────────
 
 // TtsPayload mirrors src-tauri/src/tts.rs::TtsPayload

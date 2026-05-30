@@ -19,7 +19,7 @@
 
   // Kairo mascot — sleepy [-_-] when no model is loaded, wide-awake [>_<] when ready.
   const mascot = $derived(
-    (model.loaded ? "[>_<]" : "[-_-]") + "\n /|#|\\\n  / \\"
+    (model.loaded ? " [>_<]" : " [-_-]") + "\n /|#|\\\n  / \\"
   );
 
   const PRESETS = [

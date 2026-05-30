@@ -6,6 +6,7 @@
     { id: "chat",   icon: "💬", label: "Chat" },
     { id: "agent",  icon: "🖥",  label: "Agent" },
     { id: "imggen", icon: "🖼",  label: "Image Gen" },
+    { id: "video",  icon: "🎬",  label: "Video Gen" },
     { id: "tts",    icon: "🔊",  label: "TTS" },
     { id: "lora",   icon: "🎛",  label: "LoRA" },
     { id: "merge",  icon: "🔀",  label: "Merge" },
