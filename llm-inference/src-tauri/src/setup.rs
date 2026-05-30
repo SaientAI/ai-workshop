@@ -408,5 +408,3 @@ pub fn reset_setup() -> Result<(), String> {
     std::fs::remove_file(setup_marker()).ok();
     Ok(())
 }
-
-// wizard verification touch

@@ -60,14 +60,7 @@
   async function skip() { await T.skipSetup().catch(() => {}); onDone(); }
 
   // ── Starter model download ───────────────────────────────────────────────
-  const MODELS = [
-    { name: "Qwen2.5-7B Instruct", repo: "bartowski/Qwen2.5-7B-Instruct-GGUF",
-      file: "Qwen2.5-7B-Instruct-Q4_K_M.gguf", size: "4.7 GB",
-      desc: "Smart all-rounder — chat, writing, reasoning. Recommended." },
-    { name: "Qwen2.5-Coder-7B", repo: "bartowski/Qwen2.5-Coder-7B-Instruct-GGUF",
-      file: "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf", size: "4.7 GB",
-      desc: "Tuned for code — best for the Kairo coding agent." },
-  ];
+  import { STARTER_MODELS as MODELS } from "../lib/models.js";
   let downloading = $state("");
   let dlProgress = $state<{ downloaded: number; total: number; done?: boolean }>({ downloaded: 0, total: 0 });
   let dlError = $state("");

@@ -1,10 +1,36 @@
 <script lang="ts">
+  import { listen } from "@tauri-apps/api/event";
   import { model, params, dual, chat } from "../../lib/state.svelte.js";
   import * as T from "../../lib/tauri.js";
   import { friendlyLoadError, prettyPath } from "../../lib/format.js";
+  import { STARTER_MODELS } from "../../lib/models.js";
   import ClearDataModal from "./ClearDataModal.svelte";
 
   let showClearModal = $state(false);
+
+  // ── Model download ─────────────────────────────────────────────────────────
+  let showDownload = $state(false);
+  let downloading = $state("");
+  let dlProgress = $state<{ downloaded: number; total: number; done?: boolean }>({ downloaded: 0, total: 0 });
+  let dlError = $state("");
+  const dlPct = $derived(dlProgress.total > 0 ? Math.round((dlProgress.downloaded / dlProgress.total) * 100) : 0);
+  const fmtGB = (b: number) => (b / 1e9).toFixed(2) + " GB";
+
+  async function downloadModel(m: typeof STARTER_MODELS[number]) {
+    downloading = m.file; dlError = ""; dlProgress = { downloaded: 0, total: 0 };
+    const dir = await T.getModelsDir().catch(() => model.modelsDir);
+    const unlisten = await listen<{ downloaded: number; total: number; done?: boolean }>(
+      "model-progress", (e) => { dlProgress = e.payload; });
+    try {
+      await T.downloadStarterModel(m.repo, m.file, dir);
+      await scanModels();          // surface the new model in the picker
+      showDownload = false;
+    } catch (e) {
+      dlError = String(e);
+    } finally {
+      unlisten(); downloading = "";
+    }
+  }
 
   async function loadModel() {
     if (!model.path) { model.loadError = "No model selected — click a card in the list above."; return; }
@@ -157,7 +183,27 @@
     <div class="btn-row" style="margin-top:6px;">
       <button class="tab-action" onclick={openModelsFolder}>Open folder</button>
       <button class="tab-action" onclick={scanModels}>↻ Refresh</button>
+      <button class="tab-action" onclick={() => (showDownload = !showDownload)}>⬇ Download</button>
     </div>
+
+    {#if showDownload}
+      <div class="dl-panel">
+        {#if downloading}
+          <div class="dl-name">{downloading}</div>
+          <div class="dl-bar"><div class="dl-fill" style="width:{dlPct}%"></div></div>
+          <div class="dl-meta">{dlPct}% · {fmtGB(dlProgress.downloaded)}{dlProgress.total ? ` / ${fmtGB(dlProgress.total)}` : ""}</div>
+        {:else}
+          {#each STARTER_MODELS as m}
+            <button class="dl-model" onclick={() => downloadModel(m)}>
+              <span class="dl-model-name">{m.name}</span>
+              <span class="dl-model-size">⬇ {m.size}</span>
+              <span class="dl-model-desc">{m.desc}</span>
+            </button>
+          {/each}
+          {#if dlError}<div class="dl-err">{dlError}</div>{/if}
+        {/if}
+      </div>
+    {/if}
 
     <div class="field">
       <label for="gpu-layers">GPU layers <span class="hint-label">(-1 = auto · 0 = CPU)</span></label>
@@ -348,7 +394,24 @@
   .model-name { font-size: 11px; font-weight: 700; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .model-size { font-size: 10px; color: var(--text3); flex-shrink: 0; }
   .model-card { display: flex; align-items: center; gap: 4px; }
-  .btn-row { display: flex; gap: 6px; }
+  .btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
+
+  /* Download panel */
+  .dl-panel { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+  .dl-model {
+    display: grid; grid-template-columns: 1fr auto; gap: 2px 8px;
+    text-align: left; padding: 8px 10px; border-radius: var(--radius-sm);
+    background: var(--bg3); border: 1px solid var(--border); cursor: pointer;
+  }
+  .dl-model:hover { border-color: var(--accent); }
+  .dl-model-name { font-size: 12px; font-weight: 600; color: var(--text); }
+  .dl-model-size { font-size: 10px; color: var(--accent); font-family: var(--mono); align-self: center; }
+  .dl-model-desc { grid-column: 1 / -1; font-size: 10px; color: var(--text3); line-height: 1.4; }
+  .dl-name { font-size: 11px; font-family: var(--mono); color: var(--text2); word-break: break-all; }
+  .dl-bar { height: 6px; background: var(--bg3); border-radius: 3px; overflow: hidden; }
+  .dl-fill { height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.3s ease; }
+  .dl-meta { font-size: 10px; color: var(--text3); font-family: var(--mono); }
+  .dl-err { font-size: 10px; color: var(--red); line-height: 1.4; }
   .load-timeline { margin-top: 8px; padding: 8px 10px; background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius-sm); }
   .phase-row { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; font-size: 11px; font-family: var(--mono); color: var(--amber); }
   .phase-row span.done { color: var(--green); }
