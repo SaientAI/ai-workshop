@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  frontend:
+    name: Frontend (type-check · tests · build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: llm-inference
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: llm-inference/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check (svelte-check)
+        run: npm run check
+
+      - name: Unit tests (artifact + contract)
+        run: npm run test
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Audit dependencies (non-blocking)
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+  rust:
+    name: Rust (check · clippy · test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Tauri's build needs the WebKitGTK / GTK dev headers. CUDA is NOT needed
+      # here — the GPU work lives in the separate tinyq4 crate, not this app.
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: llm-inference/src-tauri
+
+      - name: cargo check
+        working-directory: llm-inference/src-tauri
+        run: cargo check
+
+      # Informational — does not fail the build on warnings (yet).
+      - name: cargo clippy
+        working-directory: llm-inference/src-tauri
+        run: cargo clippy
+        continue-on-error: true
+
+      - name: cargo test
+        working-directory: llm-inference/src-tauri
+        run: cargo test
