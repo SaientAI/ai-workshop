@@ -23,9 +23,20 @@
 #   Peak VRAM ~8 GB (during encode), peak RAM < ~10 GB. No 27 GB CPU read, ever.
 import base64, gc, json, os, sys, tempfile, time, traceback
 
+# Reduce CUDA fragmentation so the RESIDENT daemon survives many generations.
+# Without this, reserved-but-idle blocks from earlier denoise runs pile up and a
+# later 5.5 GB text-encoder load OOMs even with "free" VRAM. Must be set before
+# torch initialises CUDA — torch is imported lazily inside functions, so here is fine.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 PIPE = None        # WanPipeline with text_encoder=None, transformer+vae resident
 TOKENIZER = None   # kept resident (tiny); text encoder is loaded per-encode
 MODEL_PATH = ""
+# Cache the ENCODED prompt embeddings (a few MB on GPU) keyed by (prompt, neg, cfg).
+# Re-running the same prompt (seed/step/frame sweeps) then skips the ~90s text-
+# encoder load entirely. We free the 5.5 GB encoder after each encode so it never
+# competes with denoise activations — embeds are tiny, the encoder is not.
+EMBED_CACHE = {"key": None, "pe": None, "ne": None}
 
 
 def emit(obj):
@@ -41,6 +52,17 @@ def _free_cuda():
         torch.cuda.synchronize()
 
 
+def _vram():
+    """(used_GB, peak_GB) on cuda:0, or (0,0) if no CUDA. Resets the peak counter."""
+    import torch
+    if not torch.cuda.is_available():
+        return 0.0, 0.0
+    used = torch.cuda.memory_allocated() / 2**30
+    peak = torch.cuda.max_memory_allocated() / 2**30
+    torch.cuda.reset_peak_memory_stats()
+    return used, peak
+
+
 def load(cfg):
     """Load the SMALL resident pieces (transformer 4-bit + VAE). Fast, low RAM."""
     global PIPE, TOKENIZER, MODEL_PATH
@@ -52,12 +74,15 @@ def load(cfg):
     MODEL_PATH = cfg.get("model_path", "")
     dev = 0  # cuda:0
 
+    t_load = time.time()
     emit({"loading_status": "loading transformer (4-bit nf4) onto GPU…"})
+    _t = time.time()
     dbnb = DBnb(load_in_4bit=True, bnb_4bit_quant_type="nf4",
                 bnb_4bit_compute_dtype=torch.bfloat16)
     transformer = WanTransformer3DModel.from_pretrained(
         MODEL_PATH, subfolder="transformer",
         quantization_config=dbnb, torch_dtype=torch.bfloat16, device_map={"": dev})
+    emit({"loading_status": f"  ⏱ transformer: {time.time()-_t:.0f}s"})
 
     emit({"loading_status": "loading VAE…"})
     # Wan's VAE is small; fp32 keeps decode stable. Lands on GPU below.
@@ -94,6 +119,9 @@ def load(cfg):
         PIPE.vae.enable_tiling()
     PIPE.set_progress_bar_config(disable=True)
     _free_cuda()
+    used, _ = _vram()
+    EMBED_CACHE["key"] = None   # invalidate any stale embeds from a previous model
+    emit({"loading_status": f"  ⏱ load total: {time.time()-t_load:.0f}s · VRAM {used:.1f} GB"})
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     emit({"ready": True, "device": device})
@@ -134,13 +162,36 @@ def generate(req):
     from diffusers.utils import export_to_video
 
     t0 = time.time()
+    _free_cuda()  # release reserved blocks left over from the previous generation
+    _vram()       # reset peak counter for this run
     total = int(req.get("steps", 30))
     cfg_scale = float(req.get("cfg_scale", 6.0))
     do_cfg = cfg_scale > 1.0
+    prompt = req.get("prompt", ""); neg = req.get("neg_prompt", "")
 
-    pe, ne = encode(req.get("prompt", ""), req.get("neg_prompt", ""), do_cfg)
+    # ── Prompt embeddings: reuse cache, else load text encoder + encode ──────────
+    # Return CLONES so the pipeline can never mutate the cached master in-place.
+    key = (prompt, neg, do_cfg)
+    if EMBED_CACHE["key"] == key and EMBED_CACHE["pe"] is not None:
+        pe = EMBED_CACHE["pe"].clone()
+        ne = EMBED_CACHE["ne"].clone() if EMBED_CACHE["ne"] is not None else None
+        emit({"loading_status": "↻ reusing cached prompt embeds — text encoder skipped"})
+    else:
+        _t = time.time()
+        pe, ne = encode(prompt, neg, do_cfg)
+        EMBED_CACHE["key"] = key
+        EMBED_CACHE["pe"] = pe.detach().clone()
+        EMBED_CACHE["ne"] = ne.detach().clone() if ne is not None else None
+        emit({"loading_status": f"  ⏱ text encoder + encode: {time.time()-_t:.0f}s"})
+
+    # ── Denoise (time it via callback timestamps) ────────────────────────────────
+    marks = {"first": None, "last": None}
 
     def cb(_pipe, i, _t, kwargs):
+        now = time.time()
+        if marks["first"] is None:
+            marks["first"] = now
+        marks["last"] = now
         emit({"step": i + 1, "total": total})
         return kwargs
 
@@ -150,6 +201,7 @@ def generate(req):
         generator = torch.Generator(device="cpu").manual_seed(int(seed))
 
     emit({"loading_status": "denoising…"})
+    t_dn = time.time()
     frames = PIPE(
         prompt_embeds=pe,
         negative_prompt_embeds=ne,
@@ -161,6 +213,16 @@ def generate(req):
         generator=generator,
         callback_on_step_end=cb,
     ).frames[0]
+    t_after = time.time()
+    # Split: denoise ≈ first→last callback; VAE decode ≈ last callback→return.
+    if marks["first"] and marks["last"]:
+        denoise_s = marks["last"] - marks["first"]
+        decode_s = t_after - marks["last"]
+    else:
+        denoise_s, decode_s = t_after - t_dn, 0.0
+    _, peak = _vram()
+    sps = denoise_s / max(total - 1, 1)
+    emit({"loading_status": f"  ⏱ denoise: {denoise_s:.0f}s ({sps:.1f}s/step) · decode: {decode_s:.0f}s · peak VRAM {peak:.1f} GB"})
     del pe, ne
     _free_cuda()
 

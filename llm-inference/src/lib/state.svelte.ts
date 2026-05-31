@@ -168,6 +168,15 @@ export const video = $state({
   frames: 0,
   elapsed: 0,
   error: "",
+  log: [] as string[],   // rolling, read-only activity log shown in the sidebar
+  // ── Quality pass (separate, unloaded step) ──
+  enhancing: false,
+  enhanced: false,           // current resultB64 is an enhanced result
+  doRefine: true,
+  doUpscale: true,
+  doInterpolate: false,      // RIFE not wired yet
+  refineStrength: 0.35,
+  refineSteps: 20,
 });
 
 // ── TTS ───────────────────────────────────────────────────────────────────────

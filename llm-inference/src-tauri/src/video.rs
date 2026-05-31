@@ -45,6 +45,29 @@ pub struct VideoResult {
     pub elapsed: f64,
 }
 
+#[derive(Deserialize)]
+pub struct EnhancePayload {
+    pub video_b64: String,
+    pub fps: u32,
+    pub stages: Vec<String>,        // ordered: subset of ["refine","upscale","interpolate"]
+    pub model_path: String,         // for the refine (Wan v2v) stage
+    pub prompt: String,
+    pub neg_prompt: Option<String>,
+    pub cfg_scale: Option<f32>,
+    pub refine_strength: Option<f32>,
+    pub refine_steps: Option<u32>,
+    pub interp_factor: Option<u32>,
+}
+
+#[derive(Serialize)]
+pub struct EnhanceResult {
+    pub enhanced_b64: String,
+    pub frames: u32,
+    pub width: u32,
+    pub height: u32,
+    pub elapsed: f64,
+}
+
 // ── Hot daemon ──────────────────────────────────────────────────────────────
 
 pub struct VideoDaemon {
@@ -140,6 +163,20 @@ pub async fn video_generate(
         .map_err(|e| format!("task join: {e}"))?
 }
 
+/// Quality pass — drops the generator daemon first (frees ALL VRAM), then runs
+/// the one-shot enhancer (refine / upscale / interpolate) on the produced clip.
+#[tauri::command]
+pub async fn video_enhance(
+    handle: State<'_, VideoHandle>,
+    payload: EnhancePayload,
+    window: WebviewWindow,
+) -> Result<EnhanceResult, String> {
+    let arc = handle.inner().clone();
+    tokio::task::spawn_blocking(move || do_enhance(arc, payload, window))
+        .await
+        .map_err(|e| format!("task join: {e}"))?
+}
+
 // ── Internal ────────────────────────────────────────────────────────────────
 
 fn do_load(arc: VideoHandle, window: WebviewWindow, model_path: String) -> Result<String, String> {
@@ -223,6 +260,82 @@ fn do_generate(arc: VideoHandle, payload: VideoPayload, window: WebviewWindow) -
         if let Some(err) = v["error"].as_str() { return Err(err.to_string()); }
         // Staged generate loads the text encoder on first use, then denoises —
         // surface those phase messages so the UI isn't stuck at 0% for ~1 min.
+        if let Some(s) = v["loading_status"].as_str() {
+            let _ = window.emit("vidload-progress", s);
+        }
+        if v["step"].is_number() {
+            let _ = window.emit("video_progress", VideoProgress {
+                step: v["step"].as_u64().unwrap_or(0) as u32,
+                total: v["total"].as_u64().unwrap_or(1) as u32,
+            });
+        }
+    }
+}
+
+fn do_enhance(arc: VideoHandle, payload: EnhancePayload, window: WebviewWindow) -> Result<EnhanceResult, String> {
+    // Free the whole GPU first: drop the resident generator daemon. The quality
+    // pass then owns all VRAM (the user's "let it stop generating, free the load").
+    {
+        let mut guard = arc.lock().map_err(|e| e.to_string())?;
+        *guard = None;
+    }
+    let _ = window.emit("vidload-progress", "freeing generator — handing the GPU to the quality pass…");
+
+    let python = resolve::find_python().map_err(|e: anyhow::Error| e.to_string())?;
+    let script = resolve::find_script("enhance_video.py").map_err(|e: anyhow::Error| e.to_string())?;
+
+    // Default upscale weights live in the managed config dir.
+    let upscale_model = std::env::var("HOME")
+        .map(|h| format!("{h}/.config/ai-workshop/upscale/RealESRGAN_x2plus.pth"))
+        .unwrap_or_default();
+
+    let mut child = Command::new(python)
+        .arg(script)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|e| format!("Failed to spawn enhancer: {e}"))?;
+
+    let req = serde_json::json!({
+        "video_b64":       payload.video_b64,
+        "fps":             payload.fps,
+        "stages":          payload.stages,
+        "model_path":      payload.model_path,
+        "prompt":          payload.prompt,
+        "neg_prompt":      payload.neg_prompt.unwrap_or_default(),
+        "cfg_scale":       payload.cfg_scale.unwrap_or(6.0_f32),
+        "refine_strength": payload.refine_strength.unwrap_or(0.35_f32),
+        "refine_steps":    payload.refine_steps.unwrap_or(20),
+        "interp_factor":   payload.interp_factor.unwrap_or(2),
+        "upscale_model":   upscale_model,
+    });
+    {
+        let mut stdin = BufWriter::new(child.stdin.take().ok_or("no stdin")?);
+        writeln!(stdin, "{req}").map_err(|e| format!("stdin write: {e}"))?;
+        stdin.flush().map_err(|e| format!("stdin flush: {e}"))?;
+        // drop stdin here → EOF for the one-shot script
+    }
+    let mut stdout = BufReader::new(child.stdout.take().ok_or("no stdout")?);
+
+    loop {
+        let mut line = String::new();
+        let n = stdout.read_line(&mut line).map_err(|e| format!("stdout read: {e}"))?;
+        if n == 0 { return Err("Enhancer exited unexpectedly".into()); }
+        let t = line.trim();
+        if t.is_empty() { continue; }
+        let v: serde_json::Value = match serde_json::from_str(t) { Ok(v) => v, Err(_) => continue };
+
+        if let Some(b64) = v["enhanced_b64"].as_str() {
+            return Ok(EnhanceResult {
+                enhanced_b64: b64.to_string(),
+                frames: v["frames"].as_u64().unwrap_or(0) as u32,
+                width:  v["width"].as_u64().unwrap_or(0) as u32,
+                height: v["height"].as_u64().unwrap_or(0) as u32,
+                elapsed: v["elapsed"].as_f64().unwrap_or(0.0),
+            });
+        }
+        if let Some(err) = v["error"].as_str() { return Err(err.to_string()); }
         if let Some(s) = v["loading_status"].as_str() {
             let _ = window.emit("vidload-progress", s);
         }

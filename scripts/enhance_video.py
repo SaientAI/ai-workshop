@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+# Quality-pass enhancer — runs AFTER generation as separate, unloaded steps.
+#
+# Philosophy (the user's): the generator and the enhancer never coexist. The Rust
+# side drops the video daemon first (freeing all VRAM), then spawns this one-shot
+# script. Each STAGE here loads its own model, runs, and frees it before the next
+# stage — so a pass owns the whole GPU and we never stack two heavy models.
+#
+# Protocol (one-shot, not a resident daemon):
+#   stdin: one JSON line:
+#     {"video_b64": "...", "fps": 16, "stages": ["refine","upscale","interpolate"],
+#      "model_path": "...",                      # for refine (Wan v2v, bf16)
+#      "refine_strength": 0.35, "refine_steps": 20, "prompt": "...", "neg_prompt": "...",
+#      "cfg_scale": 6.0,
+#      "upscale_model": "/.../RealESRGAN_x2plus.pth",
+#      "interp_factor": 2}
+#   stdout: {"loading_status": "..."} / {"step": i, "total": t} progress lines,
+#           then {"enhanced_b64": "...", "frames": N, "width": W, "height": H, "elapsed": s}
+import base64, gc, json, os, sys, tempfile, time, traceback
+
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
+
+def emit(obj):
+    sys.stdout.write(json.dumps(obj) + "\n")
+    sys.stdout.flush()
+
+
+def _free_cuda():
+    import torch
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+
+
+def to_uint8(frame):
+    """Normalise any frame (PIL / float[0,1] / float[-1,1] / CHW / uint8) to
+    HxWx3 uint8 RGB. Stages produce different formats — Wan v2v returns float
+    [0,1], the decoder returns uint8 — so we canonicalise between every stage
+    (a mismatch here is what turned the refined clip into a black screen)."""
+    import numpy as np
+    from PIL import Image
+    if isinstance(frame, Image.Image):
+        return np.asarray(frame.convert("RGB"))
+    a = np.asarray(frame)
+    # CHW → HWC if it came through as channels-first
+    if a.ndim == 3 and a.shape[0] in (1, 3) and a.shape[2] not in (1, 3):
+        a = np.transpose(a, (1, 2, 0))
+    if a.dtype != np.uint8:
+        a = a.astype("float32")
+        if float(a.min()) < -0.01:        # [-1,1] → [0,1]
+            a = (a + 1.0) / 2.0
+        if float(a.max()) <= 1.5:         # [0,1] → [0,255]
+            a = a * 255.0
+        a = np.clip(a, 0, 255).round().astype("uint8")
+    if a.ndim == 2:                        # grayscale → RGB
+        a = np.stack([a] * 3, axis=-1)
+    return a[..., :3]
+
+
+# ── frame I/O ─────────────────────────────────────────────────────────────────
+
+def b64_to_frames(video_b64):
+    """Decode an mp4 (base64) to a list of HxWx3 uint8 RGB numpy frames."""
+    import imageio.v2 as imageio   # ffmpeg backend (imageio-ffmpeg), not pyav
+    import numpy as np
+    raw = base64.b64decode(video_b64)
+    tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+    tmp.write(raw); tmp.close()
+    try:
+        reader = imageio.get_reader(tmp.name, "ffmpeg")
+        frames = [np.asarray(f)[:, :, :3] for f in reader]
+        reader.close()
+    finally:
+        os.unlink(tmp.name)
+    return frames
+
+
+def frames_to_b64(frames, fps):
+    import imageio.v2 as imageio   # ffmpeg backend
+    tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+    tmp.close()
+    w = imageio.get_writer(tmp.name, fps=fps, codec="libx264",
+                           quality=8, macro_block_size=1)
+    for f in frames:
+        w.append_data(f)
+    w.close()
+    with open(tmp.name, "rb") as fh:
+        b64 = base64.b64encode(fh.read()).decode("ascii")
+    os.unlink(tmp.name)
+    return b64
+
+
+# ── Stage: refine (Wan vid2vid, full bf16 — fits because generator is unloaded) ─
+
+def stage_refine(frames, req):
+    import torch
+    from PIL import Image
+    from diffusers import WanVideoToVideoPipeline, WanTransformer3DModel, AutoencoderKLWan
+    from transformers import UMT5EncoderModel, AutoTokenizer
+    from transformers import BitsAndBytesConfig as TBnb
+
+    model_path = req["model_path"]
+    emit({"loading_status": "refine: loading transformer (bf16 — full precision)…"})
+    # No quantization: the 1.3B transformer is ~2.6 GB in bf16 and the GPU is all
+    # ours now, so we run it at full quality instead of 4-bit.
+    transformer = WanTransformer3DModel.from_pretrained(
+        model_path, subfolder="transformer", torch_dtype=torch.bfloat16, device_map={"": 0})
+    vae = AutoencoderKLWan.from_pretrained(model_path, subfolder="vae", torch_dtype=torch.float32)
+    tokenizer = AutoTokenizer.from_pretrained(model_path, subfolder="tokenizer")
+
+    import diffusers as _df
+    with open(os.path.join(model_path, "scheduler", "scheduler_config.json")) as f:
+        sched_cls = getattr(_df, json.load(f)["_class_name"])
+    scheduler = sched_cls.from_pretrained(model_path, subfolder="scheduler")
+    try:
+        pipe = WanVideoToVideoPipeline(vae=vae, text_encoder=None, tokenizer=tokenizer,
+                                       transformer=transformer, scheduler=scheduler)
+    except Exception:
+        pipe = WanVideoToVideoPipeline.from_pretrained(
+            model_path, transformer=transformer, vae=vae, tokenizer=tokenizer,
+            scheduler=scheduler, text_encoder=None, torch_dtype=torch.bfloat16)
+    try:
+        pipe.vae.to("cuda:0")
+    except Exception:
+        pass
+    if hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_tiling"):
+        pipe.vae.enable_tiling()
+    pipe.set_progress_bar_config(disable=True)
+
+    cfg_scale = float(req.get("cfg_scale", 6.0))
+    do_cfg = cfg_scale > 1.0
+
+    # Encode prompt with a 4-bit text encoder, then free it (same staged trick).
+    emit({"loading_status": "refine: loading text encoder (4-bit) to encode…"})
+    tbnb = TBnb(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=torch.bfloat16)
+    te = UMT5EncoderModel.from_pretrained(
+        model_path, subfolder="text_encoder", quantization_config=tbnb,
+        torch_dtype=torch.bfloat16, device_map={"": 0})
+    pipe.text_encoder = te
+    try:
+        pe, ne = pipe.encode_prompt(prompt=req.get("prompt", ""),
+                                    negative_prompt=(req.get("neg_prompt", "") or None),
+                                    do_classifier_free_guidance=do_cfg,
+                                    num_videos_per_prompt=1, device="cuda")
+    finally:
+        pipe.text_encoder = None
+        del te
+        _free_cuda()
+
+    pil = [Image.fromarray(f) for f in frames]
+    total = int(req.get("refine_steps", 20))
+
+    def cb(_p, i, _t, kw):
+        emit({"step": i + 1, "total": total})
+        return kw
+
+    emit({"loading_status": f"refine: vid2vid @ strength {req.get('refine_strength', 0.35)}…"})
+    out = pipe(
+        video=pil,
+        prompt_embeds=pe, negative_prompt_embeds=ne,
+        strength=float(req.get("refine_strength", 0.35)),
+        num_inference_steps=total,
+        guidance_scale=cfg_scale,
+        callback_on_step_end=cb,
+    ).frames[0]
+
+    result = [to_uint8(im) for im in out]   # Wan v2v → float[0,1]; canonicalise to uint8
+    del pipe, transformer, vae, pe, ne
+    _free_cuda()
+    return result
+
+
+# ── Stage: upscale (spandrel-loaded RealESRGAN — clean on modern torch) ─────────
+
+def stage_upscale(frames, req):
+    import torch, numpy as np
+    import spandrel
+    path = req.get("upscale_model", "")
+    emit({"loading_status": f"upscale: loading {os.path.basename(path)}…"})
+    model = spandrel.ModelLoader().load_from_file(path).to("cuda").eval()
+    scale = getattr(model, "scale", 2)
+    n = len(frames)
+    out = []
+    with torch.inference_mode():
+        for i, f in enumerate(frames):
+            f = to_uint8(f)   # guard: never divide a float[0,1] frame by 255 again
+            t = torch.from_numpy(f).permute(2, 0, 1).unsqueeze(0).float().div(255.0).to("cuda")
+            y = model(t).clamp(0, 1).squeeze(0).permute(1, 2, 0).mul(255.0).round().byte().cpu().numpy()
+            out.append(y)
+            emit({"step": i + 1, "total": n})
+    del model
+    _free_cuda()
+    emit({"loading_status": f"upscale: {scale}× done ({out[0].shape[1]}×{out[0].shape[0]})"})
+    return out
+
+
+# ── Stage: interpolate (RIFE) — placeholder until the next phase ────────────────
+
+def stage_interpolate(frames, req):
+    emit({"loading_status": "interpolate: RIFE not wired yet — skipping (next phase)"})
+    return frames
+
+
+STAGES = {"refine": stage_refine, "upscale": stage_upscale, "interpolate": stage_interpolate}
+
+
+def main():
+    line = sys.stdin.readline()
+    if not line:
+        return
+    try:
+        req = json.loads(line)
+    except Exception as e:
+        emit({"error": f"bad request: {e}"})
+        return
+    try:
+        t0 = time.time()
+        emit({"loading_status": "decoding input video…"})
+        frames = b64_to_frames(req["video_b64"])
+        fps = int(req.get("fps", 16))
+        for name in req.get("stages", []):
+            fn = STAGES.get(name)
+            if fn is None:
+                emit({"loading_status": f"unknown stage '{name}' — skipped"})
+                continue
+            frames = fn(frames, req)
+            if name == "interpolate":
+                fps *= int(req.get("interp_factor", 2))
+        emit({"loading_status": "encoding result…"})
+        frames = [to_uint8(f) for f in frames]   # final guard before mp4 encode
+        b64 = frames_to_b64(frames, fps)
+        h, w = frames[0].shape[0], frames[0].shape[1]
+        emit({"enhanced_b64": b64, "frames": len(frames), "width": w, "height": h,
+              "elapsed": round(time.time() - t0, 1)})
+    except Exception as e:
+        emit({"error": str(e), "trace": traceback.format_exc()[:1200]})
+
+
+if __name__ == "__main__":
+    main()

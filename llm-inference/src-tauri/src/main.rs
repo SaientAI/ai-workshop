@@ -1450,7 +1450,7 @@ fn main() {
             imggen::imggen_load, imggen::imggen_unload, imggen::imggen_loaded_model,
             // Video gen
             video::video_scan_models, video::video_load, video::video_unload,
-            video::video_loaded_model, video::video_generate,
+            video::video_loaded_model, video::video_generate, video::video_enhance,
             // TTS
             tts::tts_voices, tts::tts_generate,
             // LoRA trainer

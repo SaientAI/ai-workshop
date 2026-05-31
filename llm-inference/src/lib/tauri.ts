@@ -245,11 +245,19 @@ export interface VideoPayload {
 }
 export interface VideoResult { base64_mp4: string; frames: number; elapsed: number }
 
+export interface EnhancePayload {
+  video_b64: string; fps: number; stages: string[]; model_path: string;
+  prompt: string; neg_prompt?: string; cfg_scale?: number;
+  refine_strength?: number; refine_steps?: number; interp_factor?: number;
+}
+export interface EnhanceResult { enhanced_b64: string; frames: number; width: number; height: number; elapsed: number }
+
 export const videoScanModels  = () => invoke<VideoModelEntry[]>("video_scan_models");
 export const videoLoad        = (modelPath: string) => invoke<string>("video_load", { modelPath });
 export const videoUnload      = () => invoke<void>("video_unload");
 export const videoLoadedModel = () => invoke<string | null>("video_loaded_model");
 export const videoGenerate    = (payload: VideoPayload) => invoke<VideoResult>("video_generate", { payload });
+export const videoEnhance     = (payload: EnhancePayload) => invoke<EnhanceResult>("video_enhance", { payload });
 
 // ── TTS ───────────────────────────────────────────────────────────────────────
 

@@ -8,6 +8,20 @@
   const loaded = $derived(!!video.loadedPath && video.loadedPath === video.modelPath);
   const pct = $derived(video.progressTotal > 0 ? Math.round((video.progress / video.progressTotal) * 100) : 0);
 
+  // ── Activity log (non-typable mini terminal under Params) ──────────────────
+  let termEl: HTMLDivElement | undefined = $state();
+  function logln(s: string) {
+    const t = new Date().toLocaleTimeString([], { hour12: false });
+    const last = video.log[video.log.length - 1];
+    if (last && last.endsWith(s)) return;       // skip repeated identical lines
+    video.log = [...video.log, `${t}  ${s}`].slice(-300);
+  }
+  // Auto-scroll to the newest line whenever the log grows.
+  $effect(() => {
+    void video.log.length;
+    if (termEl) termEl.scrollTop = termEl.scrollHeight;
+  });
+
   onMount(async () => {
     video.models = await T.videoScanModels().catch(() => []) as typeof video.models;
     const cur = await T.videoLoadedModel().catch(() => null);
@@ -22,25 +36,29 @@
   async function load() {
     if (!video.modelPath || video.loading) return;
     video.loading = true; video.error = ""; video.loadStatus = "Starting…";
-    const un = await listen<string>("vidload-progress", (e) => { video.loadStatus = e.payload; });
+    logln(`▶ loading ${video.models.find(m => m.path === video.modelPath)?.label ?? "model"}…`);
+    const un = await listen<string>("vidload-progress", (e) => { video.loadStatus = e.payload; logln(e.payload); });
     try {
       await T.videoLoad(video.modelPath);
       video.loadedPath = video.modelPath; video.loadStatus = "";
-    } catch (e) { video.error = String(e); }
+      logln("✓ model ready");
+    } catch (e) { video.error = String(e); logln(`✗ load failed: ${e}`); }
     finally { un(); video.loading = false; }
   }
 
   async function generate() {
     if (!loaded || video.generating || !video.prompt.trim()) return;
-    video.generating = true; video.error = ""; video.resultB64 = "";
+    video.generating = true; video.error = ""; video.resultB64 = ""; video.enhanced = false;
     video.progress = 0; video.progressTotal = video.steps;
     video.loadStatus = "Preparing…";
+    logln(`🎬 generate · ${video.width}×${video.height} · ${video.numFrames}f · ${video.steps} steps`);
     // Phase messages (text-encoder load, then denoise) come over vidload-progress;
     // step progress comes over video_progress. The first real step clears the phase text.
-    const unStatus = await listen<string>("vidload-progress", (e) => { video.loadStatus = e.payload; });
+    const unStatus = await listen<string>("vidload-progress", (e) => { video.loadStatus = e.payload; logln(e.payload); });
     const un = await listen<{ step: number; total: number }>("video_progress", (e) => {
       video.progress = e.payload.step; video.progressTotal = e.payload.total;
       video.loadStatus = "";
+      logln(`step ${e.payload.step}/${e.payload.total}`);
     });
     try {
       const r = await T.videoGenerate({
@@ -49,8 +67,36 @@
         width: video.width, height: video.height, fps: video.fps, seed: video.seed,
       });
       video.resultB64 = r.base64_mp4; video.frames = r.frames; video.elapsed = r.elapsed;
-    } catch (e) { video.error = String(e); }
+      logln(`✓ done · ${r.frames} frames in ${r.elapsed}s`);
+    } catch (e) { video.error = String(e); logln(`✗ ${e}`); }
     finally { un(); unStatus(); video.generating = false; video.loadStatus = ""; }
+  }
+
+  async function enhance() {
+    if (!video.resultB64 || video.enhancing) return;
+    const stages: string[] = [];
+    if (video.doRefine) stages.push("refine");
+    if (video.doUpscale) stages.push("upscale");
+    if (video.doInterpolate) stages.push("interpolate");
+    if (stages.length === 0) return;
+    video.enhancing = true; video.error = ""; video.loadStatus = "Preparing…";
+    video.progress = 0; video.progressTotal = 1;
+    logln(`✨ quality pass: ${stages.join(" → ")}`);
+    const unStatus = await listen<string>("vidload-progress", (e) => { video.loadStatus = e.payload; logln(e.payload); });
+    const un = await listen<{ step: number; total: number }>("video_progress", (e) => {
+      video.progress = e.payload.step; video.progressTotal = e.payload.total;
+    });
+    try {
+      const r = await T.videoEnhance({
+        video_b64: video.resultB64, fps: video.fps, stages, model_path: video.modelPath,
+        prompt: video.prompt, neg_prompt: video.negPrompt, cfg_scale: video.cfg,
+        refine_strength: video.refineStrength, refine_steps: video.refineSteps, interp_factor: 2,
+      });
+      video.resultB64 = r.enhanced_b64; video.frames = r.frames; video.enhanced = true;
+      video.loadedPath = "";   // the generator was unloaded to free VRAM for the pass
+      logln(`✓ enhanced · ${r.width}×${r.height} · ${r.frames} frames in ${r.elapsed}s`);
+    } catch (e) { video.error = String(e); logln(`✗ ${e}`); }
+    finally { un(); unStatus(); video.enhancing = false; video.loadStatus = ""; }
   }
 
   async function saveMp4() {
@@ -84,6 +130,18 @@
     <div class="vrow"><span>FPS</span><input type="number" bind:value={video.fps} min="8" max="30" /></div>
     <div class="vrow"><span>Seed</span><input type="number" bind:value={video.seed} /></div>
     <div class="vhint" style="margin-top:4px">−1 seed = random. ~49 frames @ 16 fps ≈ 3 s clip.</div>
+
+    <div class="vlabel" style="margin-top:14px; display:flex; justify-content:space-between; align-items:center">
+      <span>Activity</span>
+      {#if (video.loading || video.generating)}<span class="vdot"></span>{/if}
+    </div>
+    <div class="vterm" bind:this={termEl} aria-readonly="true">
+      {#if video.log.length === 0}
+        <div class="vterm-line vterm-idle">— idle — load a model to begin</div>
+      {:else}
+        {#each video.log as line}<div class="vterm-line">{line}</div>{/each}
+      {/if}
+    </div>
   </div>
 
   <div class="ig-main">
@@ -109,8 +167,30 @@
       <div class="vresult">
         <!-- svelte-ignore a11y_media_has_caption -->
         <video class="vplayer" controls autoplay loop src="data:video/mp4;base64,{video.resultB64}"></video>
-        <div class="vmeta">{video.frames ?? ""} frames · generated in {video.elapsed}s</div>
+        <div class="vmeta">
+          {video.frames ?? ""} frames · generated in {video.elapsed}s
+          {#if video.enhanced}<span class="qpass-badge">✨ enhanced</span>{/if}
+        </div>
         <button class="vbtn-ghost" onclick={saveMp4}>💾 Save MP4</button>
+
+        <div class="qpass">
+          <div class="qpass-head">✨ Quality Pass <span class="qpass-sub">— frees the generator, runs each stage on its own</span></div>
+          <div class="qpass-toggles">
+            <label><input type="checkbox" bind:checked={video.doRefine} disabled={video.enhancing} /> Refine <span class="qpass-tag">bf16 v2v</span></label>
+            <label><input type="checkbox" bind:checked={video.doUpscale} disabled={video.enhancing} /> Upscale <span class="qpass-tag">2× ESRGAN</span></label>
+            <label class="qpass-soon"><input type="checkbox" checked={false} disabled /> Interpolate <span class="qpass-tag">soon</span></label>
+          </div>
+          {#if video.doRefine}
+            <div class="vrow"><span>Strength</span><input type="number" bind:value={video.refineStrength} min="0.1" max="0.9" step="0.05" disabled={video.enhancing} /></div>
+          {/if}
+          <button class="qpass-run" onclick={enhance} disabled={video.enhancing || (!video.doRefine && !video.doUpscale)}>
+            {video.enhancing ? (video.loadStatus || "Enhancing…") : "✨ Run Quality Pass"}
+          </button>
+          {#if video.enhancing}
+            <div class="vbar vbar-indet"><div class="vbar-fill"></div></div>
+          {/if}
+          <div class="vhint">Unloads the generator first (all VRAM goes to the pass). You'll re-Load the model to generate again.</div>
+        </div>
       </div>
     {:else if !video.generating}
       <div class="vplaceholder">
@@ -131,6 +211,19 @@
   .vrow span { font-size: 11px; color: var(--text2); min-width: 48px; }
   .vrow input { flex: 1; font-family: var(--mono); }
 
+  /* Mini non-typable terminal — live activity log. */
+  .vterm {
+    background: #0a0c10; border: 1px solid var(--border); border-radius: var(--radius-sm);
+    font-family: var(--mono); font-size: 10.5px; line-height: 1.5; color: #8fb98f;
+    padding: 6px 8px; height: 150px; overflow-y: auto; user-select: text;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .vterm-line { opacity: 0.92; }
+  .vterm-line:last-child { color: #b6e3b6; opacity: 1; }   /* highlight newest */
+  .vterm-idle { color: var(--text3); font-style: italic; }
+  .vdot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: vdot-pulse 1s ease-in-out infinite; }
+  @keyframes vdot-pulse { 0%,100% { opacity: 0.3; } 50% { opacity: 1; } }
+
   .ig-main { gap: 10px; }
   .vprompt { width: 100%; min-height: 70px; resize: vertical; font-family: var(--sans); font-size: 13px; line-height: 1.6; padding: 10px 12px; }
   .vneg { min-height: 42px; color: var(--text2); }
@@ -147,6 +240,19 @@
   .verr { background: rgba(248,113,113,0.08); border: 1px solid rgba(248,113,113,0.3); color: var(--red); font-size: 12px; padding: 10px 12px; border-radius: var(--radius-sm); line-height: 1.5; white-space: pre-wrap; }
 
   .vresult { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+
+  /* Quality Pass panel */
+  .qpass { width: 100%; margin-top: 8px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg2); display: flex; flex-direction: column; gap: 8px; }
+  .qpass-head { font-size: 12px; font-weight: 700; color: var(--text); }
+  .qpass-sub { font-weight: 400; color: var(--text3); font-size: 11px; }
+  .qpass-toggles { display: flex; flex-wrap: wrap; gap: 14px; }
+  .qpass-toggles label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text2); cursor: pointer; }
+  .qpass-soon { opacity: 0.5; cursor: not-allowed; }
+  .qpass-tag { font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text3); border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; }
+  .qpass-run { align-self: flex-start; padding: 8px 18px; font-size: 13px; font-weight: 600; background: linear-gradient(135deg, #a855f7, #6366f1); border: none; color: #fff; border-radius: var(--radius); cursor: pointer; }
+  .qpass-run:hover:not(:disabled) { filter: brightness(1.1); }
+  .qpass-run:disabled { opacity: 0.5; cursor: not-allowed; }
+  .qpass-badge { font-size: 10px; background: rgba(168,85,247,0.18); color: #c4a3fb; border-radius: 4px; padding: 1px 6px; margin-left: 6px; }
   .vplayer { max-width: 100%; max-height: 60vh; border-radius: var(--radius); border: 1px solid var(--border); background: #000; }
   .vmeta { font-size: 11px; color: var(--text3); font-family: var(--mono); }
   .vplaceholder { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 280px; }
