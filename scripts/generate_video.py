@@ -29,6 +29,20 @@ import base64, gc, json, os, sys, tempfile, time, traceback
 # torch initialises CUDA — torch is imported lazily inside functions, so here is fine.
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
+
+def _watch_parent():
+    """Self-terminate if the parent app dies, else this daemon orphans and holds
+    ~5 GB of VRAM forever. getppid() flips (reparented to init) when the app exits —
+    even on a hard crash — covering the case stdin-EOF misses (e.g. mid-generation)."""
+    import threading, time
+    ppid = os.getppid()
+    def loop():
+        while True:
+            time.sleep(2)
+            if os.getppid() != ppid or ppid == 1:
+                os._exit(0)
+    threading.Thread(target=loop, daemon=True).start()
+
 PIPE = None        # WanPipeline with text_encoder=None, transformer+vae resident
 TOKENIZER = None   # kept resident (tiny); text encoder is loaded per-encode
 MODEL_PATH = ""
@@ -326,6 +340,7 @@ def generate(req):
 
 
 def main():
+    _watch_parent()   # die with the app — never orphan VRAM
     load_line = sys.stdin.readline()
     if not load_line:
         return

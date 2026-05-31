@@ -21,6 +21,18 @@ import base64, gc, json, os, sys, tempfile, time, traceback
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 
+def _watch_parent():
+    """Die with the app so the enhancer never orphans and holds VRAM."""
+    import threading, time
+    ppid = os.getppid()
+    def loop():
+        while True:
+            time.sleep(2)
+            if os.getppid() != ppid or ppid == 1:
+                os._exit(0)
+    threading.Thread(target=loop, daemon=True).start()
+
+
 def emit(obj):
     sys.stdout.write(json.dumps(obj) + "\n")
     sys.stdout.flush()
@@ -249,6 +261,7 @@ STAGES = {"refine": stage_refine, "upscale": stage_upscale, "interpolate": stage
 
 
 def main():
+    _watch_parent()
     line = sys.stdin.readline()
     if not line:
         return
