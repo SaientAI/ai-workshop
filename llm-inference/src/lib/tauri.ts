@@ -242,6 +242,7 @@ export interface VideoPayload {
   height?: number;
   fps?: number;
   seed?: number;
+  image_b64?: string;   // optional still → image-to-video
 }
 export interface VideoResult { base64_mp4: string; frames: number; elapsed: number }
 

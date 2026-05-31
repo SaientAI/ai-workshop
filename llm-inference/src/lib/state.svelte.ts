@@ -151,6 +151,8 @@ export const video = $state({
   loras: [] as Array<{ path: string; label: string }>,
   loraPath: "",
   loraStrength: 1.0,
+  imageB64: "",          // i2v input still (base64, no data: prefix)
+  imageName: "",         // display name of the picked image
   modelPath: "",
   loadedPath: "",
   loading: false,

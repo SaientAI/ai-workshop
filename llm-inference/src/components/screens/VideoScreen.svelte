@@ -35,6 +35,19 @@
     video.loras = await T.videoScanLoras().catch(() => video.loras) as typeof video.loras;
   }
 
+  // i2v: pick a still image, read it to base64 (strip the data: prefix for the daemon)
+  function pickImage(e: Event) {
+    const file = (e.target as HTMLInputElement).files?.[0];
+    if (!file) return;
+    const r = new FileReader();
+    r.onload = () => {
+      video.imageB64 = String(r.result).split(",")[1] || "";
+      video.imageName = file.name;
+    };
+    r.readAsDataURL(file);
+  }
+  function clearImage() { video.imageB64 = ""; video.imageName = ""; }
+
   async function load() {
     if (!video.modelPath || video.loading) return;
     video.loading = true; video.error = ""; video.loadStatus = "Starting…";
@@ -67,6 +80,7 @@
         prompt: video.prompt, neg_prompt: video.negPrompt, model_path: video.modelPath,
         num_frames: video.numFrames, steps: video.steps, cfg_scale: video.cfg,
         width: video.width, height: video.height, fps: video.fps, seed: video.seed,
+        image_b64: video.imageB64 || undefined,
       });
       video.resultB64 = r.base64_mp4; video.frames = r.frames; video.elapsed = r.elapsed;
       logln(`✓ done · ${r.frames} frames in ${r.elapsed}s`);
@@ -159,8 +173,22 @@
   <div class="ig-main">
     <textarea class="vprompt" placeholder="Describe the video…" bind:value={video.prompt}></textarea>
     <textarea class="vprompt vneg" placeholder="Negative prompt (what to avoid)" bind:value={video.negPrompt}></textarea>
+
+    <div class="i2v-row">
+      <label class="i2v-pick">
+        🖼 {video.imageB64 ? "Change image" : "Add image → animate (i2v)"}
+        <input type="file" accept="image/*" onchange={pickImage} hidden />
+      </label>
+      {#if video.imageB64}
+        <img class="i2v-thumb" src="data:image/*;base64,{video.imageB64}" alt="i2v source" />
+        <span class="i2v-name">{video.imageName}</span>
+        <button class="vbtn-ghost i2v-clear" onclick={clearImage}>✕</button>
+        <span class="i2v-tag">image-to-video</span>
+      {/if}
+    </div>
+
     <button class="vgen" onclick={generate} disabled={!loaded || video.generating || !video.prompt.trim()}>
-      {video.generating ? (video.progress > 0 ? `Generating… ${pct}%` : video.loadStatus || "Preparing…") : loaded ? "🎬 Generate" : "Load a model first"}
+      {video.generating ? (video.progress > 0 ? `Generating… ${pct}%` : video.loadStatus || "Preparing…") : loaded ? (video.imageB64 ? "🖼 Animate image" : "🎬 Generate") : "Load a model first"}
     </button>
 
     {#if video.generating}
@@ -239,6 +267,14 @@
   .ig-main { gap: 10px; }
   .vprompt { width: 100%; min-height: 70px; resize: vertical; font-family: var(--sans); font-size: 13px; line-height: 1.6; padding: 10px 12px; }
   .vneg { min-height: 42px; color: var(--text2); }
+
+  .i2v-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .i2v-pick { font-size: 12px; color: var(--text2); border: 1px dashed var(--border); border-radius: var(--radius-sm); padding: 6px 10px; cursor: pointer; }
+  .i2v-pick:hover { background: var(--bg3); color: var(--text); border-color: var(--accent); }
+  .i2v-thumb { height: 38px; border-radius: var(--radius-sm); border: 1px solid var(--border); }
+  .i2v-name { font-size: 11px; color: var(--text3); font-family: var(--mono); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .i2v-clear { width: auto; padding: 2px 8px; }
+  .i2v-tag { font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em; color: #c4a3fb; background: rgba(168,85,247,0.18); border-radius: 4px; padding: 2px 6px; }
   .vgen { align-self: flex-start; padding: 9px 22px; font-size: 14px; font-weight: 600; background: var(--accent); border: none; color: #fff; border-radius: var(--radius); cursor: pointer; }
   .vgen:hover:not(:disabled) { background: #7a9cf7; }
   .vgen:disabled { opacity: 0.5; cursor: not-allowed; }

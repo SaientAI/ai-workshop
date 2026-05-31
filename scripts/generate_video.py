@@ -37,6 +37,7 @@ MODEL_PATH = ""
 # encoder load entirely. We free the 5.5 GB encoder after each encode so it never
 # competes with denoise activations — embeds are tiny, the encoder is not.
 EMBED_CACHE = {"key": None, "pe": None, "ne": None}
+I2V_PIPE = None    # WanImageToVideoPipeline, lazily assembled from the t2v components
 
 
 def emit(obj):
@@ -213,6 +214,24 @@ def encode(prompt, neg, do_cfg):
     return pe, ne
 
 
+def _i2v_pipe():
+    """Assemble a WanImageToVideoPipeline that REUSES the resident t2v components
+    (same transformer/vae/scheduler — no extra weights loaded). Works because the
+    Wan2.2 TI2V transformer has image_dim=None (no CLIP encoder) and expand_timesteps
+    feeds the image straight in as the first-frame latent condition."""
+    global I2V_PIPE
+    if I2V_PIPE is None:
+        from diffusers import WanImageToVideoPipeline
+        I2V_PIPE = WanImageToVideoPipeline(
+            vae=PIPE.vae, text_encoder=None, tokenizer=PIPE.tokenizer,
+            transformer=PIPE.transformer, scheduler=PIPE.scheduler,
+            image_encoder=None, image_processor=None,
+            transformer_2=None, boundary_ratio=None, expand_timesteps=True,
+        )
+        I2V_PIPE.set_progress_bar_config(disable=True)
+    return I2V_PIPE
+
+
 def generate(req):
     import torch
     from diffusers.utils import export_to_video
@@ -256,19 +275,33 @@ def generate(req):
     if seed is not None and int(seed) >= 0:
         generator = torch.Generator(device="cpu").manual_seed(int(seed))
 
-    emit({"loading_status": "denoising…"})
+    height = int(req.get("height", 480)); width = int(req.get("width", 832))
+    num_frames = int(req.get("num_frames", 49))
+    image_b64 = (req.get("image_b64") or "").strip()
+
     t_dn = time.time()
-    frames = PIPE(
-        prompt_embeds=pe,
-        negative_prompt_embeds=ne,
-        height=int(req.get("height", 480)),
-        width=int(req.get("width", 832)),
-        num_frames=int(req.get("num_frames", 49)),
-        num_inference_steps=total,
-        guidance_scale=cfg_scale,
-        generator=generator,
-        callback_on_step_end=cb,
-    ).frames[0]
+    if image_b64:
+        # ── Image-to-video ──────────────────────────────────────────────────────
+        import io
+        from PIL import Image
+        img = Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB").resize((width, height))
+        pipe = _i2v_pipe()
+        emit({"loading_status": "i2v: conditioning on your image, denoising…"})
+        frames = pipe(
+            image=img,
+            prompt_embeds=pe, negative_prompt_embeds=ne,
+            height=height, width=width, num_frames=num_frames,
+            num_inference_steps=total, guidance_scale=cfg_scale,
+            generator=generator, callback_on_step_end=cb,
+        ).frames[0]
+    else:
+        emit({"loading_status": "denoising…"})
+        frames = PIPE(
+            prompt_embeds=pe, negative_prompt_embeds=ne,
+            height=height, width=width, num_frames=num_frames,
+            num_inference_steps=total, guidance_scale=cfg_scale,
+            generator=generator, callback_on_step_end=cb,
+        ).frames[0]
     t_after = time.time()
     # Split: denoise ≈ first→last callback; VAE decode ≈ last callback→return.
     if marks["first"] and marks["last"]:
