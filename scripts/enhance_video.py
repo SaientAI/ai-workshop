@@ -145,11 +145,21 @@ def stage_refine(frames, req):
     do_cfg = cfg_scale > 1.0
 
     # Encode prompt with a 4-bit text encoder, then free it (same staged trick).
-    emit({"loading_status": "refine: loading text encoder (4-bit) to encode…"})
-    tbnb = TBnb(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=torch.bfloat16)
-    te = UMT5EncoderModel.from_pretrained(
-        model_path, subfolder="text_encoder", quantization_config=tbnb,
-        torch_dtype=torch.bfloat16, device_map={"": 0})
+    # Reuse the shared pre-quantized 4-bit UMT5 cache built by generate_video.py.
+    cache = os.path.expanduser("~/.config/ai-workshop/umt5-xxl-4bit")
+    te = None
+    if os.path.exists(os.path.join(cache, "config.json")):
+        emit({"loading_status": "refine: loading pre-quantized text encoder (cached)…"})
+        try:
+            te = UMT5EncoderModel.from_pretrained(cache, torch_dtype=torch.bfloat16, device_map={"": 0})
+        except Exception:
+            te = None
+    if te is None:
+        emit({"loading_status": "refine: loading text encoder (4-bit) to encode…"})
+        tbnb = TBnb(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=torch.bfloat16)
+        te = UMT5EncoderModel.from_pretrained(
+            model_path, subfolder="text_encoder", quantization_config=tbnb,
+            torch_dtype=torch.bfloat16, device_map={"": 0})
     pipe.text_encoder = te
     try:
         pe, ne = pipe.encode_prompt(prompt=req.get("prompt", ""),

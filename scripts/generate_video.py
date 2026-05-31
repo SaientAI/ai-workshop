@@ -199,17 +199,39 @@ def load(cfg):
 
 
 def encode(prompt, neg, do_cfg):
-    """Load text encoder 4-bit on GPU, encode, then free it. Returns (pe, ne)."""
+    """Load text encoder 4-bit on GPU, encode, then free it. Returns (pe, ne).
+
+    Uses a PRE-QUANTIZED 4-bit cache: the first time we read the 22 GB fp16 UMT5 and
+    quantize (~36s), then save the packed 4-bit (~5.5 GB) to disk. Every later run
+    (any model, any session) loads that directly — no 22 GB read, no re-quantize
+    (~10s). Wan's UMT5-XXL is shared across all models, so one cache serves all."""
     import torch
     from transformers import UMT5EncoderModel
     from transformers import BitsAndBytesConfig as TBnb
 
-    emit({"loading_status": "loading text encoder (4-bit nf4) onto GPU…"})
-    tbnb = TBnb(load_in_4bit=True, bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype=torch.bfloat16)
-    te = UMT5EncoderModel.from_pretrained(
-        MODEL_PATH, subfolder="text_encoder",
-        quantization_config=tbnb, torch_dtype=torch.bfloat16, device_map={"": 0})
+    cache = os.path.expanduser("~/.config/ai-workshop/umt5-xxl-4bit")
+    cached = os.path.exists(os.path.join(cache, "config.json"))
+    te = None
+    if cached:
+        emit({"loading_status": "loading pre-quantized text encoder (cached 4-bit)…"})
+        try:
+            te = UMT5EncoderModel.from_pretrained(cache, torch_dtype=torch.bfloat16, device_map={"": 0})
+        except Exception as ce:
+            emit({"loading_status": f"  ⚠ cache load failed ({ce}); rebuilding…"})
+            te = None
+    if te is None:
+        emit({"loading_status": "loading text encoder (4-bit nf4) + caching for next time…"})
+        tbnb = TBnb(load_in_4bit=True, bnb_4bit_quant_type="nf4",
+                    bnb_4bit_compute_dtype=torch.bfloat16)
+        te = UMT5EncoderModel.from_pretrained(
+            MODEL_PATH, subfolder="text_encoder",
+            quantization_config=tbnb, torch_dtype=torch.bfloat16, device_map={"": 0})
+        try:
+            os.makedirs(cache, exist_ok=True)
+            te.save_pretrained(cache)
+            emit({"loading_status": "  ✓ text encoder cached — fast loads from now on"})
+        except Exception as se:
+            emit({"loading_status": f"  ⚠ couldn't cache 4-bit TE ({se})"})
 
     PIPE.text_encoder = te
     try:
