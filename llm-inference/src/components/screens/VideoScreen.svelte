@@ -24,6 +24,7 @@
 
   onMount(async () => {
     video.models = await T.videoScanModels().catch(() => []) as typeof video.models;
+    video.loras = await T.videoScanLoras().catch(() => []) as typeof video.loras;
     const cur = await T.videoLoadedModel().catch(() => null);
     if (cur) { video.loadedPath = cur; video.modelPath = cur; }
     else if (video.models.length && !video.modelPath) video.modelPath = video.models[0].path;
@@ -31,6 +32,7 @@
 
   async function refresh() {
     video.models = await T.videoScanModels().catch(() => video.models) as typeof video.models;
+    video.loras = await T.videoScanLoras().catch(() => video.loras) as typeof video.loras;
   }
 
   async function load() {
@@ -39,9 +41,9 @@
     logln(`▶ loading ${video.models.find(m => m.path === video.modelPath)?.label ?? "model"}…`);
     const un = await listen<string>("vidload-progress", (e) => { video.loadStatus = e.payload; logln(e.payload); });
     try {
-      await T.videoLoad(video.modelPath);
+      await T.videoLoad(video.modelPath, video.loraPath, video.loraStrength);
       video.loadedPath = video.modelPath; video.loadStatus = "";
-      logln("✓ model ready");
+      logln(video.loraPath ? `✓ model ready (+ LoRA @ ${video.loraStrength})` : "✓ model ready");
     } catch (e) { video.error = String(e); logln(`✗ load failed: ${e}`); }
     finally { un(); video.loading = false; }
   }
@@ -119,6 +121,16 @@
     </button>
     {#if video.models.length === 0}
       <div class="vhint">No video models found. Drop a diffusers Wan/LTX folder into your models dir, then Refresh.</div>
+    {/if}
+
+    <div class="vlabel" style="margin-top:14px">LoRA <span style="font-weight:400;text-transform:none;color:var(--text3)">(optional, applied at load)</span></div>
+    <select class="vsel" bind:value={video.loraPath} disabled={video.loading}>
+      <option value="">— none —</option>
+      {#each video.loras as l}<option value={l.path}>{l.label}</option>{/each}
+    </select>
+    {#if video.loraPath}
+      <div class="vrow"><span>Strength</span><input type="number" bind:value={video.loraStrength} min="0" max="1.5" step="0.05" disabled={video.loading} /></div>
+      <div class="vhint">LoRA forces bf16 transformer. Re-Load after changing it.</div>
     {/if}
 
     <div class="vlabel" style="margin-top:14px">Params</div>

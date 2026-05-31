@@ -262,7 +262,15 @@ def main():
         emit({"loading_status": "decoding input video…"})
         frames = b64_to_frames(req["video_b64"])
         fps = int(req.get("fps", 16))
-        for name in req.get("stages", []):
+        # Canonical order regardless of how the UI listed them: refine (detail at
+        # base res) → interpolate (flow is robust on small frames) → upscale (enlarge
+        # the already-smooth sequence). Interpolating AFTER upscaling makes flow noisy
+        # on 4× pixels → juddery in-betweens.
+        order = ["refine", "interpolate", "upscale"]
+        stages = sorted(req.get("stages", []),
+                        key=lambda s: order.index(s) if s in order else 99)
+        emit({"loading_status": f"pass order: {' → '.join(stages)}"})
+        for name in stages:
             fn = STAGES.get(name)
             if fn is None:
                 emit({"loading_status": f"unknown stage '{name}' — skipped"})

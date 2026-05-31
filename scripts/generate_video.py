@@ -63,6 +63,38 @@ def _vram():
     return used, peak
 
 
+def _lora_state_dict(path):
+    """Load a LoRA and normalise it to diffusers Wan keys. Many community/DiffSynth
+    LoRAs use NATIVE Wan names (`blocks.N.cross_attn.k.lora_A.default.weight`) which
+    diffusers' own converter rejects — remap them to
+    `transformer.blocks.N.attn2.to_k.lora_A.weight`. Pass diffusers-format ones through."""
+    from safetensors.torch import load_file
+    sd = load_file(path)
+    keys = list(sd.keys())
+    if any(k.startswith("transformer.") or "diffusion_model" in k for k in keys):
+        return sd  # already diffusers-style
+    if not any(("self_attn" in k or "cross_attn" in k or "ffn" in k) for k in keys):
+        return sd  # unknown layout — let diffusers try
+    amap = {"q": "to_q", "k": "to_k", "v": "to_v", "o": "to_out.0"}
+    ffnmap = {"0": "net.0.proj", "2": "net.2"}
+    out = {}
+    for k, v in sd.items():
+        p = k.replace(".default.", ".").split(".")   # strip peft adapter infix
+        if len(p) < 6 or p[0] != "blocks":
+            continue
+        blk = p[1]; tail = ".".join(p[4:])           # e.g. lora_A.weight
+        if p[2] in ("self_attn", "cross_attn"):
+            attn = "attn1" if p[2] == "self_attn" else "attn2"
+            proj = amap.get(p[3])
+            if proj:
+                out[f"transformer.blocks.{blk}.{attn}.{proj}.{tail}"] = v
+        elif p[2] == "ffn":
+            sub = ffnmap.get(p[3])
+            if sub:
+                out[f"transformer.blocks.{blk}.ffn.{sub}.{tail}"] = v
+    return out if out else sd
+
+
 def load(cfg):
     """Load the SMALL resident pieces (transformer 4-bit + VAE). Fast, low RAM."""
     global PIPE, TOKENIZER, MODEL_PATH
@@ -72,16 +104,28 @@ def load(cfg):
     from transformers import AutoTokenizer
 
     MODEL_PATH = cfg.get("model_path", "")
+    lora_path = (cfg.get("lora_path") or "").strip()
+    lora_strength = float(cfg.get("lora_strength", 1.0))
+    use_lora = bool(lora_path)
     dev = 0  # cuda:0
 
     t_load = time.time()
-    emit({"loading_status": "loading transformer (4-bit nf4) onto GPU…"})
     _t = time.time()
-    dbnb = DBnb(load_in_4bit=True, bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype=torch.bfloat16)
-    transformer = WanTransformer3DModel.from_pretrained(
-        MODEL_PATH, subfolder="transformer",
-        quantization_config=dbnb, torch_dtype=torch.bfloat16, device_map={"": dev})
+    if use_lora:
+        # LoRA applies cleanly to a bf16 transformer (a 4-bit base makes adapter
+        # scaling unreliable). The 1.3B transformer is only ~2.6 GB in bf16 and
+        # still fits with the text encoder freed before denoise.
+        emit({"loading_status": "loading transformer (bf16 — for LoRA)…"})
+        transformer = WanTransformer3DModel.from_pretrained(
+            MODEL_PATH, subfolder="transformer",
+            torch_dtype=torch.bfloat16, device_map={"": dev})
+    else:
+        emit({"loading_status": "loading transformer (4-bit nf4) onto GPU…"})
+        dbnb = DBnb(load_in_4bit=True, bnb_4bit_quant_type="nf4",
+                    bnb_4bit_compute_dtype=torch.bfloat16)
+        transformer = WanTransformer3DModel.from_pretrained(
+            MODEL_PATH, subfolder="transformer",
+            quantization_config=dbnb, torch_dtype=torch.bfloat16, device_map={"": dev})
     emit({"loading_status": f"  ⏱ transformer: {time.time()-_t:.0f}s"})
 
     emit({"loading_status": "loading VAE…"})
@@ -118,6 +162,18 @@ def load(cfg):
     if hasattr(PIPE, "vae") and hasattr(PIPE.vae, "enable_tiling"):
         PIPE.vae.enable_tiling()
     PIPE.set_progress_bar_config(disable=True)
+
+    if use_lora:
+        import os as _os
+        emit({"loading_status": f"applying LoRA {_os.path.basename(lora_path)} @ {lora_strength}…"})
+        try:
+            sd = _lora_state_dict(lora_path)
+            PIPE.load_lora_weights(sd, adapter_name="extra")
+            PIPE.set_adapters(["extra"], adapter_weights=[lora_strength])
+            emit({"loading_status": f"  ✓ LoRA applied ({len(sd)} keys)"})
+        except Exception as le:
+            emit({"loading_status": f"  ⚠ LoRA failed ({le}); continuing without it"})
+
     _free_cuda()
     used, _ = _vram()
     EMBED_CACHE["key"] = None   # invalidate any stale embeds from a previous model

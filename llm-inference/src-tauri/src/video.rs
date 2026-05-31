@@ -133,11 +133,54 @@ pub async fn video_load(
     handle: State<'_, VideoHandle>,
     window: WebviewWindow,
     model_path: String,
+    lora_path: Option<String>,
+    lora_strength: Option<f32>,
 ) -> Result<String, String> {
     let arc = handle.inner().clone();
-    tokio::task::spawn_blocking(move || do_load(arc, window, model_path))
+    tokio::task::spawn_blocking(move || do_load(arc, window, model_path, lora_path, lora_strength))
         .await
         .map_err(|e| format!("task join: {e}"))?
+}
+
+#[derive(Serialize, Clone)]
+pub struct LoraEntry { pub path: String, pub label: String }
+
+/// Scan for LoRA .safetensors — the managed loras dir + any `loras/` folders
+/// alongside the video models.
+#[tauri::command]
+pub fn video_scan_loras() -> Vec<LoraEntry> {
+    let mut out = Vec::new();
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Ok(home) = std::env::var("HOME") {
+        roots.push(PathBuf::from(format!("{home}/.config/ai-workshop/loras")));
+    }
+    for d in resolve::model_scan_dirs() {
+        roots.push(d.join("loras"));
+        roots.push(d);
+    }
+    for root in roots {
+        scan_loras(root, 2, &mut out);
+    }
+    out.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+    out.dedup_by(|a, b| a.path == b.path);
+    out
+}
+
+fn scan_loras(base: PathBuf, depth: usize, out: &mut Vec<LoraEntry>) {
+    let Ok(rd) = std::fs::read_dir(&base) else { return };
+    for entry in rd.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if depth > 0 { scan_loras(path, depth - 1, out); }
+        } else if path.extension().and_then(|e| e.to_str()) == Some("safetensors") {
+            // label = parent-dir name if file is generic (model.safetensors), else file stem
+            let stem = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+            let label = if stem == "model" || stem == "pytorch_lora_weights" {
+                path.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or(stem)
+            } else { stem };
+            out.push(LoraEntry { label, path: path.to_string_lossy().to_string() });
+        }
+    }
 }
 
 #[tauri::command]
@@ -179,7 +222,8 @@ pub async fn video_enhance(
 
 // ── Internal ────────────────────────────────────────────────────────────────
 
-fn do_load(arc: VideoHandle, window: WebviewWindow, model_path: String) -> Result<String, String> {
+fn do_load(arc: VideoHandle, window: WebviewWindow, model_path: String,
+           lora_path: Option<String>, lora_strength: Option<f32>) -> Result<String, String> {
     let mut guard = arc.lock().map_err(|e| e.to_string())?;
     *guard = None; // kill any existing daemon (frees VRAM)
 
@@ -199,7 +243,11 @@ fn do_load(arc: VideoHandle, window: WebviewWindow, model_path: String) -> Resul
     let mut stdin = BufWriter::new(child.stdin.take().ok_or("no stdin")?);
     let mut stdout = BufReader::new(child.stdout.take().ok_or("no stdout")?);
 
-    let cfg = serde_json::json!({ "model_path": model_path, "device": "auto" });
+    let cfg = serde_json::json!({
+        "model_path": model_path, "device": "auto",
+        "lora_path": lora_path.unwrap_or_default(),
+        "lora_strength": lora_strength.unwrap_or(1.0_f32),
+    });
     writeln!(stdin, "{cfg}").map_err(|e| format!("stdin write: {e}"))?;
     stdin.flush().map_err(|e| format!("stdin flush: {e}"))?;
 

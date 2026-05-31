@@ -148,6 +148,9 @@ export const ig = $state<IgState>({
 
 export const video = $state({
   models: [] as Array<{ path: string; label: string; pipeline: string }>,
+  loras: [] as Array<{ path: string; label: string }>,
+  loraPath: "",
+  loraStrength: 1.0,
   modelPath: "",
   loadedPath: "",
   loading: false,

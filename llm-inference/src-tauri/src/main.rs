@@ -1451,6 +1451,7 @@ fn main() {
             // Video gen
             video::video_scan_models, video::video_load, video::video_unload,
             video::video_loaded_model, video::video_generate, video::video_enhance,
+            video::video_scan_loras,
             // TTS
             tts::tts_voices, tts::tts_generate,
             // LoRA trainer
