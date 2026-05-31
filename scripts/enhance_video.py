@@ -196,11 +196,53 @@ def stage_upscale(frames, req):
     return out
 
 
-# ── Stage: interpolate (RIFE) — placeholder until the next phase ────────────────
+# ── Stage: interpolate (optical-flow, motion-compensated) ───────────────────────
+# Neural RIFE won't build on this box (ncnn wheel fails, no real Vulkan device), so
+# we interpolate with OpenCV DIS optical flow: estimate bidirectional flow between
+# each adjacent pair, backward-warp both toward the intermediate time, and blend.
+# That's true motion interpolation (content moves along the flow) rather than a
+# ghosty cross-fade — and it needs zero downloads.
+
+def _flow(prev_gray, next_gray):
+    import cv2
+    try:
+        dis = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_MEDIUM)
+        return dis.calc(prev_gray, next_gray, None)
+    except Exception:
+        return cv2.calcOpticalFlowFarneback(prev_gray, next_gray, None,
+                                             0.5, 3, 15, 3, 5, 1.2, 0)
+
 
 def stage_interpolate(frames, req):
-    emit({"loading_status": "interpolate: RIFE not wired yet — skipping (next phase)"})
-    return frames
+    import cv2, numpy as np
+    factor = int(req.get("interp_factor", 2))
+    frames = [to_uint8(f) for f in frames]
+    n = len(frames)
+    if factor < 2 or n < 2:
+        return frames
+
+    emit({"loading_status": f"interpolate: optical-flow {factor}× ({n}→{factor*(n-1)+1} frames)…"})
+    grays = [cv2.cvtColor(f, cv2.COLOR_RGB2GRAY) for f in frames]
+    h, w = frames[0].shape[:2]
+    gx, gy = np.meshgrid(np.arange(w, dtype=np.float32), np.arange(h, dtype=np.float32))
+
+    out = []
+    for i in range(n - 1):
+        f0, f1 = frames[i], frames[i + 1]
+        f01 = _flow(grays[i], grays[i + 1])
+        f10 = _flow(grays[i + 1], grays[i])
+        out.append(f0)
+        for k in range(1, factor):
+            t = k / factor
+            m0 = cv2.remap(f0, gx + t * f01[..., 0], gy + t * f01[..., 1],
+                           cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+            m1 = cv2.remap(f1, gx + (1 - t) * f10[..., 0], gy + (1 - t) * f10[..., 1],
+                           cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+            out.append(cv2.addWeighted(m0, 1 - t, m1, t, 0))
+        emit({"step": i + 1, "total": n - 1})
+    out.append(frames[-1])
+    emit({"loading_status": f"interpolate: {len(out)} frames @ {factor}× fps"})
+    return out
 
 
 STAGES = {"refine": stage_refine, "upscale": stage_upscale, "interpolate": stage_interpolate}

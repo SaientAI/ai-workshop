@@ -178,12 +178,12 @@
           <div class="qpass-toggles">
             <label><input type="checkbox" bind:checked={video.doRefine} disabled={video.enhancing} /> Refine <span class="qpass-tag">bf16 v2v</span></label>
             <label><input type="checkbox" bind:checked={video.doUpscale} disabled={video.enhancing} /> Upscale <span class="qpass-tag">2× ESRGAN</span></label>
-            <label class="qpass-soon"><input type="checkbox" checked={false} disabled /> Interpolate <span class="qpass-tag">soon</span></label>
+            <label><input type="checkbox" bind:checked={video.doInterpolate} disabled={video.enhancing} /> Interpolate <span class="qpass-tag">2× flow</span></label>
           </div>
           {#if video.doRefine}
             <div class="vrow"><span>Strength</span><input type="number" bind:value={video.refineStrength} min="0.1" max="0.9" step="0.05" disabled={video.enhancing} /></div>
           {/if}
-          <button class="qpass-run" onclick={enhance} disabled={video.enhancing || (!video.doRefine && !video.doUpscale)}>
+          <button class="qpass-run" onclick={enhance} disabled={video.enhancing || (!video.doRefine && !video.doUpscale && !video.doInterpolate)}>
             {video.enhancing ? (video.loadStatus || "Enhancing…") : "✨ Run Quality Pass"}
           </button>
           {#if video.enhancing}
@@ -247,7 +247,6 @@
   .qpass-sub { font-weight: 400; color: var(--text3); font-size: 11px; }
   .qpass-toggles { display: flex; flex-wrap: wrap; gap: 14px; }
   .qpass-toggles label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text2); cursor: pointer; }
-  .qpass-soon { opacity: 0.5; cursor: not-allowed; }
   .qpass-tag { font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text3); border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; }
   .qpass-run { align-self: flex-start; padding: 8px 18px; font-size: 13px; font-weight: 600; background: linear-gradient(135deg, #a855f7, #6366f1); border: none; color: #fff; border-radius: var(--radius); cursor: pointer; }
   .qpass-run:hover:not(:disabled) { filter: brightness(1.1); }
