@@ -62,8 +62,12 @@ def load(cfg):
     dev = 0
     t_load = time.time()
 
-    emit({"loading_status": "loading transformer (4-bit nf4) onto GPU…"})
+    # 16 GB reality: the transformer must be 4-bit AND the VAE decode must be tiled —
+    # no-tiling decode of 720-wide frames OOMs even at 25 frames (the decode, not the
+    # transformer, is the wall). So the only real anti-decay lever is FEWER FRAMES
+    # (shorter i2v horizon = less drift); the UI preset sets cog to 25.
     _t = time.time()
+    emit({"loading_status": "loading transformer (4-bit nf4) onto GPU…"})
     dbnb = DBnb(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=torch.bfloat16)
     transformer = CogVideoXTransformer3DModel.from_pretrained(
         MODEL_PATH, subfolder="transformer", quantization_config=dbnb,
@@ -86,7 +90,8 @@ def load(cfg):
         PIPE.vae.to(f"cuda:{dev}")
     except Exception:
         pass
-    for fn in ("enable_tiling", "enable_slicing"):
+    # Both required to fit the decode on 16 GB.
+    for fn in ("enable_slicing", "enable_tiling"):
         if hasattr(PIPE.vae, fn):
             getattr(PIPE.vae, fn)()
     PIPE.set_progress_bar_config(disable=True)

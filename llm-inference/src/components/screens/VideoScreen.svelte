@@ -42,7 +42,7 @@
   function presetFor(label: string, pipeline: string) {
     const l = label.toLowerCase(), p = pipeline.toLowerCase();
     if (p.includes("cogvideo"))
-      return { width: 720, height: 480, numFrames: 49, steps: 50, cfg: 6, fps: 8, resLocked: true };
+      return { width: 720, height: 480, numFrames: 25, steps: 50, cfg: 6, fps: 8, resLocked: true };
     if (l.includes("fastwan"))
       return { width: 832, height: 480, numFrames: 49, steps: 3,  cfg: 1, fps: 16, resLocked: false };
     if (l.includes("ti2v-5b") || l.includes("wan2.2"))
@@ -76,7 +76,7 @@
     logln(`▶ loading ${video.models.find(m => m.path === video.modelPath)?.label ?? "model"}…`);
     const un = await listen<string>("vidload-progress", (e) => { video.loadStatus = e.payload; logln(e.payload); });
     try {
-      await T.videoLoad(video.modelPath, video.loraPath, video.loraStrength);
+      await T.videoLoad(video.modelPath, video.loraPath, video.loraStrength, video.numFrames);
       video.loadedPath = video.modelPath; video.loadStatus = "";
       logln(video.loraPath ? `✓ model ready (+ LoRA @ ${video.loraStrength})` : "✓ model ready");
     } catch (e) { video.error = String(e); logln(`✗ load failed: ${e}`); }

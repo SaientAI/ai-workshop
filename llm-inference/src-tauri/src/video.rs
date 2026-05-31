@@ -136,9 +136,10 @@ pub async fn video_load(
     model_path: String,
     lora_path: Option<String>,
     lora_strength: Option<f32>,
+    frames: Option<u32>,
 ) -> Result<String, String> {
     let arc = handle.inner().clone();
-    tokio::task::spawn_blocking(move || do_load(arc, window, model_path, lora_path, lora_strength))
+    tokio::task::spawn_blocking(move || do_load(arc, window, model_path, lora_path, lora_strength, frames))
         .await
         .map_err(|e| format!("task join: {e}"))?
 }
@@ -224,7 +225,7 @@ pub async fn video_enhance(
 // ── Internal ────────────────────────────────────────────────────────────────
 
 fn do_load(arc: VideoHandle, window: WebviewWindow, model_path: String,
-           lora_path: Option<String>, lora_strength: Option<f32>) -> Result<String, String> {
+           lora_path: Option<String>, lora_strength: Option<f32>, frames: Option<u32>) -> Result<String, String> {
     let mut guard = arc.lock().map_err(|e| e.to_string())?;
     *guard = None; // kill any existing daemon (frees VRAM)
 
@@ -256,6 +257,7 @@ fn do_load(arc: VideoHandle, window: WebviewWindow, model_path: String,
         "model_path": model_path, "device": "auto",
         "lora_path": lora_path.unwrap_or_default(),
         "lora_strength": lora_strength.unwrap_or(1.0_f32),
+        "frames_hint": frames.unwrap_or(49),
     });
     writeln!(stdin, "{cfg}").map_err(|e| format!("stdin write: {e}"))?;
     stdin.flush().map_err(|e| format!("stdin flush: {e}"))?;

@@ -256,8 +256,8 @@ export interface EnhanceResult { enhanced_b64: string; frames: number; width: nu
 export interface LoraEntry { path: string; label: string }
 export const videoScanModels  = () => invoke<VideoModelEntry[]>("video_scan_models");
 export const videoScanLoras   = () => invoke<LoraEntry[]>("video_scan_loras");
-export const videoLoad        = (modelPath: string, loraPath?: string, loraStrength?: number) =>
-  invoke<string>("video_load", { modelPath, loraPath: loraPath || null, loraStrength: loraStrength ?? 1.0 });
+export const videoLoad        = (modelPath: string, loraPath?: string, loraStrength?: number, frames?: number) =>
+  invoke<string>("video_load", { modelPath, loraPath: loraPath || null, loraStrength: loraStrength ?? 1.0, frames: frames ?? 49 });
 export const videoUnload      = () => invoke<void>("video_unload");
 export const videoLoadedModel = () => invoke<string | null>("video_loaded_model");
 export const videoGenerate    = (payload: VideoPayload) => invoke<VideoResult>("video_generate", { payload });
