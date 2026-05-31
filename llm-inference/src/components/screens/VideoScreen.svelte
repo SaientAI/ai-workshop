@@ -28,11 +28,33 @@
     const cur = await T.videoLoadedModel().catch(() => null);
     if (cur) { video.loadedPath = cur; video.modelPath = cur; }
     else if (video.models.length && !video.modelPath) video.modelPath = video.models[0].path;
+    autoSet();   // snap params to the initially-selected model
   });
 
   async function refresh() {
     video.models = await T.videoScanModels().catch(() => video.models) as typeof video.models;
     video.loras = await T.videoScanLoras().catch(() => video.loras) as typeof video.loras;
+  }
+
+  // Per-model best/required settings. Different families want very different params
+  // (FastWan: 3 steps/CFG1; CogVideoX: hard-locked 720×480/50/CFG6/8fps). "Auto"
+  // snaps everything to the loaded model's sweet spot so you don't fight it.
+  function presetFor(label: string, pipeline: string) {
+    const l = label.toLowerCase(), p = pipeline.toLowerCase();
+    if (p.includes("cogvideo"))
+      return { width: 720, height: 480, numFrames: 49, steps: 50, cfg: 6, fps: 8, resLocked: true };
+    if (l.includes("fastwan"))
+      return { width: 832, height: 480, numFrames: 49, steps: 3,  cfg: 1, fps: 16, resLocked: false };
+    if (l.includes("ti2v-5b") || l.includes("wan2.2"))
+      return { width: 832, height: 480, numFrames: 49, steps: 30, cfg: 5, fps: 16, resLocked: false };
+    return { width: 832, height: 480, numFrames: 49, steps: 30, cfg: 5, fps: 16, resLocked: false }; // Wan2.1 default
+  }
+  function autoSet() {
+    const m = video.models.find((x) => x.path === video.modelPath);
+    if (!m) return;
+    const pr = presetFor(m.label, (m as any).pipeline ?? "");
+    video.width = pr.width; video.height = pr.height; video.numFrames = pr.numFrames;
+    video.steps = pr.steps; video.cfg = pr.cfg; video.fps = pr.fps; video.resLocked = pr.resLocked;
   }
 
   // i2v: pick a still image, read it to base64 (strip the data: prefix for the daemon)
@@ -125,7 +147,7 @@
 <div class="ig-layout">
   <div class="ig-sidebar">
     <div class="vlabel">Model</div>
-    <select class="vsel" bind:value={video.modelPath}>
+    <select class="vsel" bind:value={video.modelPath} onchange={autoSet}>
       <option value="">— select a video model —</option>
       {#each video.models as m}<option value={m.path}>{m.label}</option>{/each}
     </select>
@@ -147,15 +169,20 @@
       <div class="vhint">LoRA forces bf16 transformer. Re-Load after changing it.</div>
     {/if}
 
-    <div class="vlabel" style="margin-top:14px">Params</div>
+    <div class="vlabel" style="margin-top:14px; display:flex; justify-content:space-between; align-items:center">
+      <span>Params</span>
+      <button class="vauto" onclick={autoSet} title="Snap all params to this model's best/required settings">⚙ Auto</button>
+    </div>
     <div class="vrow"><span>Frames</span><input type="number" bind:value={video.numFrames} min="9" max="161" step="4" /></div>
-    <div class="vrow"><span>Steps</span><input type="number" bind:value={video.steps} min="5" max="60" /></div>
+    <div class="vrow"><span>Steps</span><input type="number" bind:value={video.steps} min="1" max="60" /></div>
     <div class="vrow"><span>CFG</span><input type="number" bind:value={video.cfg} min="1" max="15" step="0.5" /></div>
-    <div class="vrow"><span>Width</span><input type="number" bind:value={video.width} min="256" max="1280" step="16" /></div>
-    <div class="vrow"><span>Height</span><input type="number" bind:value={video.height} min="256" max="720" step="16" /></div>
-    <div class="vrow"><span>FPS</span><input type="number" bind:value={video.fps} min="8" max="30" /></div>
+    <div class="vrow"><span>Width</span><input type="number" bind:value={video.width} min="256" max="1360" step="16" disabled={video.resLocked} /></div>
+    <div class="vrow"><span>Height</span><input type="number" bind:value={video.height} min="256" max="768" step="16" disabled={video.resLocked} /></div>
+    <div class="vrow"><span>FPS</span><input type="number" bind:value={video.fps} min="6" max="30" /></div>
     <div class="vrow"><span>Seed</span><input type="number" bind:value={video.seed} /></div>
-    <div class="vhint" style="margin-top:4px">−1 seed = random. ~49 frames @ 16 fps ≈ 3 s clip.</div>
+    <div class="vhint" style="margin-top:4px">
+      {#if video.resLocked}🔒 This model locks resolution — Width/Height fixed.{:else}−1 seed = random. ~49 frames @ 16 fps ≈ 3 s clip.{/if}
+    </div>
 
     <div class="vlabel" style="margin-top:14px; display:flex; justify-content:space-between; align-items:center">
       <span>Activity</span>
@@ -246,6 +273,8 @@
   .vsel { width: 100%; margin-bottom: 4px; }
   .vbtn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text2); border-radius: var(--radius-sm); padding: 4px 8px; font-size: 11px; cursor: pointer; width: 100%; }
   .vbtn-ghost:hover { background: var(--bg3); color: var(--text); }
+  .vauto { font-size: 10px; font-weight: 600; background: var(--bg3); border: 1px solid var(--border); color: var(--text2); border-radius: var(--radius-sm); padding: 2px 8px; cursor: pointer; text-transform: none; letter-spacing: 0; }
+  .vauto:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
   .vhint { font-size: 9px; color: var(--text3); margin-top: 4px; line-height: 1.5; }
   .vrow { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
   .vrow span { font-size: 11px; color: var(--text2); min-width: 48px; }

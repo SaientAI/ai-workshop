@@ -153,6 +153,7 @@ export const video = $state({
   loraStrength: 1.0,
   imageB64: "",          // i2v input still (base64, no data: prefix)
   imageName: "",         // display name of the picked image
+  resLocked: false,      // model requires a fixed resolution (e.g. CogVideoX)
   modelPath: "",
   loadedPath: "",
   loading: false,

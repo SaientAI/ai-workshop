@@ -229,7 +229,15 @@ fn do_load(arc: VideoHandle, window: WebviewWindow, model_path: String,
     *guard = None; // kill any existing daemon (frees VRAM)
 
     let python = resolve::find_python().map_err(|e: anyhow::Error| e.to_string())?;
-    let script = resolve::find_script("generate_video.py").map_err(|e: anyhow::Error| e.to_string())?;
+    // Pick the daemon by model family (CogVideoX is a different architecture).
+    let model_index = std::fs::read_to_string(PathBuf::from(&model_path).join("model_index.json"))
+        .unwrap_or_default();
+    let script_name = if model_index.contains("CogVideo") {
+        "generate_cogvideo.py"
+    } else {
+        "generate_video.py"
+    };
+    let script = resolve::find_script(script_name).map_err(|e: anyhow::Error| e.to_string())?;
 
     let _ = window.emit("vidload-progress", "Starting Python…");
 

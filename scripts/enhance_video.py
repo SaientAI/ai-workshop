@@ -114,6 +114,17 @@ def stage_refine(frames, req):
     from transformers import BitsAndBytesConfig as TBnb
 
     model_path = req["model_path"]
+    # Refine is Wan-specific (Wan v2v pipeline). On a non-Wan model (e.g. CogVideoX)
+    # skip it cleanly so upscale/interpolate still run — those are model-agnostic and
+    # are the bigger wins for a CogVideoX clip anyway (720→1440, 8→16 fps).
+    try:
+        with open(os.path.join(model_path, "model_index.json")) as f:
+            mi = f.read()
+    except Exception:
+        mi = ""
+    if "Wan" not in mi:
+        emit({"loading_status": "refine: Wan-only for now — skipping (upscale/interpolate still run)"})
+        return frames
     emit({"loading_status": "refine: loading transformer (bf16 — full precision)…"})
     # No quantization: the 1.3B transformer is ~2.6 GB in bf16 and the GPU is all
     # ours now, so we run it at full quality instead of 4-bit.
@@ -298,9 +309,13 @@ def main():
             if fn is None:
                 emit({"loading_status": f"unknown stage '{name}' — skipped"})
                 continue
-            frames = fn(frames, req)
-            if name == "interpolate":
-                fps *= int(req.get("interp_factor", 2))
+            try:                                   # one bad stage must not kill the pass
+                frames = fn(frames, req)
+                if name == "interpolate":
+                    fps *= int(req.get("interp_factor", 2))
+            except Exception as se:
+                emit({"loading_status": f"  ⚠ {name} failed ({se}); skipping — other stages continue"})
+                _free_cuda()
         emit({"loading_status": "encoding result…"})
         frames = [to_uint8(f) for f in frames]   # final guard before mp4 encode
         b64 = frames_to_b64(frames, fps)
