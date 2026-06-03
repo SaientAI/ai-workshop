@@ -229,21 +229,45 @@ def stage_upscale(frames, req):
     return out
 
 
-# ── Stage: interpolate (optical-flow, motion-compensated) ───────────────────────
+# ── Stage: interpolate (robust optical-flow, motion-compensated) ────────────────
 # Neural RIFE won't build on this box (ncnn wheel fails, no real Vulkan device), so
 # we interpolate with OpenCV DIS optical flow: estimate bidirectional flow between
-# each adjacent pair, backward-warp both toward the intermediate time, and blend.
-# That's true motion interpolation (content moves along the flow) rather than a
-# ghosty cross-fade — and it needs zero downloads.
+# each adjacent pair, warp both toward the intermediate time, and blend — true
+# motion interpolation (content moves along the flow), zero downloads.
+#
+# ANTI-STROBE (the "disco lights" fix): raw flow warping sprays colored speckle
+# wherever the flow is WRONG — occlusion boundaries (a moving silhouette reveals/
+# hides background) and low-texture regions (sky, grass, walls) where DIS has nothing
+# to lock onto. Frame to frame that speckle flickers = strobing. Three guards:
+#   1. blur the flow field → kills isolated speckle vectors,
+#   2. forward/backward consistency check → flow that doesn't round-trip is untrusted,
+#   3. where flow is untrusted, fall back to a plain cross-dissolve (smooth, never
+#      speckly) instead of a garbage warp.
+# Real motion-compensation where flow is reliable; graceful cross-fade where it isn't.
+# (The warp sign is `gx - t*flow`: DIS returns prev→next displacement and remap is a
+# backward map, so to advance frame i forward by t we SAMPLE at gx - t*flow. Verified.)
 
 def _flow(prev_gray, next_gray):
     import cv2
     try:
         dis = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_MEDIUM)
+        dis.setUseSpatialPropagation(True)
         return dis.calc(prev_gray, next_gray, None)
     except Exception:
         return cv2.calcOpticalFlowFarneback(prev_gray, next_gray, None,
                                              0.5, 3, 15, 3, 5, 1.2, 0)
+
+
+def _flow_confidence(fa, fb, gx, gy, sigma=3.0):
+    """Confidence in [0,1]: ~1 where forward flow `fa` and backward flow `fb` cancel
+    (reliable), ~0 where they don't (occlusion / textureless region — where the
+    strobe speckle is born). `sigma` px sets how much round-trip error we tolerate."""
+    import cv2, numpy as np
+    mapx = (gx + fa[..., 0]).astype(np.float32)
+    mapy = (gy + fa[..., 1]).astype(np.float32)
+    fb_at = cv2.remap(fb, mapx, mapy, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+    err = np.linalg.norm(fa + fb_at, axis=2)        # round-trip residual, px
+    return np.exp(-(err / sigma) ** 2)
 
 
 def stage_interpolate(frames, req):
@@ -254,27 +278,33 @@ def stage_interpolate(frames, req):
     if factor < 2 or n < 2:
         return frames
 
-    emit({"loading_status": f"interpolate: optical-flow {factor}× ({n}→{factor*(n-1)+1} frames)…"})
+    emit({"loading_status": f"interpolate: robust optical-flow {factor}× ({n}→{factor*(n-1)+1} frames)…"})
     grays = [cv2.cvtColor(f, cv2.COLOR_RGB2GRAY) for f in frames]
     h, w = frames[0].shape[:2]
     gx, gy = np.meshgrid(np.arange(w, dtype=np.float32), np.arange(h, dtype=np.float32))
 
     out = []
     for i in range(n - 1):
-        f0, f1 = frames[i], frames[i + 1]
-        f01 = _flow(grays[i], grays[i + 1])
-        f10 = _flow(grays[i + 1], grays[i])
-        out.append(f0)
+        f0, f1 = frames[i].astype(np.float32), frames[i + 1].astype(np.float32)
+        f01 = cv2.GaussianBlur(_flow(grays[i], grays[i + 1]), (0, 0), 1.2)
+        f10 = cv2.GaussianBlur(_flow(grays[i + 1], grays[i]), (0, 0), 1.2)
+        conf = np.minimum(_flow_confidence(f01, f10, gx, gy),     # trust only where
+                          _flow_confidence(f10, f01, gx, gy))     # both directions agree
+        conf = cv2.GaussianBlur(conf, (0, 0), 2.0)[..., None]     # soften mask edges
+        out.append(frames[i])
         for k in range(1, factor):
             t = k / factor
-            m0 = cv2.remap(f0, gx + t * f01[..., 0], gy + t * f01[..., 1],
+            m0 = cv2.remap(f0, gx - t * f01[..., 0], gy - t * f01[..., 1],
                            cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
-            m1 = cv2.remap(f1, gx + (1 - t) * f10[..., 0], gy + (1 - t) * f10[..., 1],
+            m1 = cv2.remap(f1, gx - (1 - t) * f10[..., 0], gy - (1 - t) * f10[..., 1],
                            cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
-            out.append(cv2.addWeighted(m0, 1 - t, m1, t, 0))
+            warped = m0 * (1 - t) + m1 * t                        # motion-compensated
+            cross = f0 * (1 - t) + f1 * t                         # safe fallback
+            mid = warped * conf + cross * (1 - conf)
+            out.append(np.clip(mid, 0, 255).astype(np.uint8))
         emit({"step": i + 1, "total": n - 1})
     out.append(frames[-1])
-    emit({"loading_status": f"interpolate: {len(out)} frames @ {factor}× fps"})
+    emit({"loading_status": f"interpolate: {len(out)} frames @ {factor}× fps (flow-guarded)"})
     return out
 
 

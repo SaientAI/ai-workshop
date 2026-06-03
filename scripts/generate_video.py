@@ -135,12 +135,35 @@ def load(cfg):
             MODEL_PATH, subfolder="transformer",
             torch_dtype=torch.bfloat16, device_map={"": dev})
     else:
-        emit({"loading_status": "loading transformer (4-bit nf4) onto GPU…"})
-        dbnb = DBnb(load_in_4bit=True, bnb_4bit_quant_type="nf4",
-                    bnb_4bit_compute_dtype=torch.bfloat16)
-        transformer = WanTransformer3DModel.from_pretrained(
-            MODEL_PATH, subfolder="transformer",
-            quantization_config=dbnb, torch_dtype=torch.bfloat16, device_map={"": dev})
+        # PRE-QUANTIZED 4-bit cache (mirrors the umt5 TE cache). The bitsandbytes nf4
+        # quantize-on-load reads the bf16 shards and packs them (~54s/shard → ~4.5 min
+        # for the 5B). We do it ONCE, save the packed 4-bit to disk, and load THAT every
+        # later time (no re-read, no re-quantize → seconds). Keyed per model.
+        import hashlib
+        key = os.path.basename(os.path.normpath(MODEL_PATH)) or hashlib.md5(MODEL_PATH.encode()).hexdigest()[:8]
+        t_cache = os.path.expanduser(f"~/.config/ai-workshop/wan-transformer-4bit/{key}")
+        transformer = None
+        if os.path.exists(os.path.join(t_cache, "config.json")):
+            emit({"loading_status": "loading pre-quantized transformer (cached 4-bit)…"})
+            try:
+                transformer = WanTransformer3DModel.from_pretrained(
+                    t_cache, torch_dtype=torch.bfloat16, device_map={"": dev})
+            except Exception as ce:
+                emit({"loading_status": f"  ⚠ transformer cache load failed ({ce}); rebuilding…"})
+                transformer = None
+        if transformer is None:
+            emit({"loading_status": "loading transformer (4-bit nf4) + caching for next time…"})
+            dbnb = DBnb(load_in_4bit=True, bnb_4bit_quant_type="nf4",
+                        bnb_4bit_compute_dtype=torch.bfloat16)
+            transformer = WanTransformer3DModel.from_pretrained(
+                MODEL_PATH, subfolder="transformer",
+                quantization_config=dbnb, torch_dtype=torch.bfloat16, device_map={"": dev})
+            try:
+                os.makedirs(t_cache, exist_ok=True)
+                transformer.save_pretrained(t_cache)
+                emit({"loading_status": "  ✓ transformer cached — fast loads from now on"})
+            except Exception as se:
+                emit({"loading_status": f"  ⚠ couldn't cache 4-bit transformer ({se})"})
     emit({"loading_status": f"  ⏱ transformer: {time.time()-_t:.0f}s"})
 
     emit({"loading_status": "loading VAE…"})
@@ -175,7 +198,16 @@ def load(cfg):
     except Exception:
         pass
     if hasattr(PIPE, "vae") and hasattr(PIPE.vae, "enable_tiling"):
-        PIPE.vae.enable_tiling()
+        # EXPLICIT tile sizes — the no-arg enable_tiling() did NOT actually bound the
+        # Wan2.2-5B decode (measured +8.6 GB spike → OOM), but explicit tile+stride does:
+        # 256px tiles drop the 480×832×49 decode spike to +1.6 GB (peak 4.3 GB) for ~+11s.
+        # That's what makes the 5B fit 16 GB. Harmless on the 1.3B (its decode is tiny).
+        try:
+            PIPE.vae.enable_tiling(
+                tile_sample_min_height=256, tile_sample_min_width=256,
+                tile_sample_stride_height=224, tile_sample_stride_width=224)
+        except TypeError:
+            PIPE.vae.enable_tiling()   # older diffusers without the kwargs
     PIPE.set_progress_bar_config(disable=True)
 
     if use_lora:
@@ -268,6 +300,33 @@ def _i2v_pipe():
     return I2V_PIPE
 
 
+def _decode_latents(latents):
+    """Decode denoised latents → frames, OUTSIDE the pipeline — so two things are on us:
+
+    1. torch.no_grad() — THE fix. The VAE's params are requires_grad=True, so calling
+       vae.decode outside the pipeline's own @torch.no_grad() builds a full autograd graph
+       and retains EVERY decoder activation → ~+11 GB and a guaranteed OOM on the 5B. (The
+       inline pipeline decode never hit this; my output_type="latent" refactor moved the
+       decode out of that no-grad context, which is what introduced the OOM.) Verified in
+       isolation: grad-enabled OOMs, no_grad fits.
+    2. output_type="latent" upstream + _free_cuda() here drop the denoise tensors before we
+       decode, and with the explicit VAE tiling set in load() the 480×832×49 decode then
+       peaks ~1.6 GB (fp32). Denorm replicates WanPipeline.__call__ exactly."""
+    import torch
+    vae = PIPE.vae
+    _free_cuda()                              # reclaim denoise tensors before the decode
+    if next(vae.parameters()).device.type != "cuda":
+        vae.to("cuda:0")                      # was parked on CPU during denoise → back for decode
+    zc = vae.config.z_dim
+    with torch.no_grad():
+        lat = latents.to(vae.dtype)
+        mean = torch.tensor(vae.config.latents_mean).view(1, zc, 1, 1, 1).to(lat.device, lat.dtype)
+        std = 1.0 / torch.tensor(vae.config.latents_std).view(1, zc, 1, 1, 1).to(lat.device, lat.dtype)
+        lat = lat / std + mean
+        video = vae.decode(lat, return_dict=False)[0]
+    return PIPE.video_processor.postprocess_video(video, output_type="np")[0]
+
+
 def generate(req):
     import torch
     from diffusers.utils import export_to_video
@@ -316,6 +375,10 @@ def generate(req):
     image_b64 = (req.get("image_b64") or "").strip()
 
     t_dn = time.time()
+    # output_type="latent": the pipe RETURNS the denoised latents without decoding, so
+    # the denoise activation set is freed before the VAE decode. The Wan2.2-5B VAE (48
+    # latent ch) decode is heavy and was OOMing by ~130 MB when run inline (denoise
+    # tensors still resident). We decode separately below with the GPU freed.
     if image_b64:
         # ── Image-to-video ──────────────────────────────────────────────────────
         import io
@@ -323,32 +386,45 @@ def generate(req):
         img = Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB").resize((width, height))
         pipe = _i2v_pipe()
         emit({"loading_status": "i2v: conditioning on your image, denoising…"})
-        frames = pipe(
+        latents = pipe(
             image=img,
             prompt_embeds=pe, negative_prompt_embeds=ne,
             height=height, width=width, num_frames=num_frames,
             num_inference_steps=total, guidance_scale=cfg_scale,
             generator=generator, callback_on_step_end=cb,
-        ).frames[0]
+            output_type="latent",
+        ).frames
     else:
+        # Headroom: a heavy VAE (5B, 48-ch) isn't used during t2v denoise — park it on CPU
+        # to give the denoise ~2.6 GB more room (so 480p/49f has real margin and a modest
+        # res bump fits). _decode_latents moves it back for decode. (i2v keeps the VAE
+        # resident — it encodes the input image inside the pipe call, so we don't offload there.)
+        try:
+            if int(getattr(PIPE.vae.config, "z_dim", 16) or 16) >= 32:
+                PIPE.vae.to("cpu"); _free_cuda()
+                emit({"loading_status": "headroom: VAE parked on CPU during denoise…"})
+        except Exception:
+            pass
         emit({"loading_status": "denoising…"})
-        frames = PIPE(
+        latents = PIPE(
             prompt_embeds=pe, negative_prompt_embeds=ne,
             height=height, width=width, num_frames=num_frames,
             num_inference_steps=total, guidance_scale=cfg_scale,
             generator=generator, callback_on_step_end=cb,
-        ).frames[0]
+            output_type="latent",
+        ).frames
+    t_dn_end = time.time()
+    del pe, ne
+    resident = torch.cuda.memory_allocated() / 2**30 if torch.cuda.is_available() else 0.0
+    emit({"loading_status": f"denoise done ({t_dn_end - t_dn:.0f}s) · {resident:.1f} GB resident · decoding (GPU freed)…"})
+    frames = _decode_latents(latents)
+    del latents
     t_after = time.time()
-    # Split: denoise ≈ first→last callback; VAE decode ≈ last callback→return.
-    if marks["first"] and marks["last"]:
-        denoise_s = marks["last"] - marks["first"]
-        decode_s = t_after - marks["last"]
-    else:
-        denoise_s, decode_s = t_after - t_dn, 0.0
+    denoise_s = (marks["last"] - marks["first"]) if (marks["first"] and marks["last"]) else (t_dn_end - t_dn)
+    decode_s = t_after - t_dn_end
     _, peak = _vram()
     sps = denoise_s / max(total - 1, 1)
     emit({"loading_status": f"  ⏱ denoise: {denoise_s:.0f}s ({sps:.1f}s/step) · decode: {decode_s:.0f}s · peak VRAM {peak:.1f} GB"})
-    del pe, ne
     _free_cuda()
 
     fps = int(req.get("fps", 16))
