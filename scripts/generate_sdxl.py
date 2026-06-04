@@ -192,11 +192,20 @@ def _detail_faces(pipe, device, req, image):
 
     is_xl = isinstance(pipe, StableDiffusionXLPipeline)
     I2I = StableDiffusionXLImg2ImgPipeline if is_xl else StableDiffusionImg2ImgPipeline
-    try:
-        img2img = I2I.from_pipe(pipe)
-    except Exception:
-        img2img = I2I(**pipe.components)
-    img2img.set_progress_bar_config(disable=True)
+    # CACHE a shared img2img on the pipe. `from_pipe` was leaking a full ~6.5 GB UNet duplicate
+    # on EVERY generation (never freed) → VRAM stacked to OOM by the 2nd run. Build it ONCE from
+    # the base pipe's exact module objects (same tensors, nothing copied) and reuse it.
+    img2img = getattr(pipe, "_adetailer_i2i", None)
+    if img2img is None:
+        if is_xl:
+            img2img = I2I(vae=pipe.vae, unet=pipe.unet, scheduler=pipe.scheduler,
+                          text_encoder=pipe.text_encoder, text_encoder_2=pipe.text_encoder_2,
+                          tokenizer=pipe.tokenizer, tokenizer_2=pipe.tokenizer_2)
+        else:
+            img2img = I2I.from_pipe(pipe)  # SD1.5 path (small; rare)
+        img2img.set_progress_bar_config(disable=True)
+        pipe._adetailer_i2i = img2img
+    img2img.scheduler = pipe.scheduler  # keep in sync with the current generation's scheduler
     # VAE slicing keeps the per-face decode cheap so the detail pass fits alongside the base pipe.
     for fn in ("enable_vae_slicing", "enable_vae_tiling"):
         if hasattr(img2img, fn):
@@ -252,15 +261,22 @@ def _detail_faces(pipe, device, req, image):
         out[cy0:cy1, cx0:cx1] = np.array(Image.composite(fixed, crop, mask))
         n += 1
 
-    del img2img
+    # NOTE: img2img is cached on pipe (shares weights) — do NOT delete it. Just drop the
+    # face-pass activations.
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     return Image.fromarray(out), n
 
 
 def generate_image(pipe, device, req):
-    import torch
+    import torch, gc
     from diffusers import StableDiffusionXLPipeline, StableDiffusionPipeline
+
+    # Release whatever the previous generation left reserved BEFORE we start. Without this,
+    # each run's peak (the base gen + the hi-res face-detailer img2img) stacks on the last
+    # run's leftovers and eventually OOMs — the "worked the first run then dies" symptom.
+    if torch.cuda.is_available():
+        gc.collect(); torch.cuda.empty_cache()
 
     prompt      = req.get("prompt", "").strip()
     neg_prompt  = req.get("neg_prompt", "").strip()
@@ -318,6 +334,10 @@ def generate_image(pipe, device, req):
     buf = io.BytesIO()
     image.save(buf, format="PNG")
     b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+    # Leave a clean slate so the next generation starts from the resident weights, not a
+    # fragmented heap full of this run's activations.
+    if torch.cuda.is_available():
+        gc.collect(); torch.cuda.empty_cache()
     return {"base64_png": b64, "device": device, "elapsed": round(elapsed, 1)}
 
 
