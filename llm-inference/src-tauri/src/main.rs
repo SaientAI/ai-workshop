@@ -201,9 +201,25 @@ async fn load_model(
         let _ = engine::stop_tinyq4_server(srv.port);
     }
 
-    // Give CUDA time to free VRAM before starting new one
+    // Wait for the killed servers to actually release VRAM before spawning the new one.
+    // A blind sleep used to race the CUDA teardown — the new model would start allocating
+    // while the old one still held 7-9 GB, and tinyq4 would OOM-panic ("did not become
+    // ready"). Poll nvidia-smi until free VRAM stops climbing (teardown done), cap ~15s.
     phase!("freeing_vram", "Freeing VRAM…");
-    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+    if let Some(mut last) = engine::gpu_free_mib() {
+        let start = std::time::Instant::now();
+        let mut settled = 0;
+        while start.elapsed() < tokio::time::Duration::from_secs(15) {
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            let Some(now) = engine::gpu_free_mib() else { break };
+            if now <= last + 64 { settled += 1; } else { settled = 0; } // <64 MiB change = stable
+            last = now;
+            if settled >= 3 { break; } // ~1.5 s with no further release
+        }
+    } else {
+        // No nvidia-smi (CPU box) — fall back to the old fixed grace.
+        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+    }
 
     phase!("launching", "Launching tinyq4…");
     let result = Engine::load(Path::new(&model_path), gpu_layers, ctx_size)

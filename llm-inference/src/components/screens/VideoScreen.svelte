@@ -42,7 +42,12 @@
   function presetFor(label: string, pipeline: string) {
     const l = label.toLowerCase(), p = pipeline.toLowerCase();
     if (p.includes("cogvideo"))
-      return { width: 720, height: 480, numFrames: 25, steps: 50, cfg: 6, fps: 8, resLocked: true };
+      // 49 frames is NATIVE for CogVideoX-5b-I2V — it MUST be 49 (the model is trained at
+      // 49 and its temporal position embeddings assume it). A previous "25 frames to reduce
+      // drift" tweak actually CORRUPTED the temporal embeddings → the whole clip diverged
+      // into a rainbow/waffle field by mid-clip. 49 is both coherent AND fits 16 GB (~14.5 GB
+      // peak with VAE tiling). Do not lower this below 49.
+      return { width: 720, height: 480, numFrames: 49, steps: 50, cfg: 6, fps: 8, resLocked: true };
     if (l.includes("fastwan"))
       return { width: 832, height: 480, numFrames: 49, steps: 3,  cfg: 1, fps: 16, resLocked: false };
     if (l.includes("ti2v-5b") || l.includes("wan2.2"))

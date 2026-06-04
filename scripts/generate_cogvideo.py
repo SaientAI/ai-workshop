@@ -63,9 +63,11 @@ def load(cfg):
     t_load = time.time()
 
     # 16 GB reality: the transformer must be 4-bit AND the VAE decode must be tiled —
-    # no-tiling decode of 720-wide frames OOMs even at 25 frames (the decode, not the
-    # transformer, is the wall). So the only real anti-decay lever is FEWER FRAMES
-    # (shorter i2v horizon = less drift); the UI preset sets cog to 25.
+    # no-tiling decode of 720-wide frames OOMs (the decode, not the transformer, is the wall).
+    # CRITICAL: keep num_frames at the NATIVE 49. CogVideoX-5b-I2V is trained at 49 frames and
+    # its temporal position embeddings assume it; running fewer (e.g. 25) corrupts them and the
+    # clip diverges into a rainbow/waffle field by mid-clip. 49 frames is coherent AND fits
+    # (~14.5 GB peak with tiling). Do NOT lower frames to "reduce drift" — that CAUSES the drift.
     _t = time.time()
     emit({"loading_status": "loading transformer (4-bit nf4) onto GPU…"})
     dbnb = DBnb(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=torch.bfloat16)

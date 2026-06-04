@@ -200,11 +200,12 @@ impl Engine {
         spawned_pids().lock().unwrap().push(pid);
         let _ = std::fs::write(PID_FILE, pid.to_string());
 
-        if let Err(e) = wait_for_server(&client, port).await {
+        if let Err(e) = wait_for_ready(&client, port, &mut process).await {
             let _ = process.kill();
             let _ = process.wait();
-            return Err(e).with_context(|| format!("{:?} did not become ready", server_bin));
+            return Err(e);
         }
+        let _ = server_bin; // (kept for the spawn above; readiness errors are self-describing)
 
         Ok(Self { _process: Some(process), port, client, summary })
     }
@@ -671,15 +672,57 @@ fn find_free_port() -> Result<u16> {
     Ok(listener.local_addr()?.port())
 }
 
-async fn wait_for_server(client: &Client, port: u16) -> Result<()> {
+async fn wait_for_ready(client: &Client, port: u16, process: &mut Child) -> Result<()> {
     let url = format!("http://127.0.0.1:{}/health", port);
-    for _ in 0..600 {   // 5 minutes; larger GGUFs can spend minutes uploading to CUDA
+    for _ in 0..600 {   // up to 5 minutes; larger GGUFs can spend minutes uploading to CUDA
+        // Fail FAST if tinyq4 already died (e.g. a cudaMalloc OOM panic). Otherwise we'd
+        // pointlessly poll a dead process for 5 minutes and report a useless timeout.
+        if let Ok(Some(status)) = process.try_wait() {
+            let why = last_tinyq4_error()
+                .unwrap_or_else(|| format!("tinyq4 exited ({status}) during model load"));
+            anyhow::bail!("{why}");
+        }
         tokio::time::sleep(Duration::from_millis(500)).await;
         if let Ok(r) = client.get(&url).send().await {
             if r.status().is_success() { return Ok(()); }
         }
     }
-    anyhow::bail!("Server health check timed out after 5 minutes. The model may be too large for available GPU memory or unsupported by tinyq4; see /tmp/ai-workshop-tinyq4.log for details.")
+    let tail = last_tinyq4_error().map(|s| format!(" ({s})")).unwrap_or_default();
+    anyhow::bail!("Model didn't become ready within 5 minutes{tail}")
+}
+
+/// Extract the most useful error line from the tinyq4 log so the UI can show the real
+/// reason a load failed (CUDA OOM, panic, …) instead of a generic "did not become ready".
+fn last_tinyq4_error() -> Option<String> {
+    let log = std::fs::read_to_string("/tmp/ai-workshop-tinyq4.log").ok()?;
+    let recent: Vec<&str> = log.lines().rev().take(40).collect();
+    for line in &recent {
+        let l = line.to_lowercase();
+        if l.contains("cudamalloc") || l.contains("out of memory") || l.contains(" oom") {
+            return Some(format!(
+                "GPU out of memory — another model is still using VRAM. Stop it (or your other tinyq4/Kairo server) and try again."
+            ));
+        }
+        if l.contains("panicked") {
+            return Some(format!("tinyq4 crashed: {}", line.trim()));
+        }
+    }
+    recent.first().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+/// Free VRAM in MiB via nvidia-smi (first GPU). `None` if nvidia-smi is unavailable.
+pub fn gpu_free_mib() -> Option<u64> {
+    let out = Command::new("nvidia-smi")
+        .args(["--query-gpu=memory.free", "--format=csv,noheader,nounits"])
+        .output()
+        .ok()?;
+    if !out.status.success() { return None; }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .next()?
+        .trim()
+        .parse()
+        .ok()
 }
 
 // ── Handle ─────────────────────────────────────────────────────────────────────
