@@ -15,6 +15,10 @@ import base64, io, json, os, sys, time
 
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
+# Lets PyTorch reuse reserved-but-unallocated blocks instead of OOMing on fragmentation —
+# the face-detail img2img pass needs ~0.5 GB on top of the resident base pipeline and was
+# failing with hundreds of MB "reserved but unallocated". Must be set before CUDA init.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 _MODEL_DIRS = ["/home/tiny/models", "/home/tiny/projects/models"]
 
@@ -146,6 +150,114 @@ def apply_scheduler(pipe, scheduler_id):
         pipe.scheduler = DPMSolverMultistepScheduler.from_config(cfg)
 
 
+def _detail_faces(pipe, device, req, image):
+    """ADetailer-style face fix. Base SDXL renders small faces (full-body shots → the face
+    is often <10% of the frame) as soft, 'melted' blobs because there just aren't enough
+    pixels. We detect each face, regenerate JUST that region at ~1024px via img2img at low
+    strength (adds detail, keeps identity/pose), and feather it back. Reuses the already-
+    loaded pipeline weights — no extra model load. Best-effort: any failure returns the base
+    image untouched. Returns (image, n_fixed)."""
+    import torch, numpy as np, cv2
+    from PIL import Image, ImageFilter, ImageDraw
+    from diffusers import (StableDiffusionXLPipeline, StableDiffusionXLImg2ImgPipeline,
+                           StableDiffusionImg2ImgPipeline)
+
+    arr = np.array(image.convert("RGB"))
+    h, w = arr.shape[:2]
+    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+    casc = cv2.data.haarcascades
+    detected = []
+    for xml in ("haarcascade_frontalface_default.xml", "haarcascade_profileface.xml"):
+        c = cv2.CascadeClassifier(casc + xml)
+        for f in c.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=6, minSize=(24, 24)):
+            detected.append(tuple(int(v) for v in f))
+    # De-dup overlapping detections (frontal+profile can both fire) and skip close-ups that
+    # are already detailed enough (face wider than ~45% of the frame).
+    faces = []
+    for (x, y, fw, fh) in sorted(detected, key=lambda f: -f[2] * f[3]):
+        if fw >= 0.45 * w:
+            continue
+        cx, cy = x + fw / 2, y + fh / 2
+        if any(abs(cx - (px + pw / 2)) < pw * 0.6 and abs(cy - (py + ph / 2)) < ph * 0.6
+               for (px, py, pw, ph) in faces):
+            continue
+        faces.append((x, y, fw, fh))
+    if not faces:
+        return image, 0
+
+    # Reclaim the base generation's leftover activation/VAE buffers before the face pass —
+    # without this the img2img can OOM by a few hundred MB on a full 16 GB card.
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    is_xl = isinstance(pipe, StableDiffusionXLPipeline)
+    I2I = StableDiffusionXLImg2ImgPipeline if is_xl else StableDiffusionImg2ImgPipeline
+    try:
+        img2img = I2I.from_pipe(pipe)
+    except Exception:
+        img2img = I2I(**pipe.components)
+    img2img.set_progress_bar_config(disable=True)
+    # VAE slicing keeps the per-face decode cheap so the detail pass fits alongside the base pipe.
+    for fn in ("enable_vae_slicing", "enable_vae_tiling"):
+        if hasattr(img2img, fn):
+            try: getattr(img2img, fn)()
+            except Exception: pass
+
+    strength = max(0.2, min(0.7, float(req.get("face_detail_strength", 0.45))))
+    fsteps = max(20, int(req.get("steps", 20)))
+    cfg = float(req.get("cfg_scale", 7.0))
+    base_prompt = req.get("prompt", "").strip()
+    fprompt = (base_prompt + ", detailed face, sharp eyes, detailed skin, sharp focus").strip(", ")
+    fneg = req.get("neg_prompt", "").strip()
+    seed = int(req.get("seed", 42))
+
+    out = arr.copy()
+    n = 0
+    for (x, y, fw, fh) in faces:
+        pad = int(fw * 0.6)                                  # include hair / jaw / neck context
+        cx0, cy0 = max(0, x - pad), max(0, y - pad)
+        cx1, cy1 = min(w, x + fw + pad), min(h, y + fh + pad)
+        crop = Image.fromarray(out[cy0:cy1, cx0:cx1])
+        cw, ch = crop.size
+        if cw < 16 or ch < 16:
+            continue
+        # Detail the face at high res, but CAP by free VRAM: the base pipeline stays resident
+        # (~6.5 GB) and a full 1024px img2img peaks ~8.8 GB → together they OOM a 16 GB card.
+        # 768-896px is already plenty of detail for a face and leaves comfortable headroom.
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            free_gb = torch.cuda.mem_get_info()[0] / 2**30
+        else:
+            free_gb = 99.0
+        target = 1024 if free_gb > 9.5 else (896 if free_gb > 7.0 else 768)
+        scale = target / max(cw, ch)                          # face detail, fit to VRAM
+        tw = max(8, int(cw * scale) // 8 * 8)
+        th = max(8, int(ch * scale) // 8 * 8)
+        work = crop.resize((tw, th), Image.LANCZOS)
+        g = torch.Generator(device=device).manual_seed(seed + 1 + n)
+        kw = dict(image=work, strength=strength, num_inference_steps=fsteps,
+                  guidance_scale=cfg, generator=g, prompt=fprompt)
+        if is_xl:
+            kw["prompt_2"] = fprompt
+        if fneg:
+            kw["negative_prompt"] = fneg
+            if is_xl:
+                kw["negative_prompt_2"] = fneg
+        fixed = img2img(**kw).images[0].resize((cw, ch), Image.LANCZOS)
+        # Feathered ellipse so the regenerated face blends in with no box seam.
+        mask = Image.new("L", (cw, ch), 0)
+        m = int(min(cw, ch) * 0.10)
+        ImageDraw.Draw(mask).ellipse((m, m, cw - m, ch - m), fill=255)
+        mask = mask.filter(ImageFilter.GaussianBlur(max(4, min(cw, ch) // 12)))
+        out[cy0:cy1, cx0:cx1] = np.array(Image.composite(fixed, crop, mask))
+        n += 1
+
+    del img2img
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    return Image.fromarray(out), n
+
+
 def generate_image(pipe, device, req):
     import torch
     from diffusers import StableDiffusionXLPipeline, StableDiffusionPipeline
@@ -189,6 +301,18 @@ def generate_image(pipe, device, req):
 
     t0 = time.time()
     image = pipe(**kwargs).images[0]
+
+    # ADetailer-style face pass — re-detail small faces at hi-res. Base SDXL produces soft/
+    # "melted" faces in full-body shots because the face is only ~9% of the frame. On by
+    # default; auto-skips when no (small) face is found, so close-up portraits are untouched.
+    if req.get("face_detail", True):
+        try:
+            image, n_fixed = _detail_faces(pipe, device, req, image)
+            if n_fixed:
+                emit({"loading_status": f"face-detail: refined {n_fixed} face(s) at hi-res"})
+        except Exception as e:
+            emit({"loading_status": f"face-detail skipped ({e})"})
+
     elapsed = time.time() - t0
 
     buf = io.BytesIO()

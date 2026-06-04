@@ -28,6 +28,7 @@ pub struct ImgGenPayload {
     pub height:     Option<u32>,
     pub device:     Option<String>,
     pub scheduler:  Option<String>,
+    pub face_detail: Option<bool>,
 }
 
 #[derive(Serialize, Clone)]
@@ -228,6 +229,7 @@ fn do_generate(
         "width":      payload.width.unwrap_or(1024),
         "height":     payload.height.unwrap_or(1024),
         "scheduler":  payload.scheduler.unwrap_or_else(|| "dpm++2m_karras".into()),
+        "face_detail": payload.face_detail.unwrap_or(true),
     });
 
     writeln!(daemon.stdin, "{req}").map_err(|e| format!("stdin write: {e}"))?;

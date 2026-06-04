@@ -203,6 +203,7 @@ export interface ImgGenPayload {
   height?: number;
   device?: string;
   scheduler?: string;
+  face_detail?: boolean;
 }
 
 // ImgGenResult mirrors src-tauri/src/imggen.rs::ImgGenResult

@@ -30,6 +30,7 @@
         prompt: ig.prompt, neg_prompt: ig.negPrompt,
         steps: ig.steps, cfg_scale: ig.cfg, seed: ig.seed,
         width: ig.width, height: ig.height, device: ig.device, scheduler: ig.scheduler,
+        face_detail: ig.faceDetail,
       });
       ig.resultB64 = r.base64_png;
       ig.elapsed = r.elapsed;
@@ -178,6 +179,11 @@
       <span>×</span>
       <select bind:value={ig.height}>{#each SIZES as s}<option>{s}</option>{/each}</select>
     </div>
+
+    <label class="fd-row" title="Re-detail small/blurry faces at hi-res after generating (auto-skips close-ups). Adds a few seconds.">
+      <input type="checkbox" bind:checked={ig.faceDetail} />
+      <span>Face detailer</span>
+    </label>
   </div>
 
   <div class="ig-main">
@@ -246,6 +252,8 @@
   .num-row { display: flex; flex-direction: column; gap: 6px; }
   .size-row { display: flex; align-items: center; gap: 8px; }
   .size-row select { flex: 1; }
+  .fd-row { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 12px; color: var(--text2); cursor: pointer; user-select: none; }
+  .fd-row input { cursor: pointer; }
   .ig-main { flex: 1; display: flex; flex-direction: column; padding: 16px; gap: 12px; overflow: hidden; }
   .ig-prompt-area { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
   .ig-prompt { width: 100%; resize: none; font-family: var(--sans); font-size: 13px; line-height: 1.6; }

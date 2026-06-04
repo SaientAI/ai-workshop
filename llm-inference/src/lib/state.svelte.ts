@@ -135,6 +135,7 @@ export const ig = $state<IgState>({
   height: 1024,
   device: "auto",
   scheduler: "dpm++2m_karras",
+  faceDetail: true,   // ADetailer-style hi-res face pass (auto-skips when no small face)
   generating: false,
   progress: 0,
   progressTotal: 20,
