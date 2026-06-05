@@ -17,7 +17,7 @@
 
   // Tab lives in shared state so the Ctrl+Tab shortcut can switch it.
 
-  // Kairo mascot — sleepy [-_-] when no model is loaded, wide-awake [>_<] when ready.
+  // Saient mascot — sleepy [-_-] when no model is loaded, wide-awake [>_<] when ready.
   const mascot = $derived(
     (model.loaded ? " [>_<]" : " [-_-]") + "\n /|#|\\\n  / \\"
   );
@@ -48,7 +48,7 @@
           {#if chat.messages.length === 0}
             <div class="empty">
               <pre class="mascot" class:awake={model.loaded}>{mascot}</pre>
-              <div class="empty-title">{model.loaded ? "Kairo is ready" : "AI Workshop"}</div>
+              <div class="empty-title">{model.loaded ? "Saient is ready" : "Saient"}</div>
               <div class="empty-sub">
                 {model.loaded ? "Start typing to chat" : "Load a GGUF model to begin"}
               </div>

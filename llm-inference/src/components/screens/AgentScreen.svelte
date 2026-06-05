@@ -79,7 +79,7 @@
   }
 
   function startAuto() {
-    if (!agent.planGoal.trim() || !model.loaded || !ui.kairoEnabled) return;
+    if (!agent.planGoal.trim() || !model.loaded || !ui.saientEnabled) return;
     agent.autoMode = true;
     agent.autoIteration = 0;
     agent.autoStatus = "";
@@ -307,18 +307,18 @@
     <div class="planner-panel">
       <div class="plan-goal-row">
         <input type="text" bind:value={agent.planGoal} placeholder="Goal for the agent…"
-          oninput={() => localStorage.setItem("kairo_goal", agent.planGoal)}
+          oninput={() => localStorage.setItem("saient_goal", agent.planGoal)}
           class="plan-goal" />
         <button class="tab-action run-btn" onclick={agentRun}
-          disabled={agent.planRunning || !model.loaded || !ui.kairoEnabled || agent.autoMode}>
+          disabled={agent.planRunning || !model.loaded || !ui.saientEnabled || agent.autoMode}>
           {agent.planRunning && !agent.autoMode ? "Running…" : "▶ Run"}
         </button>
         <button
           class="tab-action auto-btn"
           class:auto-on={agent.autoMode}
           onclick={agent.autoMode ? stopAuto : startAuto}
-          disabled={!model.loaded || !ui.kairoEnabled || (!agent.autoMode && agent.planRunning)}
-          title="Run autonomously — Kairo re-evaluates and re-plans until the goal is achieved"
+          disabled={!model.loaded || !ui.saientEnabled || (!agent.autoMode && agent.planRunning)}
+          title="Run autonomously — Saient re-evaluates and re-plans until the goal is achieved"
         >
           {agent.autoMode ? "■ Stop auto" : "⟳ Auto"}
         </button>
@@ -334,7 +334,7 @@
               <span class="auto-check">✓</span>
               <span class="auto-iter">Goal achieved</span>
             {:else}
-              <span class="auto-iter">Kairo stopped</span>
+              <span class="auto-iter">Saient stopped</span>
             {/if}
             {#if agent.autoStatus}
               <span class="auto-reason">— {agent.autoStatus}</span>
@@ -350,8 +350,8 @@
         </div>
       {/if}
 
-      {#if !ui.kairoEnabled}
-        <div class="kairo-off">Kairo is disabled — toggle it in the title bar to enable autonomous runs.</div>
+      {#if !ui.saientEnabled}
+        <div class="saient-off">Saient is disabled — toggle it in the title bar to enable autonomous runs.</div>
       {/if}
 
       <div class="plan-json-label">Plan JSON</div>
@@ -359,7 +359,7 @@
         class="plan-json"
         bind:value={agent.planJson}
         placeholder="Paste or generate a plan JSON…"
-        oninput={() => localStorage.setItem("kairo_plan_json", agent.planJson)}
+        oninput={() => localStorage.setItem("saient_plan_json", agent.planJson)}
         spellcheck="false"
       ></textarea>
 
@@ -498,7 +498,7 @@
   .auto-max-input { width: 38px; font-size: 11px; padding: 2px 4px; text-align: center; font-family: var(--mono); }
   .plan-json-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text3); }
   .plan-json { flex: 1; min-height: 120px; font-family: var(--mono); font-size: 11px; line-height: 1.5; resize: vertical; }
-  .kairo-off { font-size: 11px; color: var(--amber); padding: 6px 10px; background: rgba(245,166,35,0.07); border: 1px solid rgba(245,166,35,0.3); border-radius: var(--radius-sm); }
+  .saient-off { font-size: 11px; color: var(--amber); padding: 6px 10px; background: rgba(245,166,35,0.07); border: 1px solid rgba(245,166,35,0.3); border-radius: var(--radius-sm); }
   .plan-steps { display: flex; flex-direction: column; gap: 4px; }
   .plan-step { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 12px; }
   .plan-step.done    { border-color: rgba(0,214,143,0.3); }

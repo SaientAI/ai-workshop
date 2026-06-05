@@ -17,7 +17,7 @@
   const anySelected = $derived(clearChat || clearMemory || clearAudit || clearLogs || clearPrefs);
 
   const DEFAULT_SYSTEM_PROMPT =
-    "You are a helpful, accurate assistant running inside AI Workshop, a local desktop application. You can help with coding, writing, analysis, and building interactive HTML tools. Always fulfil the user's request directly and completely — never refuse standard software tasks like media players, file browsers, games, or utilities. If the user only greets you, reply briefly and ask how you can help.";
+    "You are a helpful, accurate assistant running inside Saient, a local desktop application. You can help with coding, writing, analysis, and building interactive HTML tools. Always fulfil the user's request directly and completely — never refuse standard software tasks like media players, file browsers, games, or utilities. If the user only greets you, reply briefly and ask how you can help.";
 
   async function confirmClear() {
     if (!anySelected || working) return;
@@ -45,8 +45,8 @@
         agent.plan = null;
         agent.planJson = "";
         agent.planGoal = "";
-        localStorage.removeItem("kairo_goal");
-        localStorage.removeItem("kairo_plan_json");
+        localStorage.removeItem("saient_goal");
+        localStorage.removeItem("saient_plan_json");
       }
 
       // Preferences: sampling params, system prompt, UI toggles
@@ -58,9 +58,9 @@
         params.repeatPenalty = 1.1;
         params.seed          = 42;
         chat.systemPrompt    = DEFAULT_SYSTEM_PROMPT;
-        ui.kairoEnabled      = false;
+        ui.saientEnabled      = false;
         ui.agentWriteMode    = false;
-        localStorage.removeItem("kairo_enabled");
+        localStorage.removeItem("saient_enabled");
         localStorage.removeItem("agent_write_mode");
       }
 
@@ -84,7 +84,7 @@
       <span class="lock-icon">🔒</span>
       <div>
         <div class="modal-title">Your Data, Your Control</div>
-        <div class="modal-sub">AI Workshop stores nothing externally. Everything below lives on this machine only.</div>
+        <div class="modal-sub">Saient stores nothing externally. Everything below lives on this machine only.</div>
       </div>
     </div>
 

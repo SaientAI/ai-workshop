@@ -1,4 +1,4 @@
-# AI Workshop
+# Saient
 
 A local AI desktop application built with Tauri v2. Runs entirely on your machine — no cloud, no API keys.
 
@@ -7,7 +7,7 @@ A local AI desktop application built with Tauri v2. Runs entirely on your machin
 ## Architecture
 
 ```
-AI Workshop (Tauri v2 desktop shell)
+Saient (Tauri v2 desktop shell)
 ├── Frontend — Svelte 5 + TypeScript (Vite)
 │   src/main.ts            — App entry point
 │   src/App.svelte         — Root component, global CSS, event setup

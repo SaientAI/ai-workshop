@@ -700,7 +700,7 @@ fn last_tinyq4_error() -> Option<String> {
         let l = line.to_lowercase();
         if l.contains("cudamalloc") || l.contains("out of memory") || l.contains(" oom") {
             return Some(format!(
-                "GPU out of memory — another model is still using VRAM. Stop it (or your other tinyq4/Kairo server) and try again."
+                "GPU out of memory — another model is still using VRAM. Stop it (or your other tinyq4/Saient server) and try again."
             ));
         }
         if l.contains("panicked") {

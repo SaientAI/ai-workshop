@@ -1,4 +1,4 @@
-// Shared TypeScript types for AI Workshop
+// Shared TypeScript types for Saient
 
 export type Screen = "chat" | "agent" | "imggen" | "video" | "tts" | "lora" | "merge";
 export type AgentTab = "files" | "terminal" | "planner" | "memory";
@@ -162,6 +162,7 @@ export interface IgState {
   height: number;
   device: "auto" | "cuda" | "cpu";
   scheduler: string;
+  faceDetail: boolean;
   generating: boolean;
   progress: number;
   progressTotal: number;

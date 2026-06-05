@@ -23,6 +23,6 @@ export const STARTER_MODELS: StarterModel[] = [
     repo: "bartowski/Qwen2.5-Coder-7B-Instruct-GGUF",
     file: "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf",
     size: "4.7 GB",
-    desc: "Tuned for code — best for the Kairo agent.",
+    desc: "Tuned for code — best for the Saient agent.",
   },
 ];

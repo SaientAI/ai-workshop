@@ -140,7 +140,7 @@
         <button class="wz-card" class:sel={profile === "fast"} onclick={() => start("fast")}>
           <div class="wz-card-top"></div>
           <div class="wz-card-title">Fast setup</div>
-          <div class="wz-card-desc">Just Chat + Agent (Kairo)</div>
+          <div class="wz-card-desc">Just Chat + Agent (Saient)</div>
           <div class="wz-card-meta">small · ~1 minute</div>
         </button>
       </div>

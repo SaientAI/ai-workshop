@@ -1,4 +1,4 @@
-# AI Workshop
+# Saient
 
 **A local AI desktop app — chat, a coding agent, image generation, TTS, and LoRA training, all running on your own machine. No cloud, no API keys, no data leaving your computer.**
 
@@ -11,7 +11,7 @@ Built with Tauri + Svelte, powered by the [tinyq4](#inference-engine) GGUF infer
 | | |
 |---|---|
 | 💬 **Chat** | Talk to local LLMs (GGUF). Renders live HTML **artifacts** in a side pane — ask it to build a tool or game and watch it run. |
-| 🖥 **Kairo agent** | A real coding agent with a **PTY terminal** and a tool-use loop (`read · ls · write · edit · bash`). It plans, writes files, runs commands, and fixes its own errors — on *your* local model. |
+| 🖥 **Saient agent** | A real coding agent with a **PTY terminal** and a tool-use loop (`read · ls · write · edit · bash`). It plans, writes files, runs commands, and fixes its own errors — on *your* local model. |
 | 🖼 **Image Gen** | SDXL text-to-image with LoRA support, schedulers, and live progress. |
 | 🔊 **TTS** | Natural speech via Kokoro voices. |
 | 🎛 **LoRA / Merge** | Train SDXL LoRAs and merge checkpoints, with a dataset cleaner. |
@@ -65,10 +65,10 @@ Press <kbd>?</kbd> any time for the full list. Highlights:
 | <kbd>Ctrl</kbd>+<kbd>Tab</kbd> | Cycle tabs within a screen |
 | <kbd>Ctrl</kbd>+<kbd>K</kbd> | Clear the conversation |
 | <kbd>Esc</kbd> | Stop generating |
-| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd> | Toggle the Kairo agent |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd> | Toggle the Saient agent |
 
-### The Kairo agent
-Open the **Agent** screen → **Terminal** tab and type `kairo` to launch the agent TUI, or use the **Planner** for autonomous runs. It works in a sandboxed workspace; **Write mode** (off by default) gates file writes and command execution, and destructive tools ask before running unless you flip on `/yolo`.
+### The Saient agent
+Open the **Agent** screen → **Terminal** tab and type `saient` to launch the agent TUI, or use the **Planner** for autonomous runs. It works in a sandboxed workspace; **Write mode** (off by default) gates file writes and command execution, and destructive tools ask before running unless you flip on `/yolo`.
 
 ---
 

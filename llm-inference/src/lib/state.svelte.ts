@@ -11,7 +11,7 @@ import type {
 
 export const ui = $state({
   screen: "chat" as Screen,
-  kairoEnabled: localStorage.getItem("kairo_enabled") === "true",
+  saientEnabled: localStorage.getItem("saient_enabled") === "true",
   agentWriteMode: localStorage.getItem("agent_write_mode") === "true",
   showShortcuts: false,
 });
@@ -44,7 +44,7 @@ export const chat = $state({
   tab: "chat" as ChatTab,
   messages: [] as ChatMessage[],
   systemPrompt:
-    "You are a helpful, accurate assistant running inside AI Workshop, a local desktop application. You can help with coding, writing, analysis, and building interactive HTML tools. Always fulfil the user's request directly and completely — never refuse standard software tasks like media players, file browsers, games, or utilities. If the user only greets you, reply briefly and ask how you can help.",
+    "You are a helpful, accurate assistant running inside Saient, a local desktop application. You can help with coding, writing, analysis, and building interactive HTML tools. Always fulfil the user's request directly and completely — never refuse standard software tasks like media players, file browsers, games, or utilities. If the user only greets you, reply briefly and ask how you can help.",
   artifactMode: true,
   artifact: { active: false, title: "", type: "html", content: "", complete: false } as Artifact,
   streaming: false,
@@ -103,8 +103,8 @@ export const agent = $state({
   termCmd: "ls",
   termArgs: "",
   termCwd: "",
-  planGoal: localStorage.getItem("kairo_goal") ?? "",
-  planJson: localStorage.getItem("kairo_plan_json") ?? "",
+  planGoal: localStorage.getItem("saient_goal") ?? "",
+  planJson: localStorage.getItem("saient_plan_json") ?? "",
   plan: null as Plan | null,
   planRunning: false,
   planPhase: "idle" as "idle" | "generating" | "executing",

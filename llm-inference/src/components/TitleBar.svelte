@@ -4,9 +4,9 @@
 
   let { aw }: { aw: (a: "min" | "max" | "close") => void } = $props();
 
-  async function toggleKairo() {
-    ui.kairoEnabled = !ui.kairoEnabled;
-    localStorage.setItem("kairo_enabled", String(ui.kairoEnabled));
+  async function toggleSaient() {
+    ui.saientEnabled = !ui.saientEnabled;
+    localStorage.setItem("saient_enabled", String(ui.saientEnabled));
   }
 
   async function stopModel() {
@@ -44,9 +44,9 @@
       {/if}
     </div>
 
-    <button class="kairo-btn" class:on={ui.kairoEnabled} onclick={toggleKairo}
-      title={ui.kairoEnabled ? "Kairo is ON — click to disable" : "Kairo is OFF — click to enable"}>
-      <span class="kairo-dot"></span>Kairo
+    <button class="saient-btn" class:on={ui.saientEnabled} onclick={toggleSaient}
+      title={ui.saientEnabled ? "Saient is ON — click to disable" : "Saient is OFF — click to enable"}>
+      <span class="saient-dot"></span>Saient
     </button>
 
     {#if model.loaded}
@@ -84,19 +84,19 @@
   .logo { font-size: 13px; font-weight: 700; color: var(--text); letter-spacing: 0.02em; }
   .sep { color: var(--accent); margin: 0 1px; }
   .info { font-size: 11px; color: var(--text3); font-family: var(--mono); }
-  .kairo-btn {
+  .saient-btn {
     display: flex; align-items: center; gap: 5px;
     font-size: 11px; padding: 3px 8px;
     border-radius: 12px;
     border-color: rgba(108,142,245,0.3);
     color: var(--text2);
   }
-  .kairo-btn.on { border-color: var(--accent); color: var(--accent); }
-  .kairo-dot {
+  .saient-btn.on { border-color: var(--accent); color: var(--accent); }
+  .saient-dot {
     width: 6px; height: 6px; border-radius: 50%;
     background: var(--text3);
   }
-  .kairo-btn.on .kairo-dot { background: var(--accent); box-shadow: 0 0 4px var(--accent); }
+  .saient-btn.on .saient-dot { background: var(--accent); box-shadow: 0 0 4px var(--accent); }
   .wbtn {
     font-size: 12px; padding: 3px 8px;
     border-radius: 4px; color: var(--text3);

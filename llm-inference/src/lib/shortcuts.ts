@@ -22,7 +22,7 @@ export const SHORTCUTS: Shortcut[] = [
   { group: "Chat",       keys: ["Shift", "Enter"], desc: "Newline in the message box" },
   { group: "Chat",       keys: ["Ctrl", "K"],      desc: "Clear the conversation" },
   { group: "Chat",       keys: ["Esc"],            desc: "Stop generating" },
-  { group: "Agent",      keys: ["Ctrl", "Shift", "K"], desc: "Toggle Kairo on/off" },
+  { group: "Agent",      keys: ["Ctrl", "Shift", "K"], desc: "Toggle Saient on/off" },
   { group: "Agent",      keys: ["Ctrl", "Shift", "W"], desc: "Toggle agent write mode" },
   { group: "General",    keys: ["?"],              desc: "Show / hide this help" },
   { group: "General",    keys: ["Ctrl", "/"],      desc: "Show / hide this help" },
@@ -59,10 +59,10 @@ export function handleKey(e: KeyboardEvent) {
   // Ctrl+/ → help
   if (ctrl && k === "/") { ui.showShortcuts = !ui.showShortcuts; claim(); return; }
 
-  // Ctrl+Shift+K → toggle Kairo
+  // Ctrl+Shift+K → toggle Saient
   if (ctrl && e.shiftKey && (k === "K" || k === "k")) {
-    ui.kairoEnabled = !ui.kairoEnabled;
-    localStorage.setItem("kairo_enabled", String(ui.kairoEnabled));
+    ui.saientEnabled = !ui.saientEnabled;
+    localStorage.setItem("saient_enabled", String(ui.saientEnabled));
     claim(); return;
   }
 
