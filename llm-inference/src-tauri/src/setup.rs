@@ -277,26 +277,29 @@ fn pip_install(window: &WebviewWindow, args: &[&str], label: &str) -> Result<(),
 #[tauri::command]
 pub async fn run_setup(window: WebviewWindow, profile: String) -> Result<(), String> {
     let info = detect_system();
-    let base = info.system_python.clone()
-        .ok_or("No Python 3 found. Install Python 3.10+ and retry.")?;
-
     let full = profile == "full";
     emit_log(&window, format!("Setup profile: {profile}"));
     emit_log(&window, format!("OS: {} · CUDA: {} · torch wheel: {}",
         info.os, info.cuda_version.clone().unwrap_or_else(|| "none".into()), info.torch_index));
 
-    // ── Managed venv ─────────────────────────────────────────────────────────
-    emit_step(&window, "venv", "running");
-    ensure_venv(&window, &base)?;
-    emit_step(&window, "venv", "done");
+    // ── Core: the LLM engine ───────────────────────────────────────────────────
+    // tinyq4 ships bundled with the app (CUDA + CPU builds + libcudart). The right
+    // one is selected at runtime — nothing to install for chat/agent.
+    emit_step(&window, "engine", "running");
+    match crate::engine::find_tinyq4() {
+        Ok(p) => emit_log(&window, format!("engine ready (bundled): {}", p.display())),
+        Err(e) => emit_log(&window, format!("engine: {e}")),
+    }
+    emit_step(&window, "engine", "done");
 
-    // ── Core: tinyq4 (the LLM engine) ──────────────────────────────────────────
-    emit_step(&window, "tinyq4", "running");
-    pip_install(&window, &["tinyq4"], "pip install tinyq4")?;
-    emit_step(&window, "tinyq4", "done");
-
-    // ── Creative stack (Full only) ─────────────────────────────────────────────
+    // ── Creative stack (Full only) — Python is needed only for image/video/voice ─
     if full {
+        let base = info.system_python.clone()
+            .ok_or("Full setup needs Python 3.10+ for the image/video/voice tools. Install Python 3 and retry, or pick Fast.")?;
+        emit_step(&window, "venv", "running");
+        ensure_venv(&window, &base)?;
+        emit_step(&window, "venv", "done");
+
         emit_step(&window, "torch", "running");
         // CUDA-matched torch. cpu index also valid (download.pytorch.org/whl/cpu).
         pip_install(&window,

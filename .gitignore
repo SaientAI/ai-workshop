@@ -45,3 +45,11 @@ outputs/
 id_rsa*
 *.key
 .git-credentials
+
+# Bundled inference engine (produced by scripts/build-engine.sh, not committed)
+**/resources/engine/tinyq4-cuda
+**/resources/engine/tinyq4-cpu
+**/resources/engine/tinyq4-cuda.exe
+**/resources/engine/tinyq4-cpu.exe
+**/resources/engine/libcudart.so.12
+**/resources/engine/cudart64_12.dll

@@ -26,20 +26,22 @@
   });
 
   const STEP_LABELS: Record<string, string> = {
+    engine:   "Inference engine (bundled — GPU/CPU auto-selected)",
     venv:     "Create Python environment",
-    tinyq4:   "Install tinyq4 (LLM engine)",
     torch:    "Install PyTorch (CUDA-matched)",
     creative: "Install diffusers · transformers · kokoro",
     done:     "Finish",
   };
   const stepsFor = $derived(
-    profile === "full" ? ["venv", "tinyq4", "torch", "creative"] : ["venv", "tinyq4"]
+    profile === "full" ? ["engine", "venv", "torch", "creative"] : ["engine"]
   );
 
   async function start(p: "full" | "fast") {
     profile = p;
-    if (!info?.system_python) {
-      error = "No Python 3 found. Install Python 3.10+ (and reopen), then retry.";
+    // The LLM engine is bundled, so Fast needs nothing. Full needs Python for the
+    // image/video/voice tools.
+    if (p === "full" && !info?.system_python) {
+      error = "Full setup needs Python 3.10+ for the creative tools. Install Python 3 (and reopen), or pick Fast.";
       return;
     }
     step = "installing";
@@ -140,8 +142,8 @@
         <button class="wz-card" class:sel={profile === "fast"} onclick={() => start("fast")}>
           <div class="wz-card-top"></div>
           <div class="wz-card-title">Fast setup</div>
-          <div class="wz-card-desc">Just Chat + Agent (Saient)</div>
-          <div class="wz-card-meta">small · ~1 minute</div>
+          <div class="wz-card-desc">Chat + Agent — engine's bundled, no download</div>
+          <div class="wz-card-meta">instant · 0 deps</div>
         </button>
       </div>
       <button class="wz-skip" onclick={skip}>I already have everything — skip setup</button>

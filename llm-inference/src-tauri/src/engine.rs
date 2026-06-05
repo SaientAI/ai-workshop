@@ -179,9 +179,17 @@ impl Engine {
             .map(Stdio::from)
             .unwrap_or_else(Stdio::null);
 
+        // Put the bundled CUDA runtime (libcudart, shipped next to the binary) on the
+        // loader path so the CUDA engine runs without a system CUDA toolkit install.
+        let (lib_key, lib_val) = server_bin.parent()
+            .map(engine_lib_env)
+            .unwrap_or_else(|| ("LD_LIBRARY_PATH".into(),
+                std::env::var("LD_LIBRARY_PATH").unwrap_or_default()));
+
         let mut process = unsafe {
             Command::new(&server_bin)
                 .args(&args)
+                .env(&lib_key, &lib_val)
                 .stdout(stdout)
                 .stderr(stderr)
                 .pre_exec(|| {
@@ -592,6 +600,58 @@ pub async fn stream_generate(
 
 // ── Discovery ──────────────────────────────────────────────────────────────────
 
+/// The Tauri resource directory, captured at startup (see main.rs setup hook). The
+/// bundled engine lives in `<resource_dir>/engine/`.
+static RESOURCE_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+pub fn set_resource_dir(p: PathBuf) { let _ = RESOURCE_DIR.set(p); }
+
+fn cuda_bin_name() -> &'static str { if cfg!(windows) { "tinyq4-cuda.exe" } else { "tinyq4-cuda" } }
+fn cpu_bin_name()  -> &'static str { if cfg!(windows) { "tinyq4-cpu.exe" }  else { "tinyq4-cpu" } }
+
+/// Directory holding the bundled engine binaries + CUDA runtime lib (libcudart).
+/// Override with SAIENT_ENGINE_DIR; otherwise `<resource_dir>/engine`, else next to the exe.
+pub fn engine_dir() -> Option<PathBuf> {
+    if let Ok(d) = std::env::var("SAIENT_ENGINE_DIR") {
+        let p = PathBuf::from(d);
+        if p.is_dir() { return Some(p); }
+    }
+    if let Some(rd) = RESOURCE_DIR.get() {
+        let p = rd.join("engine");
+        if p.is_dir() { return Some(p); }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            for cand in [dir.join("engine"), dir.to_path_buf()] {
+                if cand.join(cuda_bin_name()).exists() || cand.join(cpu_bin_name()).exists() {
+                    return Some(cand);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// A usable NVIDIA GPU is present (driver installed). We don't need the CUDA toolkit —
+/// only the driver — because the engine bundles its own libcudart.
+pub fn gpu_available() -> bool {
+    std::process::Command::new("nvidia-smi").arg("-L").output()
+        .map(|o| o.status.success() && !o.stdout.is_empty())
+        .unwrap_or(false)
+}
+
+/// Environment to make the bundled libcudart loadable without a system CUDA install:
+/// prepend the engine dir to LD_LIBRARY_PATH (Linux) / PATH (Windows).
+fn engine_lib_env(lib_dir: &Path) -> (String, String) {
+    let key = if cfg!(windows) { "PATH" } else { "LD_LIBRARY_PATH" };
+    let sep = if cfg!(windows) { ";" } else { ":" };
+    let dir = lib_dir.to_string_lossy().into_owned();
+    let val = match std::env::var(key) {
+        Ok(cur) if !cur.is_empty() => format!("{dir}{sep}{cur}"),
+        _ => dir,
+    };
+    (key.to_string(), val)
+}
+
 pub fn find_tinyq4() -> Result<PathBuf> {
     // 1. Explicit override.
     if let Ok(p) = std::env::var("TINYQ4_PATH") {
@@ -599,7 +659,19 @@ pub fn find_tinyq4() -> Result<PathBuf> {
         if path.exists() { return Ok(path); }
     }
 
-    // 2. The setup wizard's managed venv (where `run_setup` pip-installs tinyq4).
+    // 2. Bundled engine (shipped with the app). Prefer the CUDA build when a GPU/driver
+    //    is present, else the CPU build. libcudart ships alongside; engine_lib_env() puts
+    //    it on the loader path at spawn time, so no system CUDA install is needed.
+    if let Some(dir) = engine_dir() {
+        if gpu_available() {
+            let cuda = dir.join(cuda_bin_name());
+            if cuda.exists() { return Ok(cuda); }
+        }
+        let cpu = dir.join(cpu_bin_name());
+        if cpu.exists() { return Ok(cpu); }
+    }
+
+    // 3. The setup wizard's managed venv (where `run_setup` pip-installs tinyq4).
     let venv_tinyq4 = crate::setup::venv_bin("tinyq4");
     if venv_tinyq4.exists() { return Ok(venv_tinyq4); }
 

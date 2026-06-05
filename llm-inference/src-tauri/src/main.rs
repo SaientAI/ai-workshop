@@ -35,7 +35,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
-use tauri::{command, Emitter, State};
+use tauri::{command, Emitter, Manager, State};
 use tauri::WebviewWindow;
 
 // ── App state ─────────────────────────────────────────────────────────────────
@@ -1409,7 +1409,11 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
-        .setup(|_app| {
+        .setup(|app| {
+            // Capture the resource dir so find_tinyq4 can locate the bundled engine.
+            if let Ok(dir) = app.path().resource_dir() {
+                engine::set_resource_dir(dir);
+            }
             // Kill any server left over from a previous session (crash or force-quit).
             engine::kill_our_stale_servers();
             Ok(())
