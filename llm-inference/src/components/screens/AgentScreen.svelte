@@ -220,8 +220,8 @@
       term?.write(`\x1b[33m${text}\x1b[0m\r\n`);
     });
 
-      // Spawn the shell at the workspace root.
-      await T.ptySpawn(agent.sandboxRoot || ".", term.cols, term.rows).catch(err => {
+      // Spawn the shell at the workspace root; hand the agent CLI the model port.
+      await T.ptySpawn(agent.sandboxRoot || ".", term.cols, term.rows, model.activeServerPort).catch(err => {
         term?.write(`\x1b[31mFailed to start shell: ${String(err)}\x1b[0m\r\n`);
       });
 

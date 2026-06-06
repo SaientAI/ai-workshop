@@ -107,9 +107,13 @@ Workflow:
 
 def discover_ports():
     # The app spawns tinyq4 on a dynamically-allocated free port, so static probe
-    # ports aren't enough. Scan /proc for any `tinyq4 ... --server <port>` process
-    # (matches how the Rust side discovers servers), then fall back to known ports.
+    # ports aren't enough. Prefer the port the app hands us via env; then (Linux)
+    # scan /proc for a `tinyq4 ... --server <port>` process; then fall back to known.
     found = []
+    env_port = os.environ.get("SAIENT_SERVER_PORT")
+    if env_port:
+        try: found.append(int(env_port))
+        except ValueError: pass
     try:
         for pid in os.listdir("/proc"):
             if not pid.isdigit():
@@ -395,17 +399,34 @@ if __name__ == "__main__":
 /// Write the Saient bash init file (and the agent TUI it launches) and return the
 /// rcfile path. Returns None if $HOME is unset or the files can't be written
 /// (the caller then falls back to a plain shell).
-fn write_saient_rcfile() -> Option<std::path::PathBuf> {
-    let home = std::env::var("HOME").ok()?;
-    let dir = std::path::PathBuf::from(&home).join(".config/saient");
+/// Write the agent CLI (cross-platform) into the config dir and return that dir.
+fn write_saient_cli() -> Option<std::path::PathBuf> {
+    let dir = crate::setup::config_dir();
     std::fs::create_dir_all(&dir).ok()?;
+    std::fs::write(dir.join("saient_cli.py"), SAIENT_CLI_PY).ok()?;
+    Some(dir)
+}
 
-    let cli = dir.join("saient_cli.py");
-    std::fs::write(&cli, SAIENT_CLI_PY).ok()?;
-
+/// Unix: write the bash rcfile that defines the `saient` command. Returns its path.
+#[cfg(unix)]
+fn write_saient_rcfile() -> Option<std::path::PathBuf> {
+    let dir = write_saient_cli()?;
     let path = dir.join("saient.bashrc");
     std::fs::write(&path, SAIENT_BASHRC).ok()?;
     Some(path)
+}
+
+/// Windows: write a `saient.cmd` shim that runs the CLI with the resolved Python.
+/// Returns the dir to prepend to PATH so typing `saient` works in the terminal.
+#[cfg(windows)]
+fn write_saient_cmd() -> Option<std::path::PathBuf> {
+    let dir = write_saient_cli()?;
+    let py = crate::resolve::find_python()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "python".into());
+    let cmd = format!("@echo off\r\n\"{py}\" \"%~dp0saient_cli.py\" %*\r\n");
+    std::fs::write(dir.join("saient.cmd"), cmd).ok()?;
+    Some(dir)
 }
 
 // ── Tauri commands ────────────────────────────────────────────────────────────
@@ -417,45 +438,66 @@ pub async fn pty_spawn(
     cwd: String,
     cols: u16,
     rows: u16,
+    server_port: Option<u16>,
 ) -> Result<(), String> {
     // Kill any existing session before spawning a new one.
     if let Some(old) = handle.lock().map_err(|e| e.to_string())?.take() {
         kill_session(old);
     }
 
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into());
-
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
         .map_err(|e| e.to_string())?;
 
-    // Launch bash with our Saient init file so the `saient` command and banner are
-    // available. Fall back to a plain $SHELL if bash or the rcfile is unavailable.
-    let rcfile = write_saient_rcfile();
-    let bash = if shell.ends_with("bash") {
-        Some(shell.clone())
-    } else if std::path::Path::new("/bin/bash").exists() {
-        Some("/bin/bash".to_string())
-    } else {
-        None
+    // Build the shell command per-platform.
+    #[cfg(unix)]
+    let mut cmd = {
+        // bash with our Saient rcfile so the `saient` command + banner are present;
+        // fall back to a plain $SHELL if bash or the rcfile is unavailable.
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into());
+        let rcfile = write_saient_rcfile();
+        let bash = if shell.ends_with("bash") {
+            Some(shell.clone())
+        } else if std::path::Path::new("/bin/bash").exists() {
+            Some("/bin/bash".to_string())
+        } else {
+            None
+        };
+        match (&bash, &rcfile) {
+            (Some(bash_path), Some(rc)) => {
+                let mut c = CommandBuilder::new(bash_path);
+                c.arg("--rcfile");
+                c.arg(rc);
+                c.arg("-i");
+                c
+            }
+            _ => CommandBuilder::new(&shell),
+        }
     };
 
-    let mut cmd = match (&bash, &rcfile) {
-        (Some(bash_path), Some(rc)) => {
-            let mut c = CommandBuilder::new(bash_path);
-            c.arg("--rcfile");
-            c.arg(rc);
-            c.arg("-i");
-            c
+    #[cfg(windows)]
+    let mut cmd = {
+        // PowerShell terminal; put a saient.cmd shim on PATH so `saient` works.
+        let mut c = CommandBuilder::new("powershell.exe");
+        c.arg("-NoLogo");
+        if let Some(dir) = write_saient_cmd() {
+            let existing = std::env::var("PATH").unwrap_or_default();
+            c.env("PATH", format!("{};{}", dir.to_string_lossy(), existing));
         }
-        _ => CommandBuilder::new(&shell),
+        c
     };
+
     if !cwd.is_empty() && std::path::Path::new(&cwd).is_dir() {
         cmd.cwd(&cwd);
     }
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
+    // Tell the agent CLI exactly which port the model server is on, so it doesn't
+    // have to scan /proc (which is Linux-only and misses dynamic ports anyway).
+    if let Some(port) = server_port {
+        cmd.env("SAIENT_SERVER_PORT", port.to_string());
+    }
 
     let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
     drop(pair.slave); // close slave fd in parent — child inherited its own copy

@@ -385,9 +385,9 @@ export const hfListGguf = (repo: string) => invoke<HfFile[]>("hf_list_gguf", { r
 
 // ── PTY terminal ──────────────────────────────────────────────────────────────
 
-/** Spawn $SHELL at cwd in a real PTY. Emits "pty-data" events for output. */
-export const ptySpawn  = (cwd: string, cols: number, rows: number) =>
-  invoke<void>("pty_spawn", { cwd, cols, rows });
+/** Spawn the platform shell at cwd in a real PTY. Emits "pty-data" events for output. */
+export const ptySpawn  = (cwd: string, cols: number, rows: number, serverPort?: number | null) =>
+  invoke<void>("pty_spawn", { cwd, cols, rows, serverPort: serverPort ?? null });
 
 /** Forward xterm.js onData keystrokes to the PTY master. */
 export const ptyWrite  = (data: string) => invoke<void>("pty_write", { data });
