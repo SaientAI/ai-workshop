@@ -369,6 +369,7 @@ pub async fn download_starter_model(
     repo: String,
     file: String,
     models_dir: String,
+    token: Option<String>,
 ) -> Result<String, String> {
     use futures::StreamExt;
     use tokio::io::AsyncWriteExt;
@@ -392,31 +393,52 @@ pub async fn download_starter_model(
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(3600))
         .build().map_err(|e| e.to_string())?;
-    let resp = client.get(&url).send().await.map_err(|e| format!("request failed: {e}"))?;
+    let mut req = client.get(&url).header("User-Agent", "Saient");
+    if let Some(t) = token.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+        req = req.bearer_auth(t);   // gated/private repos
+    }
+    let resp = req.send().await.map_err(|e| format!("request failed: {e}"))?;
+    if resp.status() == reqwest::StatusCode::UNAUTHORIZED || resp.status() == reqwest::StatusCode::FORBIDDEN {
+        return Err("This model is gated/private. Add a Hugging Face access token (and accept the model's licence on HF) to download it.".into());
+    }
     if !resp.status().is_success() {
         return Err(format!("download failed: HTTP {}", resp.status()));
     }
     let total = resp.content_length().unwrap_or(0);
 
     let part = dest.with_extension("part");
-    let mut out = tokio::fs::File::create(&part).await.map_err(|e| e.to_string())?;
-    let mut stream = resp.bytes_stream();
-    let mut downloaded: u64 = 0;
-    let mut last = std::time::Instant::now();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| e.to_string())?;
-        out.write_all(&chunk).await.map_err(|e| e.to_string())?;
-        downloaded += chunk.len() as u64;
-        // Throttle UI updates to ~5/sec.
-        if last.elapsed().as_millis() >= 200 {
-            let _ = window.emit("model-progress",
-                serde_json::json!({"downloaded": downloaded, "total": total}));
-            last = std::time::Instant::now();
+
+    // Stream to the .part file; on ANY error, clean it up so we never leave a
+    // half-written stub that looks like a real model to the scanner.
+    let result: Result<u64, String> = async {
+        let mut out = tokio::fs::File::create(&part).await.map_err(|e| e.to_string())?;
+        let mut stream = resp.bytes_stream();
+        let mut downloaded: u64 = 0;
+        let mut last = std::time::Instant::now();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| e.to_string())?;
+            out.write_all(&chunk).await.map_err(|e| e.to_string())?;
+            downloaded += chunk.len() as u64;
+            if last.elapsed().as_millis() >= 200 {
+                let _ = window.emit("model-progress",
+                    serde_json::json!({"downloaded": downloaded, "total": total}));
+                last = std::time::Instant::now();
+            }
         }
-    }
-    out.flush().await.map_err(|e| e.to_string())?;
-    drop(out);
-    std::fs::rename(&part, &dest).map_err(|e| e.to_string())?;
+        out.flush().await.map_err(|e| e.to_string())?;
+        drop(out);
+        std::fs::rename(&part, &dest).map_err(|e| e.to_string())?;
+        Ok(downloaded)
+    }.await;
+
+    let downloaded = match result {
+        Ok(d) => d,
+        Err(e) => {
+            let _ = std::fs::remove_file(&part);   // tidy: drop the half file
+            return Err(e);
+        }
+    };
+
     let _ = window.emit("model-progress",
         serde_json::json!({"downloaded": downloaded, "total": total, "done": true}));
     Ok(dest.to_string_lossy().into_owned())
@@ -434,7 +456,7 @@ pub struct HfFile {
 /// UI can let the user pick a quant before downloading. Files are then fetched with
 /// `download_starter_model`, which drops them in the managed models dir.
 #[tauri::command]
-pub async fn hf_list_gguf(repo: String) -> Result<Vec<HfFile>, String> {
+pub async fn hf_list_gguf(repo: String, token: Option<String>) -> Result<Vec<HfFile>, String> {
     #[derive(serde::Deserialize)]
     struct Lfs {
         #[serde(default)]
@@ -462,20 +484,22 @@ pub async fn hf_list_gguf(repo: String) -> Result<Vec<HfFile>, String> {
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| e.to_string())?;
-    let resp = client
-        .get(&url)
-        .header("User-Agent", "Saient")
+    let mut request = client.get(&url).header("User-Agent", "Saient");
+    if let Some(t) = token.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+        request = request.bearer_auth(t);   // gated/private repos
+    }
+    let resp = request
         .send()
         .await
         .map_err(|e| format!("request failed: {e}"))?;
     if resp.status() == reqwest::StatusCode::NOT_FOUND {
         return Err(format!("Repo \"{repo}\" not found on HuggingFace."));
     }
+    if resp.status() == reqwest::StatusCode::UNAUTHORIZED || resp.status() == reqwest::StatusCode::FORBIDDEN {
+        return Err("This repo is gated/private. Add a Hugging Face access token (and accept its licence on HF) to use it.".into());
+    }
     if !resp.status().is_success() {
-        return Err(format!(
-            "HuggingFace returned HTTP {} — the repo may be gated or private.",
-            resp.status()
-        ));
+        return Err(format!("HuggingFace returned HTTP {}.", resp.status()));
     }
     let entries: Vec<TreeEntry> = resp
         .json()

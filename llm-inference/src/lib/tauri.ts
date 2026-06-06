@@ -374,14 +374,15 @@ export const skipSetup  = () => invoke<void>("skip_setup");
 export const resetSetup = () => invoke<void>("reset_setup");
 
 /** Download a GGUF from HuggingFace into the models dir. Streams "model-progress". */
-export const downloadStarterModel = (repo: string, file: string, modelsDir: string) =>
-  invoke<string>("download_starter_model", { repo, file, modelsDir });
+export const downloadStarterModel = (repo: string, file: string, modelsDir: string, token?: string) =>
+  invoke<string>("download_starter_model", { repo, file, modelsDir, token: token || null });
 
 /** A .gguf file in a HuggingFace repo. Mirrors src-tauri/src/setup.rs::HfFile. */
 export interface HfFile { file: string; size: number }
 
 /** List the .gguf files (with sizes) in a HuggingFace repo's main branch. */
-export const hfListGguf = (repo: string) => invoke<HfFile[]>("hf_list_gguf", { repo });
+export const hfListGguf = (repo: string, token?: string) =>
+  invoke<HfFile[]>("hf_list_gguf", { repo, token: token || null });
 
 // ── PTY terminal ──────────────────────────────────────────────────────────────
 

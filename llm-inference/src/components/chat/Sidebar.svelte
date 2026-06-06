@@ -22,6 +22,9 @@
   let hfFiles = $state<T.HfFile[]>([]);
   let hfListing = $state(false);
   let hfError = $state("");
+  let hfToken = $state(localStorage.getItem("hf_token") ?? "");
+  let hfShowToken = $state(false);
+  $effect(() => { localStorage.setItem("hf_token", hfToken); });
 
   // Accept "owner/name", a repo URL, or a direct file URL (resolve/blob).
   function parseHf(raw: string): { repo: string; file?: string } | null {
@@ -54,7 +57,7 @@
     if (parsed.file) { hfFiles = []; await downloadFile(parsed.repo, parsed.file); return; }
     hfListing = true; hfError = ""; hfFiles = [];
     try {
-      hfFiles = await T.hfListGguf(parsed.repo);
+      hfFiles = await T.hfListGguf(parsed.repo, hfToken);
     } catch (e) {
       hfError = String(e);
     } finally {
@@ -71,7 +74,7 @@
     const unlisten = await listen<{ downloaded: number; total: number; done?: boolean }>(
       "model-progress", (e) => { dlProgress = e.payload; });
     try {
-      await T.downloadStarterModel(repo, file, dir);
+      await T.downloadStarterModel(repo, file, dir, hfToken);
       await scanModels();          // surface the new model in the picker
       hfFiles = [];                // collapse the picker; the model is now in the list
       toast(`Downloaded ${file.split("/").pop()} — select it and Start server`, "success");
@@ -271,6 +274,19 @@
             </button>
           </div>
           <div class="hf-hint">Paste a GGUF repo (e.g. <code>bartowski/Llama-3.2-3B-Instruct-GGUF</code>) — downloads straight into your models folder.</div>
+          <button class="hf-token-toggle" onclick={() => (hfShowToken = !hfShowToken)}>
+            {hfShowToken ? "▾" : "▸"} HF access token (for gated models){hfToken ? " ✓" : ""}
+          </button>
+          {#if hfShowToken}
+            <input
+              class="hf-input"
+              type="password"
+              placeholder="hf_…  (stored locally, optional)"
+              bind:value={hfToken}
+              spellcheck="false"
+              autocomplete="off"
+            />
+          {/if}
 
           {#if hfError}<div class="dl-err">{hfError}</div>{/if}
 
@@ -501,6 +517,8 @@
   .hf-input { flex: 1; font-size: 11px; font-family: var(--mono); padding: 5px 8px; }
   .hf-hint { font-size: 9px; color: var(--text3); line-height: 1.5; }
   .hf-hint code { color: var(--accent); font-size: 9px; word-break: break-all; }
+  .hf-token-toggle { background: none; border: 0; padding: 2px 0; color: var(--text3); font-size: 10px; cursor: pointer; text-align: left; }
+  .hf-token-toggle:hover { color: var(--text2); }
   .hf-files { display: flex; flex-direction: column; gap: 3px; margin-top: 2px; }
   .hf-files-head { font-size: 9px; color: var(--text3); font-family: var(--mono); margin-bottom: 2px; word-break: break-all; }
   .hf-file {
