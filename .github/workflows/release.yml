@@ -35,6 +35,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ env.TINYQ4_REPO }}
+          ssh-key: ${{ secrets.TINYQ4_DEPLOY_KEY }}
           path: tinyq4-src
 
       - name: Tauri + AppImage system deps
@@ -100,6 +101,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ env.TINYQ4_REPO }}
+          ssh-key: ${{ secrets.TINYQ4_DEPLOY_KEY }}
           path: tinyq4-src
 
       - uses: dtolnay/rust-toolchain@stable
