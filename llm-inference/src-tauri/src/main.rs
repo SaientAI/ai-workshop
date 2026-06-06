@@ -16,6 +16,7 @@ mod merge;
 mod pty;
 mod resolve;
 mod setup;
+mod update;
 mod video;
 mod vision;
 mod tts;
@@ -111,11 +112,16 @@ fn make_state() -> AppState {
     let root = PathBuf::from(&home).join("agent-workspace");
     std::fs::create_dir_all(&root).ok();
 
-    // Managed models directory — created on first launch and the only place we
-    // scan, unless the user explicitly points us elsewhere (that choice persists).
-    let managed_models_dir = PathBuf::from(&home).join("llm-runtime").join("models");
-    std::fs::create_dir_all(&managed_models_dir).ok();
-    let models_dir = load_models_dir_pref().unwrap_or(managed_models_dir);
+    // Managed models directory — Saient's own folder and the only place we scan,
+    // unless the user explicitly points us elsewhere (that choice persists). On
+    // upgrade, fall back to the legacy ~/llm-runtime/models if it still holds the
+    // models, so nobody's library disappears (no files are moved).
+    let managed_models_dir = PathBuf::from(&home).join("Saient").join("models");
+    let legacy_models_dir = PathBuf::from(&home).join("llm-runtime").join("models");
+    let models_dir = load_models_dir_pref()
+        .or_else(|| dir_has_gguf(&managed_models_dir).then(|| managed_models_dir.clone()))
+        .or_else(|| dir_has_gguf(&legacy_models_dir).then(|| legacy_models_dir.clone()))
+        .unwrap_or(managed_models_dir);
     std::fs::create_dir_all(&models_dir).ok();
 
     let fs = FsTool::new(&root).expect("sandbox root");
@@ -1267,6 +1273,20 @@ fn is_gguf_path(path: &Path) -> bool {
 // Saient owns one models folder and only scans there (plus a folder the user
 // explicitly points us at, persisted below). No PC-wide scanning.
 
+/// Shallow check: does this folder contain any .gguf? Used only for one-time
+/// migration from the legacy models dir — not for ongoing discovery.
+fn dir_has_gguf(dir: &Path) -> bool {
+    if !dir.exists() {
+        return false;
+    }
+    walkdir::WalkDir::new(dir)
+        .max_depth(4)
+        .follow_links(true)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .any(|e| is_gguf_path(e.path()))
+}
+
 fn models_dir_pref_file() -> PathBuf {
     setup::config_dir().join("models_dir.txt")
 }
@@ -1435,6 +1455,8 @@ fn main() {
             // Setup wizard
             setup::detect_system, setup::run_setup, setup::skip_setup, setup::reset_setup,
             setup::download_starter_model, setup::hf_list_gguf,
+            // Update check (best-effort, points at the site)
+            update::check_update,
             // Licensing (30-day trial → signed key unlock)
             license::license_status, license::license_activate,
             // Launch password
