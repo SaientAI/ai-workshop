@@ -14,6 +14,7 @@ export const ui = $state({
   saientEnabled: localStorage.getItem("saient_enabled") === "true",
   agentWriteMode: localStorage.getItem("agent_write_mode") === "true",
   showShortcuts: false,
+  showSecurity: false,
 });
 
 // ── Licensing (30-day trial → £20 unlock) ───────────────────────────────────────

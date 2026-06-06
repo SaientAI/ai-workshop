@@ -6,6 +6,7 @@
   windows_subsystem = "windows"
 )]
 
+mod auth;
 mod engine;
 mod gguf;
 mod imggen;
@@ -1470,6 +1471,8 @@ fn main() {
             setup::download_starter_model,
             // Licensing (30-day trial → signed key unlock)
             license::license_status, license::license_activate,
+            // Launch password
+            auth::password_is_set, auth::password_set, auth::password_verify, auth::password_clear,
             // Image Gen
             imggen::imggen_scan_models, imggen::imggen_scan_checkpoints,
             imggen::imggen_scan_loras, imggen::imggen_generate,

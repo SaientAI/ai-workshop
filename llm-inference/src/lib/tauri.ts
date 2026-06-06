@@ -388,3 +388,10 @@ export const licenseStatus = () => invoke<LicenseState>("license_status");
 /** Validate + store a purchased key. Rejects (throws) if the key is invalid. */
 export const licenseActivate = (key: string) =>
   invoke<LicenseState>("license_activate", { key });
+
+// ── Launch password (argon2) ────────────────────────────────────────────────────
+export const passwordIsSet  = () => invoke<boolean>("password_is_set");
+export const passwordVerify = (password: string) => invoke<boolean>("password_verify", { password });
+export const passwordSet    = (next: string, current?: string) =>
+  invoke<void>("password_set", { new: next, current: current ?? null });
+export const passwordClear  = (current: string) => invoke<void>("password_clear", { current });

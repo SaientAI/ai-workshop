@@ -9,6 +9,8 @@
   import ShortcutsHelp from "./components/ShortcutsHelp.svelte";
   import SetupWizard from "./components/SetupWizard.svelte";
   import Paywall from "./components/Paywall.svelte";
+  import LockScreen from "./components/LockScreen.svelte";
+  import SecuritySettings from "./components/SecuritySettings.svelte";
   import IconRail from "./components/IconRail.svelte";
   import ChatScreen from "./components/screens/ChatScreen.svelte";
   import AgentScreen from "./components/screens/AgentScreen.svelte";
@@ -21,8 +23,12 @@
   const appWindow = getCurrentWebviewWindow();
 
   let showSetup = $state(false);
+  let locked = $state(false);
 
   onMount(async () => {
+    // Launch password gate — check first so we lock before content is usable.
+    locked = await T.passwordIsSet().catch(() => false);
+
     // Capture-phase so app shortcuts win over the xterm terminal / inputs.
     window.addEventListener("keydown", handleKey, true);
 
@@ -119,6 +125,16 @@
   <Paywall blocking />
 {:else if license.showUnlock}
   <Paywall onClose={() => (license.showUnlock = false)} />
+{/if}
+
+<!-- Launch password gate (covers everything via z-index) -->
+{#if locked}
+  <LockScreen onUnlock={() => (locked = false)} />
+{/if}
+
+<!-- Security settings (set/change/remove the launch password) -->
+{#if ui.showSecurity}
+  <SecuritySettings onClose={() => (ui.showSecurity = false)} />
 {/if}
 
 <style>

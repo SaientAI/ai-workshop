@@ -53,6 +53,7 @@
       <button class="wbtn stop" onclick={stopModel}>■ Stop</button>
     {/if}
 
+    <button class="wbtn" onclick={() => (ui.showSecurity = true)} title="Launch password">🔒</button>
     <button class="wbtn" onclick={() => (ui.showShortcuts = true)} title="Keyboard shortcuts (?)">⌨</button>
     <button class="wbtn" onclick={() => aw("min")}>─</button>
     <button class="wbtn" onclick={() => aw("max")}>□</button>
