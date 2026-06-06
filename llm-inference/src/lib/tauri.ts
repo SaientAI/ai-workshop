@@ -264,6 +264,25 @@ export const videoLoadedModel = () => invoke<string | null>("video_loaded_model"
 export const videoGenerate    = (payload: VideoPayload) => invoke<VideoResult>("video_generate", { payload });
 export const videoEnhance     = (payload: EnhancePayload) => invoke<EnhanceResult>("video_enhance", { payload });
 
+// ── Vision (local image understanding — Moondream2 daemon) ──────────────────────
+
+// VisionResult mirrors src-tauri/src/vision.rs::VisionResult
+export interface VisionResult {
+  answer: string;
+  elapsed: number;
+  device: string;
+}
+
+/** Describe / answer a question about an image (base64 PNG/JPEG). Loads the model on first use. */
+export const visionDescribe = (imageB64: string, question: string) =>
+  invoke<VisionResult>("vision_describe", { imageB64, question });
+
+/** Free the vision model's VRAM. */
+export const visionUnload = () => invoke<void>("vision_unload");
+
+/** Whether the vision model is currently loaded. */
+export const visionLoaded = () => invoke<boolean>("vision_loaded");
+
 // ── TTS ───────────────────────────────────────────────────────────────────────
 
 // TtsPayload mirrors src-tauri/src/tts.rs::TtsPayload

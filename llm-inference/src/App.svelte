@@ -16,6 +16,7 @@
   import AgentScreen from "./components/screens/AgentScreen.svelte";
   import ImageGenScreen from "./components/screens/ImageGenScreen.svelte";
   import VideoScreen from "./components/screens/VideoScreen.svelte";
+  import VisionScreen from "./components/screens/VisionScreen.svelte";
   import TTSScreen from "./components/screens/TTSScreen.svelte";
   import LoRAScreen from "./components/screens/LoRAScreen.svelte";
   import MergeScreen from "./components/screens/MergeScreen.svelte";
@@ -90,6 +91,8 @@
     <ImageGenScreen />
   {:else if ui.screen === "video"}
     <VideoScreen />
+  {:else if ui.screen === "vision"}
+    <VisionScreen />
   {:else if ui.screen === "tts"}
     <TTSScreen />
   {:else if ui.screen === "lora"}

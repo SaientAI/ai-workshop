@@ -196,6 +196,21 @@ export const video = $state({
   refineSteps: 20,
 });
 
+// ── Vision (local image understanding) ──────────────────────────────────────────
+
+export const vision = $state({
+  imageB64: "",        // base64 of the picked image (no data: prefix)
+  imageMime: "image/png",
+  imageName: "",       // display name of the picked file
+  question: "",        // empty → general caption
+  loaded: false,       // model warm in VRAM
+  analyzing: false,
+  answer: "",
+  elapsed: 0,
+  device: "",
+  error: "",
+});
+
 // ── TTS ───────────────────────────────────────────────────────────────────────
 
 export const tts = $state<TtsState>({

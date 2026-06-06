@@ -1,6 +1,6 @@
 // Shared TypeScript types for Saient
 
-export type Screen = "chat" | "agent" | "imggen" | "video" | "tts" | "lora" | "merge";
+export type Screen = "chat" | "agent" | "imggen" | "video" | "vision" | "tts" | "lora" | "merge";
 export type AgentTab = "files" | "terminal" | "planner" | "memory";
 export type ChatTab = "chat" | "system";
 export type StepStatus = "pending" | "running" | "done" | "failed" | "skipped" | "retrying";
