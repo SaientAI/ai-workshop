@@ -16,21 +16,72 @@
   const dlPct = $derived(dlProgress.total > 0 ? Math.round((dlProgress.downloaded / dlProgress.total) * 100) : 0);
   const fmtGB = (b: number) => (b / 1e9).toFixed(2) + " GB";
 
-  async function downloadModel(m: typeof STARTER_MODELS[number]) {
-    downloading = m.file; dlError = ""; dlProgress = { downloaded: 0, total: 0 };
+  // ── Hugging Face: paste any repo, pick a quant ───────────────────────────────
+  let hfInput = $state("");
+  let hfRepo = $state("");
+  let hfFiles = $state<T.HfFile[]>([]);
+  let hfListing = $state(false);
+  let hfError = $state("");
+
+  // Accept "owner/name", a repo URL, or a direct file URL (resolve/blob).
+  function parseHf(raw: string): { repo: string; file?: string } | null {
+    const s = raw.trim();
+    if (!s) return null;
+    let parts: string[];
+    if (/^https?:\/\//i.test(s)) {
+      try { parts = new URL(s).pathname.replace(/^\/+|\/+$/g, "").split("/"); }
+      catch { return null; }
+      if (parts.length < 2) return null;
+      const repo = `${parts[0]}/${parts[1]}`;
+      const marker = Math.max(parts.indexOf("resolve"), parts.indexOf("blob"));
+      if (marker >= 0 && parts.length > marker + 2) {
+        return { repo, file: decodeURIComponent(parts.slice(marker + 2).join("/")) };
+      }
+      return { repo };
+    }
+    parts = s.replace(/^\/+|\/+$/g, "").split("/");
+    if (parts.length < 2) return null;
+    if (parts.length > 2 && parts[parts.length - 1].toLowerCase().endsWith(".gguf")) {
+      return { repo: `${parts[0]}/${parts[1]}`, file: parts.slice(2).join("/") };
+    }
+    return { repo: `${parts[0]}/${parts[1]}` };
+  }
+
+  async function listHf() {
+    const parsed = parseHf(hfInput);
+    if (!parsed) { hfError = 'Enter a repo like "owner/name" or a Hugging Face link.'; return; }
+    hfRepo = parsed.repo;
+    if (parsed.file) { hfFiles = []; await downloadFile(parsed.repo, parsed.file); return; }
+    hfListing = true; hfError = ""; hfFiles = [];
+    try {
+      hfFiles = await T.hfListGguf(parsed.repo);
+    } catch (e) {
+      hfError = String(e);
+    } finally {
+      hfListing = false;
+    }
+  }
+
+  // Generic download: any repo + file → managed models dir.
+  async function downloadFile(repo: string, file: string) {
+    if (downloading) return;
+    downloading = file.split("/").pop() ?? file;
+    dlError = ""; dlProgress = { downloaded: 0, total: 0 };
     const dir = await T.getModelsDir().catch(() => model.modelsDir);
     const unlisten = await listen<{ downloaded: number; total: number; done?: boolean }>(
       "model-progress", (e) => { dlProgress = e.payload; });
     try {
-      await T.downloadStarterModel(m.repo, m.file, dir);
+      await T.downloadStarterModel(repo, file, dir);
       await scanModels();          // surface the new model in the picker
-      showDownload = false;
+      hfFiles = [];                // collapse the picker; the model is now in the list
     } catch (e) {
       dlError = String(e);
     } finally {
       unlisten(); downloading = "";
     }
   }
+
+  const downloadModel = (m: typeof STARTER_MODELS[number]) => downloadFile(m.repo, m.file);
 
   async function loadModel() {
     if (!model.path) { model.loadError = "No model selected — click a card in the list above."; return; }
@@ -200,6 +251,38 @@
               <span class="dl-model-desc">{m.desc}</span>
             </button>
           {/each}
+
+          <!-- Any Hugging Face GGUF repo -->
+          <div class="hf-divider"><span>or any Hugging Face repo</span></div>
+          <div class="hf-row">
+            <input
+              class="hf-input"
+              placeholder="owner/name or HF link"
+              bind:value={hfInput}
+              onkeydown={(e) => e.key === "Enter" && listHf()}
+              spellcheck="false"
+              autocomplete="off"
+            />
+            <button class="tab-action" onclick={listHf} disabled={hfListing || !hfInput.trim()}>
+              {hfListing ? "…" : "List"}
+            </button>
+          </div>
+          <div class="hf-hint">Paste a GGUF repo (e.g. <code>bartowski/Llama-3.2-3B-Instruct-GGUF</code>) — downloads straight into your models folder.</div>
+
+          {#if hfError}<div class="dl-err">{hfError}</div>{/if}
+
+          {#if hfFiles.length}
+            <div class="hf-files">
+              <div class="hf-files-head">{hfRepo} · pick a quant</div>
+              {#each hfFiles as f}
+                <button class="hf-file" onclick={() => downloadFile(hfRepo, f.file)}>
+                  <span class="hf-file-name">{f.file}</span>
+                  <span class="hf-file-size">⬇ {fmtGB(f.size)}</span>
+                </button>
+              {/each}
+            </div>
+          {/if}
+
           {#if dlError}<div class="dl-err">{dlError}</div>{/if}
         {/if}
       </div>
@@ -407,6 +490,24 @@
   .dl-model-name { font-size: 12px; font-weight: 600; color: var(--text); }
   .dl-model-size { font-size: 10px; color: var(--accent); font-family: var(--mono); align-self: center; }
   .dl-model-desc { grid-column: 1 / -1; font-size: 10px; color: var(--text3); line-height: 1.4; }
+  /* Hugging Face arbitrary download */
+  .hf-divider { display: flex; align-items: center; gap: 8px; margin: 4px 0 2px; }
+  .hf-divider span { font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text3); white-space: nowrap; }
+  .hf-divider::before, .hf-divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+  .hf-row { display: flex; gap: 6px; }
+  .hf-input { flex: 1; font-size: 11px; font-family: var(--mono); padding: 5px 8px; }
+  .hf-hint { font-size: 9px; color: var(--text3); line-height: 1.5; }
+  .hf-hint code { color: var(--accent); font-size: 9px; word-break: break-all; }
+  .hf-files { display: flex; flex-direction: column; gap: 3px; margin-top: 2px; }
+  .hf-files-head { font-size: 9px; color: var(--text3); font-family: var(--mono); margin-bottom: 2px; word-break: break-all; }
+  .hf-file {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    text-align: left; padding: 6px 8px; border-radius: var(--radius-sm);
+    background: var(--bg3); border: 1px solid var(--border); cursor: pointer;
+  }
+  .hf-file:hover { border-color: var(--accent); }
+  .hf-file-name { font-size: 10px; font-family: var(--mono); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hf-file-size { font-size: 10px; color: var(--accent); font-family: var(--mono); flex-shrink: 0; }
   .dl-name { font-size: 11px; font-family: var(--mono); color: var(--text2); word-break: break-all; }
   .dl-bar { height: 6px; background: var(--bg3); border-radius: 3px; overflow: hidden; }
   .dl-fill { height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.3s ease; }

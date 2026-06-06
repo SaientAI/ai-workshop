@@ -1470,7 +1470,7 @@ fn main() {
             pty::pty_spawn, pty::pty_write, pty::pty_resize, pty::pty_kill,
             // Setup wizard
             setup::detect_system, setup::run_setup, setup::skip_setup, setup::reset_setup,
-            setup::download_starter_model,
+            setup::download_starter_model, setup::hf_list_gguf,
             // Licensing (30-day trial → signed key unlock)
             license::license_status, license::license_activate,
             // Launch password

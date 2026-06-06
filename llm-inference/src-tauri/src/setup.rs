@@ -422,6 +422,83 @@ pub async fn download_starter_model(
     Ok(dest.to_string_lossy().into_owned())
 }
 
+// ── Hugging Face: list a repo's GGUF files ──────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct HfFile {
+    pub file: String,
+    pub size: u64,
+}
+
+/// List the `.gguf` files (with sizes) in a HuggingFace repo's main branch, so the
+/// UI can let the user pick a quant before downloading. Files are then fetched with
+/// `download_starter_model`, which drops them in the managed models dir.
+#[tauri::command]
+pub async fn hf_list_gguf(repo: String) -> Result<Vec<HfFile>, String> {
+    #[derive(serde::Deserialize)]
+    struct Lfs {
+        #[serde(default)]
+        size: u64,
+    }
+    #[derive(serde::Deserialize)]
+    struct TreeEntry {
+        #[serde(rename = "type")]
+        kind: String,
+        path: String,
+        #[serde(default)]
+        size: u64,
+        #[serde(default)]
+        lfs: Option<Lfs>,
+    }
+
+    let repo = repo.trim().trim_matches('/');
+    if repo.is_empty() || repo.split('/').count() != 2 {
+        return Err("Enter a HuggingFace repo like \"owner/name\".".into());
+    }
+
+    // Non-recursive: GGUF repos keep quants at the top level. Avoids nested paths.
+    let url = format!("https://huggingface.co/api/models/{repo}/tree/main");
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .get(&url)
+        .header("User-Agent", "Saient")
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Err(format!("Repo \"{repo}\" not found on HuggingFace."));
+    }
+    if !resp.status().is_success() {
+        return Err(format!(
+            "HuggingFace returned HTTP {} — the repo may be gated or private.",
+            resp.status()
+        ));
+    }
+    let entries: Vec<TreeEntry> = resp
+        .json()
+        .await
+        .map_err(|e| format!("couldn't read repo file list: {e}"))?;
+
+    let mut files: Vec<HfFile> = entries
+        .into_iter()
+        .filter(|e| e.kind == "file" && e.path.to_lowercase().ends_with(".gguf"))
+        .map(|e| {
+            // For LFS files the real size lives under `lfs`; fall back to `size`.
+            let size = e.lfs.map(|l| l.size).filter(|&s| s > 0).unwrap_or(e.size);
+            HfFile { file: e.path, size }
+        })
+        .collect();
+
+    if files.is_empty() {
+        return Err("No .gguf files found in that repo.".into());
+    }
+    files.sort_by(|a, b| a.file.to_lowercase().cmp(&b.file.to_lowercase()));
+    Ok(files)
+}
+
 /// Mark setup as complete without installing (e.g. user already has everything).
 #[tauri::command]
 pub fn skip_setup() -> Result<(), String> {
