@@ -160,7 +160,9 @@ pub fn default_lora_dir() -> PathBuf {
 }
 
 fn home_dir() -> Option<PathBuf> {
-    std::env::var("HOME").ok().map(PathBuf::from)
+    std::env::var("HOME").ok()
+        .or_else(|| std::env::var("USERPROFILE").ok())   // Windows
+        .map(PathBuf::from)
 }
 
 // ── Dependency checker ────────────────────────────────────────────────────────

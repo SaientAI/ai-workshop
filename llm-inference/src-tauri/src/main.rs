@@ -109,7 +109,9 @@ fn is_safe_command(cmd: &str) -> bool {
 }
 
 fn make_state() -> AppState {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))   // Windows has no HOME
+        .unwrap_or_else(|_| ".".into());
     let root = PathBuf::from(&home).join("agent-workspace");
     std::fs::create_dir_all(&root).ok();
 
