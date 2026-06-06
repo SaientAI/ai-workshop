@@ -1,5 +1,13 @@
 {
   "trailingSlash": false,
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "www.saient.co.uk" }],
+      "destination": "https://saient.co.uk/:path*",
+      "permanent": true
+    }
+  ],
   "rewrites": [
     { "source": "/pricing", "destination": "/pricing.html" },
     { "source": "/help", "destination": "/help.html" },
