@@ -6,7 +6,7 @@
   // `blocking` = trial has ended; the app is locked until activated.
   let { blocking = false, onClose = () => {} }: { blocking?: boolean; onClose?: () => void } = $props();
 
-  const BUY_URL = "https://saient.co.uk/pricing";
+  const BUY_URL = "https://buy.stripe.com/14AaEWeuscbl3oDb2BeQM00";
 
   let key = $state("");
   let busy = $state(false);

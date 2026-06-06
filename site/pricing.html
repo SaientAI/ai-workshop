@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Pricing — Saient</title>
+<meta name="description" content="Saient pricing: try the full local AI desktop app free for 30 days, then unlock forever for a single £20 payment. No subscription, no cloud, no data leaving your machine." />
+<link rel="canonical" href="https://saient.co.uk/pricing" />
+
+<!-- Open Graph / Twitter -->
+<meta property="og:type" content="website" />
+<meta property="og:title" content="Saient — Pricing" />
+<meta property="og:description" content="30 days free, then £20 once. Yours forever. A full local AI workshop that runs on your own machine." />
+<meta property="og:url" content="https://saient.co.uk/pricing" />
+<meta name="twitter:card" content="summary" />
+
+<!-- Product structured data for rich results -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Product",
+  "name": "Saient",
+  "description": "Local AI desktop app: chat, a coding agent, image generation, text-to-speech, and LoRA training — all running on your own machine.",
+  "brand": { "@type": "Brand", "name": "Saient" },
+  "offers": {
+    "@type": "Offer",
+    "price": "20.00",
+    "priceCurrency": "GBP",
+    "url": "https://saient.co.uk/pricing",
+    "availability": "https://schema.org/InStock"
+  }
+}
+</script>
+
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230d0d0f'/%3E%3Ctext x='16' y='21' font-family='monospace' font-size='12' fill='%236c8ef5' text-anchor='middle' font-weight='700'%3E%5B%3E_%3C%5D%3C/text%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Martian+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg:#0d0d0f; --bg2:#141418; --bg3:#1a1a20; --border:#2a2a35;
+    --text:#e8e8f0; --text2:#a0a0b8; --text3:#606078;
+    --accent:#6c8ef5; --accent-dim:#4a63b8; --green:#00d68f; --amber:#f5a623; --red:#f87171;
+    --sans:"Hanken Grotesk",-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+    --mono:"JetBrains Mono","Fira Code",Consolas,monospace;
+    --display:"Martian Mono","JetBrains Mono",monospace;
+    --radius:10px; --radius-sm:6px; --maxw:1120px;
+  }
+  *,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
+  html { scroll-behavior:smooth; }
+  body {
+    background:var(--bg); color:var(--text); font-family:var(--sans);
+    font-size:16px; line-height:1.6; -webkit-font-smoothing:antialiased;
+    overflow-x:hidden; position:relative; min-height:100vh;
+  }
+  body::before {
+    content:""; position:fixed; inset:0;
+    background-image:radial-gradient(circle at 1px 1px, rgba(108,142,245,0.10) 1px, transparent 0);
+    background-size:32px 32px;
+    mask-image:radial-gradient(ellipse 80% 60% at 50% 0%, #000 30%, transparent 75%);
+    pointer-events:none; z-index:0;
+  }
+  body::after {
+    content:""; position:fixed; inset:0;
+    background:radial-gradient(60% 50% at 50% -10%, rgba(108,142,245,0.16), transparent 70%);
+    pointer-events:none; z-index:0;
+  }
+  .wrap { max-width:var(--maxw); margin:0 auto; padding:0 28px; position:relative; z-index:2; }
+  a { color:inherit; text-decoration:none; }
+  .mono { font-family:var(--mono); }
+  .accent { color:var(--accent); }
+
+  /* NAV */
+  nav { position:sticky; top:0; z-index:50; backdrop-filter:blur(14px); background:rgba(13,13,15,0.72); border-bottom:1px solid var(--border); }
+  .nav-inner { display:flex; align-items:center; justify-content:space-between; height:64px; }
+  .brand { display:flex; align-items:center; gap:11px; font-family:var(--display); font-weight:700; font-size:17px; letter-spacing:-0.02em; }
+  .brand .face { font-family:var(--mono); font-size:13px; font-weight:700; color:var(--accent); border:1px solid var(--border); background:var(--bg2); padding:4px 7px; border-radius:var(--radius-sm); line-height:1; }
+  .nav-links { display:flex; align-items:center; gap:30px; }
+  .nav-links a.link { font-size:14px; color:var(--text2); transition:color .2s; font-weight:500; }
+  .nav-links a.link:hover { color:var(--text); }
+  .btn { font-family:var(--mono); font-size:13px; font-weight:500; padding:9px 16px; border-radius:var(--radius-sm); border:1px solid var(--border); background:var(--bg2); color:var(--text); cursor:pointer; transition:all .2s; display:inline-flex; align-items:center; gap:8px; }
+  .btn:hover { border-color:var(--accent-dim); color:#fff; transform:translateY(-1px); }
+  .btn-primary { background:var(--accent); border-color:var(--accent); color:#0a0a12; font-weight:700; }
+  .btn-primary:hover { background:#82a0ff; border-color:#82a0ff; box-shadow:0 8px 28px rgba(108,142,245,0.35); }
+  @media (max-width:760px){ .nav-links .link { display:none; } }
+
+  /* HEADER */
+  .page-head { text-align:center; padding:78px 0 16px; }
+  .sec-tag { font-family:var(--mono); font-size:12px; color:var(--accent); letter-spacing:0.12em; text-transform:uppercase; margin-bottom:16px; }
+  h1 { font-family:var(--display); font-weight:700; font-size:clamp(30px,4.6vw,48px); letter-spacing:-0.035em; line-height:1.05; margin-bottom:18px; }
+  .page-sub { color:var(--text2); font-size:18px; max-width:34em; margin:0 auto; }
+
+  /* PRICE CARD */
+  .price-wrap { display:flex; justify-content:center; padding:46px 0 20px; }
+  .price-card {
+    width:480px; max-width:100%; border:1px solid var(--accent-dim); border-radius:18px;
+    background:linear-gradient(180deg, rgba(20,22,30,0.92), rgba(13,13,15,0.7));
+    padding:38px 34px; position:relative; overflow:hidden;
+    box-shadow:0 30px 80px rgba(0,0,0,0.5);
+  }
+  .price-card::before { content:""; position:absolute; right:-50px; top:-50px; width:260px; height:260px; background:radial-gradient(circle, rgba(108,142,245,0.16), transparent 70%); pointer-events:none; }
+  .badge { display:inline-flex; align-items:center; gap:8px; font-family:var(--mono); font-size:12px; color:var(--green); border:1px solid rgba(0,214,143,0.3); background:rgba(0,214,143,0.06); padding:5px 12px; border-radius:100px; margin-bottom:22px; }
+  .badge .dot { width:7px; height:7px; border-radius:50%; background:var(--green); box-shadow:0 0 10px var(--green); }
+  .price-name { font-family:var(--display); font-size:20px; font-weight:600; margin-bottom:6px; }
+  .price-row { display:flex; align-items:baseline; gap:10px; margin:8px 0 4px; }
+  .price-amt { font-family:var(--display); font-size:54px; font-weight:700; letter-spacing:-0.04em; }
+  .price-once { font-family:var(--mono); font-size:14px; color:var(--text2); }
+  .price-note { color:var(--text3); font-size:13px; margin-bottom:26px; }
+  .feat { list-style:none; display:flex; flex-direction:column; gap:13px; margin:26px 0 30px; }
+  .feat li { display:flex; gap:12px; align-items:flex-start; font-size:14.5px; color:var(--text2); }
+  .feat .tick { color:var(--green); flex-shrink:0; font-family:var(--mono); }
+  .feat b { color:var(--text); font-weight:600; }
+  .buy {
+    display:flex; width:100%; justify-content:center; align-items:center; gap:9px;
+    padding:15px; border-radius:12px; border:0; cursor:pointer;
+    background:linear-gradient(135deg, #5b8cff, #6a5bff); color:#fff;
+    font-family:var(--sans); font-size:16px; font-weight:700; transition:filter .2s, transform .15s;
+  }
+  .buy:hover { filter:brightness(1.08); transform:translateY(-1px); }
+  .secured { display:flex; align-items:center; justify-content:center; gap:8px; margin-top:16px; font-family:var(--mono); font-size:11.5px; color:var(--text3); }
+
+  /* HOW IT WORKS */
+  .section { padding:64px 0; }
+  .steps { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-top:30px; }
+  @media (max-width:760px){ .steps { grid-template-columns:1fr; } }
+  .step { border:1px solid var(--border); border-radius:var(--radius); background:linear-gradient(180deg, rgba(20,20,24,0.7), rgba(16,16,20,0.7)); padding:24px 22px; }
+  .step .num { font-family:var(--mono); font-size:13px; color:var(--accent); border:1px solid var(--border); background:var(--bg); width:34px; height:34px; display:grid; place-items:center; border-radius:var(--radius-sm); margin-bottom:14px; }
+  .step h3 { font-family:var(--display); font-size:15px; font-weight:600; margin-bottom:8px; }
+  .step p { color:var(--text2); font-size:14px; }
+
+  /* FAQ */
+  h2 { font-family:var(--display); font-weight:600; font-size:clamp(24px,3.4vw,34px); letter-spacing:-0.03em; margin-bottom:8px; text-align:center; }
+  .faq { max-width:760px; margin:34px auto 0; display:flex; flex-direction:column; gap:12px; }
+  .faq details { border:1px solid var(--border); border-radius:var(--radius); background:rgba(20,20,24,0.6); padding:0 20px; }
+  .faq summary { cursor:pointer; padding:18px 0; font-weight:600; font-size:15px; list-style:none; display:flex; justify-content:space-between; align-items:center; }
+  .faq summary::-webkit-details-marker { display:none; }
+  .faq summary::after { content:"+"; color:var(--accent); font-family:var(--mono); font-size:18px; }
+  .faq details[open] summary::after { content:"−"; }
+  .faq p { color:var(--text2); font-size:14.5px; padding:0 0 18px; }
+
+  footer { border-top:1px solid var(--border); padding:30px 0; margin-top:40px; }
+  .foot-inner { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; font-size:13px; color:var(--text3); }
+  .foot-inner .brand { font-size:15px; }
+  .foot-links { display:flex; gap:22px; font-family:var(--mono); font-size:12.5px; flex-wrap:wrap; }
+  .foot-links a { color:var(--text3); transition:color .2s; }
+  .foot-links a:hover { color:var(--accent); }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-inner">
+    <a class="brand" href="/"><span class="face">[&gt;_&lt;]</span><span>SAIENT</span></a>
+    <div class="nav-links">
+      <a class="link" href="/#features">Features</a>
+      <a class="link" href="/help">Help</a>
+      <a class="link" href="/pricing">Pricing</a>
+      <a class="btn btn-primary" href="/#download">Download</a>
+    </div>
+  </div>
+</nav>
+
+<header class="page-head">
+  <div class="wrap">
+    <div class="sec-tag">Pricing</div>
+    <h1>Try it free. Own it forever.</h1>
+    <p class="page-sub">Use the whole app free for 30 days. When you're sold, one £20 payment unlocks it for good — no subscription, no metering, nothing leaves your machine.</p>
+  </div>
+</header>
+
+<section class="price-wrap">
+  <div class="wrap" style="display:flex; justify-content:center;">
+    <div class="price-card">
+      <span class="badge"><span class="dot"></span> 30-day free trial</span>
+      <div class="price-name">Saient — Full unlock</div>
+      <div class="price-row">
+        <span class="price-amt">£20</span>
+        <span class="price-once">once · yours forever</span>
+      </div>
+      <div class="price-note">One-time payment. No subscription. Free updates.</div>
+
+      <ul class="feat">
+        <li><span class="tick">✓</span><span><b>Chat</b> with any local GGUF model + live HTML artifacts</span></li>
+        <li><span class="tick">✓</span><span><b>Saient coding agent</b> — PTY terminal &amp; plan→act→verify loop</span></li>
+        <li><span class="tick">✓</span><span><b>Image generation</b> (SDXL + LoRA) and a <b>vision analyzer</b></span></li>
+        <li><span class="tick">✓</span><span><b>Text-to-speech</b>, <b>LoRA training</b> &amp; checkpoint merge</span></li>
+        <li><span class="tick">✓</span><span><b>100% offline</b> — no cloud, no API keys, no data leaving your PC</span></li>
+        <li><span class="tick">✓</span><span>Linux &amp; Windows · launch-password protection</span></li>
+      </ul>
+
+      <a class="buy" href="https://buy.stripe.com/14AaEWeuscbl3oDb2BeQM00">Unlock full version — £20</a>
+      <div class="secured">🔒 Secure checkout by Stripe · GBP</div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <h2>How it works</h2>
+    <div class="steps">
+      <div class="step">
+        <div class="num">1</div>
+        <h3>Download &amp; try</h3>
+        <p>Install Saient and use every studio free for 30 days. No card needed to start.</p>
+      </div>
+      <div class="step">
+        <div class="num">2</div>
+        <h3>Pay once</h3>
+        <p>When the trial ends, check out securely with Stripe for a single £20 payment.</p>
+      </div>
+      <div class="step">
+        <div class="num">3</div>
+        <h3>Paste your key</h3>
+        <p>We email your licence key. Paste it into the app's unlock box and it's yours — forever, fully offline.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" style="padding-top:0;">
+  <div class="wrap">
+    <h2>Questions</h2>
+    <div class="faq">
+      <details>
+        <summary>Is this really a one-time payment?</summary>
+        <p>Yes. £20 once, and the app is yours forever. There's no subscription and no recurring charge — Stripe takes a single payment.</p>
+      </details>
+      <details>
+        <summary>What happens after the 30-day trial?</summary>
+        <p>The app keeps your data and settings, but the studios lock until you unlock with a licence key. Nothing is deleted — pay whenever you're ready and everything's right where you left it.</p>
+      </details>
+      <details>
+        <summary>How do I get my licence key?</summary>
+        <p>After checkout we email your key to the address you paid with. Open Saient, paste the key into the unlock box, and you're activated. Keys are verified entirely offline — your machine never has to phone home.</p>
+      </details>
+      <details>
+        <summary>Can I use it on more than one computer?</summary>
+        <p>Your key activates Saient on your personal machines. If you need it on a new PC, just paste the same key — there's no online seat limit to fight with.</p>
+      </details>
+      <details>
+        <summary>Do I need an internet connection?</summary>
+        <p>Only to download the app and (optionally) models. After that Saient runs 100% offline — inference, the agent, image gen and licence checks all happen on your own hardware.</p>
+      </details>
+      <details>
+        <summary>What are the system requirements?</summary>
+        <p>Linux or Windows. An NVIDIA GPU is recommended for fast inference (Saient bundles its CUDA engine), but there's a CPU fallback too.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap foot-inner">
+    <a class="brand" href="/"><span class="face">[&gt;_&lt;]</span><span>SAIENT</span></a>
+    <div class="foot-links">
+      <a href="/#features">Features</a>
+      <a href="/help">Help</a>
+      <a href="/pricing">Pricing</a>
+      <a href="/terms">Terms</a>
+      <a href="/privacy">Privacy</a>
+    </div>
+    <div>saient.co.uk · one payment, yours forever</div>
+  </div>
+</footer>
+
+</body>
+</html>
