@@ -15,7 +15,9 @@ use crate::resolve::NoConsole;
 pub const PROBE_PORTS: &[u16] = &[18081, 18082, 33115, 18080];
 
 // Disk-persistent PID file — survives crashes so the next launch can reap any leftover.
-const PID_FILE: &str = "/tmp/saient-server.pid";
+// Cross-platform temp paths (Windows has no /tmp).
+fn pid_file() -> PathBuf { std::env::temp_dir().join("saient-server.pid") }
+fn engine_log() -> PathBuf { std::env::temp_dir().join("saient-tinyq4.log") }
 const FIRST_TOKEN_TIMEOUT_SECS: u64 = 300;
 const STREAM_IDLE_TIMEOUT_SECS: u64 = 180;
 
@@ -46,11 +48,11 @@ pub fn kill_our_stale_servers() {
     drop(pids);
 
     // Cross-session: read the PID file left by a previous app run
-    if let Ok(s) = std::fs::read_to_string(PID_FILE) {
+    if let Ok(s) = std::fs::read_to_string(pid_file()) {
         if let Ok(pid) = s.trim().parse::<u32>() {
             let _ = kill_pid(pid);
         }
-        let _ = std::fs::remove_file(PID_FILE);
+        let _ = std::fs::remove_file(pid_file());
     }
 }
 
@@ -178,7 +180,7 @@ impl Engine {
         let log = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open("/tmp/saient-tinyq4.log")
+            .open(engine_log())
             .ok();
         let stdout = log
             .as_ref()
@@ -221,7 +223,7 @@ impl Engine {
 
         let pid = process.id();
         spawned_pids().lock().unwrap().push(pid);
-        let _ = std::fs::write(PID_FILE, pid.to_string());
+        let _ = std::fs::write(pid_file(), pid.to_string());
 
         if let Err(e) = wait_for_ready(&client, port, &mut process).await {
             let _ = process.kill();
@@ -358,9 +360,9 @@ pub fn stop_local_model_server(port: u16) -> Result<bool> {
     kill_pid(server.pid)
         .with_context(|| format!("failed to stop tinyq4 server on port {}", port))?;
 
-    if let Ok(s) = std::fs::read_to_string(PID_FILE) {
+    if let Ok(s) = std::fs::read_to_string(pid_file()) {
         if s.trim().parse::<u32>().ok() == Some(server.pid) {
-            let _ = std::fs::remove_file(PID_FILE);
+            let _ = std::fs::remove_file(pid_file());
         }
     }
 
@@ -372,9 +374,9 @@ pub fn stop_local_model_server(port: u16) -> Result<bool> {
 }
 
 fn unregister_spawned_pid(pid: u32) {
-    if let Ok(s) = std::fs::read_to_string(PID_FILE) {
+    if let Ok(s) = std::fs::read_to_string(pid_file()) {
         if s.trim().parse::<u32>().ok() == Some(pid) {
-            let _ = std::fs::remove_file(PID_FILE);
+            let _ = std::fs::remove_file(pid_file());
         }
     }
 
@@ -536,27 +538,34 @@ pub async fn stream_generate(
     let mut saw_data = false;
     let mut last_token_at = t_start;
 
+    // CPU inference is far slower than GPU — prefill of a large prompt can take
+    // many minutes before the first token — so give it much longer before we
+    // assume the model/quant is broken. Tokens and prefill progress reset the clock.
+    let have_gpu = gpu_available();
+    let first_token_to = if have_gpu { FIRST_TOKEN_TIMEOUT_SECS } else { 1800 };
+    let idle_to        = if have_gpu { STREAM_IDLE_TIMEOUT_SECS } else { 600 };
+    let no_token_msg = format!(
+        "tinyq4 accepted the request but produced no tokens after {first_token_to}s.{} The model may still be warming up, or this architecture/quantization isn't supported by tinyq4.",
+        if have_gpu { "" } else { " (CPU inference is slow — a smaller / more-quantized model will respond faster.)" }
+    );
+
     'outer: loop {
         if stop_flag.load(Ordering::Relaxed) { break; }
-        let timeout_secs = if saw_data { STREAM_IDLE_TIMEOUT_SECS } else { FIRST_TOKEN_TIMEOUT_SECS };
+        let timeout_secs = if saw_data { idle_to } else { first_token_to };
         if last_token_at.elapsed() > Duration::from_secs(timeout_secs) {
             if !saw_data {
-                anyhow::bail!(
-                    "tinyq4 accepted the request but produced no tokens after {FIRST_TOKEN_TIMEOUT_SECS} seconds. The model may still be warming up, or this architecture/quantization is not working in tinyq4."
-                );
+                anyhow::bail!("{no_token_msg}");
             }
-            anyhow::bail!("tinyq4 stopped sending tokens for {STREAM_IDLE_TIMEOUT_SECS} seconds");
+            anyhow::bail!("tinyq4 stopped sending tokens for {idle_to} seconds");
         }
         let chunk = match tokio::time::timeout(Duration::from_secs(timeout_secs), byte_stream.next()).await {
             Ok(Some(chunk)) => chunk,
             Ok(None) => break,
             Err(_) if !saw_data => {
-                anyhow::bail!(
-                    "tinyq4 accepted the request but produced no tokens after {FIRST_TOKEN_TIMEOUT_SECS} seconds. The model may still be warming up, or this architecture/quantization is not working in tinyq4."
-                );
+                anyhow::bail!("{no_token_msg}");
             }
             Err(_) => {
-                anyhow::bail!("tinyq4 stopped sending tokens for {STREAM_IDLE_TIMEOUT_SECS} seconds");
+                anyhow::bail!("tinyq4 stopped sending tokens for {idle_to} seconds");
             }
         };
         buf.push_str(&String::from_utf8_lossy(&chunk?));
@@ -790,7 +799,7 @@ async fn wait_for_ready(client: &Client, port: u16, process: &mut Child) -> Resu
 /// Extract the most useful error line from the tinyq4 log so the UI can show the real
 /// reason a load failed (CUDA OOM, panic, …) instead of a generic "did not become ready".
 fn last_tinyq4_error() -> Option<String> {
-    let log = std::fs::read_to_string("/tmp/saient-tinyq4.log").ok()?;
+    let log = std::fs::read_to_string(engine_log()).ok()?;
     let recent: Vec<&str> = log.lines().rev().take(40).collect();
     for line in &recent {
         let l = line.to_lowercase();
