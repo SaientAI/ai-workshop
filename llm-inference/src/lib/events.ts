@@ -2,7 +2,7 @@
 // Call once at app startup.
 
 import { listen } from "@tauri-apps/api/event";
-import { model, chat, dual, agent, tts, lora, merge, params } from "./state.svelte.js";
+import { model, chat, dual, agent, tts, lora, merge, params, toast } from "./state.svelte.js";
 import { splitArtifact } from "./artifact.js";
 import { agentRun, checkGoalCompletion } from "./tauri.js";
 import type { LoadPhase } from "./types.js";
@@ -43,10 +43,22 @@ export async function setupEvents() {
 
   // ── Chat streaming ─────────────────────────────────────────────────────────
 
-  // Watchdog: if no token arrives for 30 s the model or tinyq4 likely crashed.
-  // Force-close the streaming state so the UI doesn't hang indefinitely.
-  const STREAM_TIMEOUT_MS = 30_000;
+  // Watchdog: declare the stream dead only after a long silence. CPU inference is
+  // much slower (the first token after prefill can take a while), so the timeout
+  // is adaptive — generous when there's no GPU — to avoid false "dropped" alarms.
+  const STREAM_TIMEOUT_GPU_MS = 45_000;
+  const STREAM_TIMEOUT_CPU_MS = 240_000;
+  // A gentle, time-based "still working" nudge — fires only when a response is
+  // actually slow, so fast machines never see it (no blanket "you're on CPU" nag).
+  const SLOW_HINT_MS = 18_000;
+
+  const onCpu = () => (model.gpu as { available?: boolean } | null)?.available === false;
+  const watchdogMs = () => (onCpu() ? STREAM_TIMEOUT_CPU_MS : STREAM_TIMEOUT_GPU_MS);
+
   let streamWatchdog: ReturnType<typeof setTimeout> | null = null;
+  let slowHint: ReturnType<typeof setTimeout> | null = null;
+  let gotFirstToken = false;
+
   function kickWatchdog() {
     if (streamWatchdog) clearTimeout(streamWatchdog);
     streamWatchdog = setTimeout(() => {
@@ -57,14 +69,23 @@ export async function setupEvents() {
       if (last?.streaming) {
         last.streaming = false;
         last.ts = Date.now();
-        last.content = (last.content || "") +
-          "\n\n*[No response from model for 30 s — connection may have dropped.]*";
+        last.content = (last.content || "") + (onCpu()
+          ? "\n\n*[The model went quiet for a while. On CPU this can just be slow — try again, or load a smaller / more-quantized model.]*"
+          : "\n\n*[No response from the model — it may have crashed. Try reloading the model.]*");
         last.error = true;
       }
-    }, STREAM_TIMEOUT_MS);
+    }, watchdogMs());
   }
   function clearWatchdog() {
     if (streamWatchdog) { clearTimeout(streamWatchdog); streamWatchdog = null; }
+    if (slowHint) { clearTimeout(slowHint); slowHint = null; }
+  }
+  // Cancel the slow-hint timer the moment real output starts.
+  function sawOutput() {
+    if (!gotFirstToken) {
+      gotFirstToken = true;
+      if (slowHint) { clearTimeout(slowHint); slowHint = null; }
+    }
   }
 
   // ── Token batching ─────────────────────────────────────────────────────────
@@ -143,11 +164,19 @@ export async function setupEvents() {
       prefillDone: 0,
       prefillTotal: 0,
     });
+    gotFirstToken = false;
+    if (slowHint) clearTimeout(slowHint);
+    slowHint = setTimeout(() => {
+      if (chat.streaming && !gotFirstToken) {
+        toast("Still generating — the first response can take a moment on CPU.", "info", 5000);
+      }
+    }, SLOW_HINT_MS);
     kickWatchdog();
   });
 
   await listen<{ done: number; total: number }>("prefill-progress", (e) => {
     kickWatchdog();
+    sawOutput();   // prefill bar is visible progress — no need for the slow hint
     chat.prefillDone = e.payload.done;
     chat.prefillTotal = e.payload.total;
     const last = chat.messages[chat.messages.length - 1];
@@ -159,12 +188,14 @@ export async function setupEvents() {
 
   await listen<string>("stream-reasoning", (e) => {
     kickWatchdog();
+    sawOutput();
     pendingReasoning += e.payload;
     scheduleBatch();
   });
 
   await listen<string>("stream-token", (e) => {
     kickWatchdog();
+    sawOutput();
     pendingTokens += e.payload;
     scheduleBatch();
   });
