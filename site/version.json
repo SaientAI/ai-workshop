@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.0.1",
   "url": "https://saient.co.uk/#download",
-  "notes": "First public release — local chat, coding agent, image & video gen, vision, TTS and LoRA training."
+  "notes": "Base-model shortcuts in Image Gen & Merge, analyze images in chat, OS-aware commands, and a smoother CPU experience."
 }
