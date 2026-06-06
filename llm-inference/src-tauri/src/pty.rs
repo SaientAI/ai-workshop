@@ -58,7 +58,7 @@ const SAIENT_CLI_PY: &str = r####"#!/usr/bin/env python3
 # Talks to the tinyq4 OpenAI-compatible server the app already manages, and can
 # act on the workspace via a ReAct-style tool loop (read/ls/write/edit/bash).
 # Pure standard library: no pip installs required.
-import sys, os, json, re, signal, subprocess, threading, urllib.request
+import sys, os, json, re, signal, subprocess, threading, urllib.request, platform
 
 A = "\033[38;2;108;142;245m"   # accent blue
 D = "\033[2m"                  # dim
@@ -69,12 +69,12 @@ Y = "\033[38;2;245;166;35m"    # amber
 X = "\033[0m"                  # reset
 
 BANNER = r"""
-   ██╗  ██╗ █████╗ ██╗██████╗  ██████╗
-   ██║ ██╔╝██╔══██╗██║██╔══██╗██╔═══██╗
-   █████╔╝ ███████║██║██████╔╝██║   ██║
-   ██╔═██╗ ██╔══██║██║██╔══██╗██║   ██║
-   ██║  ██╗██║  ██║██║██║  ██║╚██████╔╝
-   ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═╝ ╚═════╝
+   ███████╗ █████╗ ██╗███████╗███╗   ██╗████████╗
+   ██╔════╝██╔══██╗██║██╔════╝████╗  ██║╚══██╔══╝
+   ███████╗███████║██║█████╗  ██╔██╗ ██║   ██║
+   ╚════██║██╔══██║██║██╔══╝  ██║╚██╗██║   ██║
+   ███████║██║  ██║██║███████╗██║ ╚████║   ██║
+   ╚══════╝╚═╝  ╚═╝╚═╝╚══════╝╚═╝  ╚═══╝   ╚═╝
 """
 
 PORTS = [18081, 18082, 33115, 18080]
@@ -84,6 +84,8 @@ MAX_OUT   = 4000        # max chars of a tool result fed back to the model
 
 SYSTEM = """You are Saient, a local coding agent. You work inside this directory:
 __WS__
+
+Operating system: __OS__. When using the bash tool, use commands native to this OS — on Windows use PowerShell/cmd (dir, type, copy, del, findstr, Remove-Item), NEVER Linux commands (ls, cat, rm, grep, touch).
 
 You can ACT using tools. To use a tool, reply with ONE fenced json block and nothing else:
 ```json
@@ -336,7 +338,7 @@ def header(port, model, yolo):
 def main():
     port, model = find_server()
     yolo = False
-    sys_msg = {"role": "system", "content": SYSTEM.replace("__WS__", WORKSPACE)}
+    sys_msg = {"role": "system", "content": SYSTEM.replace("__WS__", WORKSPACE).replace("__OS__", platform.system() or "this OS")}
     messages = [sys_msg]
     header(port, model, yolo)
     while True:
@@ -478,9 +480,13 @@ pub async fn pty_spawn(
 
     #[cfg(windows)]
     let mut cmd = {
-        // PowerShell terminal; put a saient.cmd shim on PATH so `saient` works.
+        // PowerShell terminal; put a saient.cmd shim on PATH so `saient` works, and
+        // print the same greeting the bash terminal shows (PowerShell has no rcfile).
         let mut c = CommandBuilder::new("powershell.exe");
         c.arg("-NoLogo");
+        c.arg("-NoExit");
+        c.arg("-Command");
+        c.arg("Write-Host ''; Write-Host 'saient' -ForegroundColor Cyan -NoNewline; Write-Host ' > type ' -NoNewline; Write-Host 'saient' -ForegroundColor White -NoNewline; Write-Host ' to launch the agent'; Write-Host ''");
         if let Some(dir) = write_saient_cmd() {
             let existing = std::env::var("PATH").unwrap_or_default();
             c.env("PATH", format!("{};{}", dir.to_string_lossy(), existing));

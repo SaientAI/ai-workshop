@@ -430,6 +430,9 @@ export const checkUpdate = () => invoke<UpdateInfo>("check_update");
 /** Plain-text diagnostics (version, OS, GPU, paths) for support. No telemetry. */
 export const diagnostics = () => invoke<string>("diagnostics");
 
+/** OS name ("windows" | "linux" | "macos"). */
+export const osName = () => invoke<string>("os_name");
+
 // ── Launch password (argon2) ────────────────────────────────────────────────────
 export const passwordIsSet  = () => invoke<boolean>("password_is_set");
 export const passwordVerify = (password: string) => invoke<boolean>("password_verify", { password });

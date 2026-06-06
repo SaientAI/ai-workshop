@@ -1401,6 +1401,11 @@ fn set_models_dir(state: State<'_, AppState>, path: String) -> Result<(), String
     Ok(())
 }
 
+/// OS name ("windows" | "linux" | "macos") — lets the UI steer the model toward
+/// platform-appropriate shell commands.
+#[command]
+fn os_name() -> String { std::env::consts::OS.to_string() }
+
 #[command]
 fn open_models_dir(state: State<'_, AppState>) {
     let dir = state.models_dir.lock().unwrap().clone();
@@ -1469,7 +1474,7 @@ fn main() {
             // Inference — dual agent
             load_drafter, load_critic, dual_agent_status, dual_generate,
             // Models directory / startup
-            scan_models_dir, get_models_dir, set_models_dir, open_models_dir, diagnostics,
+            scan_models_dir, get_models_dir, set_models_dir, open_models_dir, diagnostics, os_name,
             check_dependencies,
             // Agent write mode
             get_agent_write_mode, set_agent_write_mode,

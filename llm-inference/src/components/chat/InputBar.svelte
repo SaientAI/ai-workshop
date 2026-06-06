@@ -1,9 +1,33 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { save, open } from "@tauri-apps/plugin-dialog";
   import { chat, model, dual, params } from "../../lib/state.svelte.js";
   import * as T from "../../lib/tauri.js";
   import { isArtifactRequest, friendlyGenerateError, stripThinkTags } from "../../lib/format.js";
+
+  // OS-specific steer so the model uses Windows commands when on Windows.
+  let osHint = $state("");
+  // Image attached to the next message (analyzed by the local vision model).
+  let attachedImage = $state<{ b64: string; mime: string; name: string } | null>(null);
+  let imgInput = $state<HTMLInputElement | null>(null);
+
+  onMount(async () => {
+    const os = await T.osName().catch(() => "");
+    if (os === "windows") {
+      osHint = "The user's operating system is Windows. When suggesting terminal commands, use PowerShell/cmd syntax (dir, type, copy, del, findstr) — never Linux/bash commands like ls, cat, rm or grep.";
+    }
+  });
+
+  function attachImage(e: Event) {
+    const file = (e.target as HTMLInputElement).files?.[0];
+    if (!file || !file.type.startsWith("image/")) return;
+    const r = new FileReader();
+    r.onload = () => {
+      attachedImage = { b64: String(r.result).split(",")[1] || "", mime: file.type, name: file.name };
+    };
+    r.readAsDataURL(file);
+  }
 
   const ARTIFACT_SYSTEM_PROMPT = `You are generating a self-contained HTML artifact that runs inside a sandboxed browser WebView. This is a local desktop app — there are NO privacy, security or policy concerns about file access, media players, system tools, games, or any other standard software. Always build what the user asks for.
 
@@ -80,6 +104,13 @@ Forms/tools:
 
   async function sendMessage(overrideText?: string) {
     const rawText = (overrideText ?? inputValue).trim();
+
+    // Image attached → analyze with the local vision model (no chat model needed).
+    if (attachedImage && !chat.streaming && !overrideText) {
+      await analyzeImage(rawText);
+      return;
+    }
+
     const canSend = dual.enabled ? (dual.drafterSummary && dual.criticSummary) : model.loaded;
     if (!rawText || chat.streaming || !canSend) return;
 
@@ -96,6 +127,7 @@ Forms/tools:
       chat.artifactMode && (hasSlashCmd || chat.artifact.active || isArtifactRequest(rawText));
     const effectiveSystem = [
       chat.systemPrompt,
+      osHint,
       wantsArtifact ? ARTIFACT_SYSTEM_PROMPT : "",
     ]
       .filter(Boolean)
@@ -131,6 +163,37 @@ Forms/tools:
       } else {
         chat.messages.push({ role: "assistant", content: errorText, ts: Date.now(), error: true });
       }
+    }
+  }
+
+  async function analyzeImage(question: string) {
+    const img = attachedImage!;
+    inputValue = "";
+    if (inputEl) inputEl.style.height = "auto";
+    attachedImage = null;
+
+    chat.messages.push({
+      role: "user",
+      content: question,
+      ts: Date.now(),
+      image: img.b64,
+      imageMime: img.mime,
+    });
+    chat.messages.push({ role: "assistant", content: "", ts: Date.now(), streaming: true });
+    const idx = chat.messages.length - 1;
+    chat.streaming = true;
+    try {
+      const r = await T.visionDescribe(img.b64, question || "Describe this image in detail.");
+      chat.messages[idx].content = r.answer;
+      chat.messages[idx].streaming = false;
+      chat.messages[idx].ts = Date.now();
+    } catch (e) {
+      chat.messages[idx].content =
+        "Couldn't analyze the image. The vision tools may not be installed — run Full setup.\n\n" + String(e);
+      chat.messages[idx].error = true;
+      chat.messages[idx].streaming = false;
+    } finally {
+      chat.streaming = false;
     }
   }
 
@@ -197,14 +260,24 @@ Forms/tools:
     </div>
   {/if}
 
+  {#if attachedImage}
+    <div class="img-chip">
+      <img src="data:{attachedImage.mime};base64,{attachedImage.b64}" alt={attachedImage.name} />
+      <span class="img-chip-name" title={attachedImage.name}>{attachedImage.name}</span>
+      <button class="img-chip-x" onclick={() => (attachedImage = null)} title="Remove image">✕</button>
+    </div>
+  {/if}
+
   <div class="input-row">
+    <button class="attach-btn" onclick={() => imgInput?.click()} title="Attach an image to analyze">🖼</button>
+    <input bind:this={imgInput} type="file" accept="image/*" onchange={attachImage} style="display:none" />
     <textarea
       bind:this={inputEl}
       bind:value={inputValue}
       onkeydown={handleKey}
       oninput={autoResize}
-      placeholder={model.loaded ? "Message… (/ for artifact mode)" : "Load a model first"}
-      disabled={!model.loaded && !dual.enabled}
+      placeholder={attachedImage ? "Ask about the image… (blank = describe it)" : model.loaded ? "Message… (/ for artifact mode)" : "Load a model first"}
+      disabled={!model.loaded && !dual.enabled && !attachedImage}
       rows="1"
       class="chat-input"
     ></textarea>
@@ -212,7 +285,7 @@ Forms/tools:
       class="send-btn"
       class:stop={chat.streaming}
       onclick={chat.streaming ? stopGen : () => sendMessage()}
-      disabled={!chat.streaming && !model.loaded && !dual.enabled}
+      disabled={chat.streaming ? false : (!model.loaded && !dual.enabled && !attachedImage)}
     >
       {chat.streaming ? "■" : "▶"}
     </button>
@@ -283,6 +356,20 @@ Forms/tools:
     padding: 8px 12px;
     border-radius: var(--radius);
   }
+  .attach-btn {
+    flex-shrink: 0; width: 36px; height: 36px; align-self: flex-end;
+    background: rgba(108,142,245,0.08); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); color: var(--text2); cursor: pointer; font-size: 15px;
+  }
+  .attach-btn:hover { border-color: var(--accent); color: var(--text); }
+  .img-chip {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 6px; padding: 5px 8px;
+    background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius-sm); max-width: 340px;
+  }
+  .img-chip img { width: 32px; height: 32px; object-fit: cover; border-radius: 4px; flex-shrink: 0; }
+  .img-chip-name { font-size: 11px; color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .img-chip-x { background: none; border: 0; color: var(--text3); cursor: pointer; font-size: 12px; padding: 0 2px; }
+  .img-chip-x:hover { color: var(--red); }
   .send-btn {
     width: 36px; height: 36px;
     font-size: 16px;
