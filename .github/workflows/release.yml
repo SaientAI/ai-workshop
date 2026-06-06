@@ -1,0 +1,178 @@
+name: Release
+
+# Builds the four engine binaries (Linux/Windows × CUDA/CPU), bundles libcudart, and
+# produces the Saient desktop bundles (.deb / .rpm / .AppImage on Linux, .exe NSIS on
+# Windows). Runs on a version tag (v*) and on manual dispatch.
+#
+# The CUDA binaries are built with TINYQ4_CUDA_ARCH=all-major so they carry SASS for every
+# major NVIDIA arch (Turing→Blackwell) + PTX — they run on any GPU with just the driver,
+# because libcudart ships in the bundle (engine.rs puts it on the loader path at launch).
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  TINYQ4_CUDA_ARCH: all-major
+  TINYQ4_REPO: staticplayHub/tinyq4
+  # 12.6.x is broadly supported by the toolkit action and, with all-major, still runs on
+  # Blackwell (RTX 50xx) via PTX JIT. For native sm_120 SASS, bump to 12.8.x AND bump the
+  # Jimver/cuda-toolkit tag below to a version that knows 12.8.
+  CUDA_VERSION: '12.6.2'
+
+jobs:
+  # ── Linux: .deb / .rpm / .AppImage ────────────────────────────────────────────
+  linux:
+    name: Linux bundle
+    runs-on: ubuntu-22.04           # older glibc → AppImage runs on more distros
+    steps:
+      - name: Checkout app
+        uses: actions/checkout@v4
+
+      - name: Checkout tinyq4 engine
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.TINYQ4_REPO }}
+          path: tinyq4-src
+
+      - name: Tauri + AppImage system deps
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf \
+            libgstreamer1.0-0 gstreamer1.0-plugins-base gstreamer1.0-plugins-good
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            llm-inference/src-tauri
+            tinyq4-src
+
+      - name: Install CUDA toolkit (${{ env.CUDA_VERSION }})
+        uses: Jimver/cuda-toolkit@v0.2.21
+        with:
+          cuda: ${{ env.CUDA_VERSION }}
+          method: 'network'
+
+      - name: Build + stage engine (CUDA all-major + CPU + libcudart)
+        run: |
+          CUDA_HOME="$CUDA_PATH" \
+          TINYQ4_SRC="${{ github.workspace }}/tinyq4-src" \
+          TINYQ4_CUDA_ARCH="${{ env.TINYQ4_CUDA_ARCH }}" \
+          bash scripts/build-engine.sh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: llm-inference/package-lock.json
+
+      - name: Install frontend deps
+        working-directory: llm-inference
+        run: npm ci
+
+      - name: Tauri build (deb / appimage)
+        working-directory: llm-inference
+        run: npm run tauri -- build --bundles deb,appimage
+
+      - name: Upload Linux bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: saient-linux
+          path: |
+            llm-inference/src-tauri/target/release/bundle/deb/*.deb
+            llm-inference/src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+
+  # ── Windows: NSIS installer (.exe) ────────────────────────────────────────────
+  windows:
+    name: Windows bundle
+    runs-on: windows-latest
+    steps:
+      - name: Checkout app
+        uses: actions/checkout@v4
+
+      - name: Checkout tinyq4 engine
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.TINYQ4_REPO }}
+          path: tinyq4-src
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            llm-inference/src-tauri
+            tinyq4-src
+
+      - name: Install CUDA toolkit (${{ env.CUDA_VERSION }})
+        uses: Jimver/cuda-toolkit@v0.2.21
+        with:
+          cuda: ${{ env.CUDA_VERSION }}
+          method: 'network'
+
+      - name: Build + stage engine (CUDA all-major + CPU + cudart dll)
+        shell: pwsh
+        run: |
+          $eng = "llm-inference/src-tauri/resources/engine"
+          New-Item -ItemType Directory -Force -Path $eng | Out-Null
+          Push-Location tinyq4-src
+          # CPU build (separate target dir so it doesn't clobber the CUDA build)
+          $env:CARGO_TARGET_DIR = "$env:RUNNER_TEMP\tq4-cpu"
+          cargo build --release
+          Copy-Item "$env:RUNNER_TEMP\tq4-cpu\release\tinyq4.exe" "..\$eng\tinyq4-cpu.exe"
+          Remove-Item Env:\CARGO_TARGET_DIR
+          # CUDA build (all-major) — CUDA_HOME from the toolkit action's CUDA_PATH
+          $env:CUDA_HOME = $env:CUDA_PATH
+          cargo build --release --features cuda
+          Copy-Item "target\release\tinyq4.exe" "..\$eng\tinyq4-cuda.exe"
+          Pop-Location
+          # Bundle the CUDA runtime DLL so the engine runs without a CUDA install.
+          Copy-Item "$env:CUDA_PATH\bin\cudart64_12.dll" "$eng\cudart64_12.dll"
+          Get-ChildItem $eng
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: llm-inference/package-lock.json
+
+      - name: Install frontend deps
+        working-directory: llm-inference
+        run: npm ci
+
+      - name: Tauri build (NSIS)
+        working-directory: llm-inference
+        run: npm run tauri -- build --bundles nsis
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: saient-windows
+          path: llm-inference/src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+
+  # ── Draft GitHub Release with all bundles (tag builds only) ────────────────────
+  release:
+    name: Draft release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all bundles
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Publish draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: dist/**/*
+          generate_release_notes: true
