@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
 use futures::StreamExt;
 use reqwest::Client;
-use std::os::unix::process::CommandExt;   // pre_exec
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;   // pre_exec (Unix only)
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
@@ -25,20 +26,28 @@ fn spawned_pids() -> &'static Mutex<Vec<u32>> {
     SPAWNED_PIDS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
+/// Terminate a process by PID — `kill` on Unix, `taskkill /F /T` on Windows.
+fn kill_pid(pid: u32) -> std::io::Result<std::process::ExitStatus> {
+    #[cfg(unix)]
+    { Command::new("kill").arg(pid.to_string()).status() }
+    #[cfg(windows)]
+    { Command::new("taskkill").args(["/F", "/T", "/PID", &pid.to_string()]).status() }
+}
+
 /// Kill every server we spawned — both in this session and any leftover from a
 /// previous session (tracked via PID_FILE).  Safe to call multiple times.
 pub fn kill_our_stale_servers() {
     // In-session PIDs (current process lifetime)
     let mut pids = spawned_pids().lock().unwrap();
     for pid in pids.drain(..) {
-        let _ = Command::new("kill").arg(pid.to_string()).status();
+        let _ = kill_pid(pid);
     }
     drop(pids);
 
     // Cross-session: read the PID file left by a previous app run
     if let Ok(s) = std::fs::read_to_string(PID_FILE) {
         if let Ok(pid) = s.trim().parse::<u32>() {
-            let _ = Command::new("kill").arg(pid.to_string()).status();
+            let _ = kill_pid(pid);
         }
         let _ = std::fs::remove_file(PID_FILE);
     }
@@ -186,23 +195,27 @@ impl Engine {
             .unwrap_or_else(|| ("LD_LIBRARY_PATH".into(),
                 std::env::var("LD_LIBRARY_PATH").unwrap_or_default()));
 
-        let mut process = unsafe {
-            Command::new(&server_bin)
-                .args(&args)
-                .env(&lib_key, &lib_val)
-                .stdout(stdout)
-                .stderr(stderr)
-                .pre_exec(|| {
-                    libc::prctl(
-                        libc::PR_SET_PDEATHSIG,
-                        libc::SIGTERM as libc::c_ulong,
-                        0, 0, 0,
-                    );
-                    Ok(())
-                })
-                .spawn()
-                .with_context(|| format!("Failed to start {:?}", server_bin))?
-        };
+        let mut cmd = Command::new(&server_bin);
+        cmd.args(&args)
+            .env(&lib_key, &lib_val)
+            .stdout(stdout)
+            .stderr(stderr);
+        // On Unix, have the kernel SIGTERM the child if the app dies, so a crash can't
+        // orphan a VRAM-holding server. On Windows we rely on kill_our_stale_servers()
+        // (called at startup and on window-close) plus the PID_FILE for cleanup.
+        #[cfg(unix)]
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::prctl(
+                    libc::PR_SET_PDEATHSIG,
+                    libc::SIGTERM as libc::c_ulong,
+                    0, 0, 0,
+                );
+                Ok(())
+            });
+        }
+        let mut process = cmd.spawn()
+            .with_context(|| format!("Failed to start {:?}", server_bin))?;
 
         let pid = process.id();
         spawned_pids().lock().unwrap().push(pid);
@@ -340,9 +353,7 @@ pub fn stop_local_model_server(port: u16) -> Result<bool> {
         return Ok(false);
     };
 
-    Command::new("kill")
-        .arg(server.pid.to_string())
-        .status()
+    kill_pid(server.pid)
         .with_context(|| format!("failed to stop tinyq4 server on port {}", port))?;
 
     if let Ok(s) = std::fs::read_to_string(PID_FILE) {
