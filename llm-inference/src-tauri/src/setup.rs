@@ -15,7 +15,7 @@ use tauri::{Emitter, WebviewWindow};
 
 // ── Paths ──────────────────────────────────────────────────────────────────────
 
-fn config_dir() -> PathBuf {
+pub fn config_dir() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
         if let Ok(appdata) = std::env::var("APPDATA") {

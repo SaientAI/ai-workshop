@@ -9,6 +9,7 @@
 mod engine;
 mod gguf;
 mod imggen;
+mod license;
 mod lora;
 mod merge;
 mod pty;
@@ -1467,6 +1468,8 @@ fn main() {
             // Setup wizard
             setup::detect_system, setup::run_setup, setup::skip_setup, setup::reset_setup,
             setup::download_starter_model,
+            // Licensing (30-day trial → signed key unlock)
+            license::license_status, license::license_activate,
             // Image Gen
             imggen::imggen_scan_models, imggen::imggen_scan_checkpoints,
             imggen::imggen_scan_loras, imggen::imggen_generate,
