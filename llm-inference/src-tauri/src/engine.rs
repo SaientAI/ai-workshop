@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
 use std::time::Duration;
 
 use crate::gguf::{GgufFile, ModelSummary};
+use crate::resolve::NoConsole;
 
 // Known ports for user-started tinyq4 instances.
 pub const PROBE_PORTS: &[u16] = &[18081, 18082, 33115, 18080];
@@ -31,7 +32,7 @@ fn kill_pid(pid: u32) -> std::io::Result<std::process::ExitStatus> {
     #[cfg(unix)]
     { Command::new("kill").arg(pid.to_string()).status() }
     #[cfg(windows)]
-    { Command::new("taskkill").args(["/F", "/T", "/PID", &pid.to_string()]).status() }
+    { Command::new("taskkill").args(["/F", "/T", "/PID", &pid.to_string()]).no_console().status() }
 }
 
 /// Kill every server we spawned — both in this session and any leftover from a
@@ -198,6 +199,7 @@ impl Engine {
         let mut cmd = Command::new(&server_bin);
         cmd.args(&args)
             .env(&lib_key, &lib_val)
+            .no_console()
             .stdout(stdout)
             .stderr(stderr);
         // On Unix, have the kernel SIGTERM the child if the app dies, so a crash can't
@@ -622,20 +624,29 @@ fn cpu_bin_name()  -> &'static str { if cfg!(windows) { "tinyq4-cpu.exe" }  else
 /// Directory holding the bundled engine binaries + CUDA runtime lib (libcudart).
 /// Override with SAIENT_ENGINE_DIR; otherwise `<resource_dir>/engine`, else next to the exe.
 pub fn engine_dir() -> Option<PathBuf> {
+    // Only accept a directory that actually holds an engine binary — not just any
+    // dir that happens to exist (the bundled layout varies per platform/installer).
+    let has_engine = |d: &Path| d.join(cuda_bin_name()).exists() || d.join(cpu_bin_name()).exists();
+
     if let Ok(d) = std::env::var("SAIENT_ENGINE_DIR") {
         let p = PathBuf::from(d);
-        if p.is_dir() { return Some(p); }
+        if has_engine(&p) { return Some(p); }
     }
     if let Some(rd) = RESOURCE_DIR.get() {
-        let p = rd.join("engine");
-        if p.is_dir() { return Some(p); }
+        // Tauri preserves the resource's relative path, so `resources/engine/*`
+        // installs to <resource_dir>/resources/engine — check that and the flat form.
+        for cand in [rd.join("engine"), rd.join("resources").join("engine")] {
+            if has_engine(&cand) { return Some(cand); }
+        }
     }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            for cand in [dir.join("engine"), dir.to_path_buf()] {
-                if cand.join(cuda_bin_name()).exists() || cand.join(cpu_bin_name()).exists() {
-                    return Some(cand);
-                }
+            for cand in [
+                dir.join("engine"),
+                dir.join("resources").join("engine"),
+                dir.to_path_buf(),
+            ] {
+                if has_engine(&cand) { return Some(cand); }
             }
         }
     }
@@ -645,7 +656,7 @@ pub fn engine_dir() -> Option<PathBuf> {
 /// A usable NVIDIA GPU is present (driver installed). We don't need the CUDA toolkit —
 /// only the driver — because the engine bundles its own libcudart.
 pub fn gpu_available() -> bool {
-    std::process::Command::new("nvidia-smi").arg("-L").output()
+    std::process::Command::new("nvidia-smi").arg("-L").no_console().output()
         .map(|o| o.status.success() && !o.stdout.is_empty())
         .unwrap_or(false)
 }
@@ -799,6 +810,7 @@ fn last_tinyq4_error() -> Option<String> {
 pub fn gpu_free_mib() -> Option<u64> {
     let out = Command::new("nvidia-smi")
         .args(["--query-gpu=memory.free", "--format=csv,noheader,nounits"])
+        .no_console()
         .output()
         .ok()?;
     if !out.status.success() { return None; }
