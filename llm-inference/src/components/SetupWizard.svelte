@@ -226,7 +226,6 @@
   }
   .wz-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 18px; }
   .wz-logo { font-size: 17px; font-weight: 700; color: var(--text); letter-spacing: 0.02em; }
-  .wz-logo span { color: var(--accent); }
   .wz-sub { font-size: 11px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.08em; }
 
   .wz-sys {

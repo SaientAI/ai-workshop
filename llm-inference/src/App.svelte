@@ -2,12 +2,13 @@
   import { onMount, onDestroy } from "svelte";
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
   import { setupEvents } from "./lib/events.js";
-  import { ui, model, agent } from "./lib/state.svelte.js";
+  import { ui, model, agent, license } from "./lib/state.svelte.js";
   import { handleKey } from "./lib/shortcuts.js";
   import * as T from "./lib/tauri.js";
   import TitleBar from "./components/TitleBar.svelte";
   import ShortcutsHelp from "./components/ShortcutsHelp.svelte";
   import SetupWizard from "./components/SetupWizard.svelte";
+  import Paywall from "./components/Paywall.svelte";
   import IconRail from "./components/IconRail.svelte";
   import ChatScreen from "./components/screens/ChatScreen.svelte";
   import AgentScreen from "./components/screens/AgentScreen.svelte";
@@ -28,6 +29,15 @@
     // First-run setup wizard — show until the user completes or skips it.
     const sys = await T.detectSystem().catch(() => null);
     if (sys && !sys.setup_done) showSetup = true;
+
+    // Licensing — trial countdown / paywall on expiry.
+    const lic = await T.licenseStatus().catch(() => null);
+    if (lic) {
+      license.status = lic.status;
+      license.daysLeft = lic.days_left;
+      license.trialDays = lic.trial_days;
+      license.tier = lic.tier;
+    }
 
     await setupEvents();
 
@@ -97,7 +107,28 @@
   }} />
 {/if}
 
+<!-- Trial countdown strip (non-blocking); click to unlock early -->
+{#if license.status === "trial" && !showSetup}
+  <button class="trial-strip" onclick={() => (license.showUnlock = true)}>
+    Trial · {license.daysLeft} {license.daysLeft === 1 ? "day" : "days"} left — Unlock full version
+  </button>
+{/if}
+
+<!-- Paywall: blocking when the trial has expired, dismissible when opened manually -->
+{#if license.status === "expired"}
+  <Paywall blocking />
+{:else if license.showUnlock}
+  <Paywall onClose={() => (license.showUnlock = false)} />
+{/if}
+
 <style>
+  .trial-strip {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 90;
+    border: 0; cursor: pointer; padding: 6px 12px;
+    background: rgba(108, 142, 245, 0.12); color: #aab6e8;
+    font-size: 11px; text-align: center; border-top: 1px solid rgba(108,142,245,0.25);
+  }
+  .trial-strip:hover { background: rgba(108, 142, 245, 0.2); color: #cdd6f5; }
   :global(*) { box-sizing: border-box; margin: 0; padding: 0; }
   :global(body) {
     background: var(--bg);

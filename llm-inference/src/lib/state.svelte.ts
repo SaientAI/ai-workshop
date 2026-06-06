@@ -16,6 +16,15 @@ export const ui = $state({
   showShortcuts: false,
 });
 
+// ── Licensing (30-day trial → £20 unlock) ───────────────────────────────────────
+export const license = $state({
+  status: "licensed" as "trial" | "expired" | "licensed",  // optimistic until checked
+  daysLeft: 30,
+  trialDays: 30,
+  tier: null as string | null,
+  showUnlock: false,   // paywall opened manually (vs. forced on expiry)
+});
+
 // ── Model / server ────────────────────────────────────────────────────────────
 
 export const model = $state({

@@ -82,7 +82,6 @@
   .dot.green { background: var(--green); box-shadow: 0 0 6px var(--green); }
   .dot.amber { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
   .logo { font-size: 13px; font-weight: 700; color: var(--text); letter-spacing: 0.02em; }
-  .sep { color: var(--accent); margin: 0 1px; }
   .info { font-size: 11px; color: var(--text3); font-family: var(--mono); }
   .saient-btn {
     display: flex; align-items: center; gap: 5px;

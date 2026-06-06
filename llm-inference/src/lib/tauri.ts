@@ -373,3 +373,18 @@ export const ptyResize = (cols: number, rows: number) =>
 
 /** Kill the shell process and clean up the PTY session. */
 export const ptyKill   = () => invoke<void>("pty_kill");
+
+// ── Licensing (30-day trial → signed-key unlock) ────────────────────────────────
+export interface LicenseState {
+  status: "trial" | "expired" | "licensed";
+  days_left: number;
+  trial_days: number;
+  tier: string | null;
+}
+
+/** Current license/trial state. */
+export const licenseStatus = () => invoke<LicenseState>("license_status");
+
+/** Validate + store a purchased key. Rejects (throws) if the key is invalid. */
+export const licenseActivate = (key: string) =>
+  invoke<LicenseState>("license_activate", { key });
