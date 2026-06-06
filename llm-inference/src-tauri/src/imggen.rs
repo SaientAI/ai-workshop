@@ -5,6 +5,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, State, WebviewWindow};
 use crate::resolve;
+use crate::resolve::NoConsole;
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -156,6 +157,7 @@ fn do_load(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
+        .no_console()
         .spawn()
         .map_err(|e| format!("Failed to spawn Python: {e}"))?;
 

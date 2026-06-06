@@ -25,6 +25,7 @@ mod memory;
 mod planner;
 
 use engine::{Engine, EngineHandle, GenerateResult, SamplingParams, stream_generate};
+use resolve::NoConsole;
 use gguf::{GgufFile, ModelSummary};
 use memory::store::{Fact, Memory, MemoryStore, ToolCallRecord};
 use planner::{Plan, PlanStep, PlanSummary, StepStatus, Verifier, VerifyResult};
@@ -585,6 +586,7 @@ fn get_gpu_stats() -> serde_json::Value {
             "--query-gpu=name,memory.total,memory.used,memory.free,temperature.gpu,utilization.gpu",
             "--format=csv,noheader,nounits",
         ])
+        .no_console()
         .output();
     match out {
         Ok(o) if o.status.success() => {
@@ -1367,6 +1369,7 @@ fn diagnostics(app: tauri::AppHandle, state: State<'_, AppState>) -> String {
         .unwrap_or_else(|_| "not found".into());
     let gpu = std::process::Command::new("nvidia-smi")
         .args(["--query-gpu=name,driver_version,memory.total", "--format=csv,noheader"])
+        .no_console()
         .output()
         .ok()
         .filter(|o| o.status.success())
@@ -1405,7 +1408,7 @@ fn open_models_dir(state: State<'_, AppState>) {
     #[cfg(target_os = "macos")]
     let _ = std::process::Command::new("open").arg(&dir).spawn();
     #[cfg(target_os = "windows")]
-    let _ = std::process::Command::new("explorer").arg(&dir).spawn();
+    let _ = std::process::Command::new("explorer").arg(&dir).no_console().spawn();
 }
 
 #[command]

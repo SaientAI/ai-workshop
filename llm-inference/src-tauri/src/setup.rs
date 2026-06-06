@@ -11,6 +11,7 @@
 use serde::Serialize;
 use std::path::PathBuf;
 use std::process::Command;
+use crate::resolve::NoConsole;
 use tauri::{Emitter, WebviewWindow};
 
 // ── Paths ──────────────────────────────────────────────────────────────────────
@@ -121,7 +122,7 @@ fn parse_major_minor(s: &str) -> Option<(u32, u32)> {
 
 fn nvidia_smi_cuda_version() -> Option<String> {
     // The plain `nvidia-smi` header prints e.g. "CUDA Version: 12.4".
-    let out = Command::new("nvidia-smi").output().ok()?;
+    let out = Command::new("nvidia-smi").no_console().output().ok()?;
     if !out.status.success() { return None; }
     let txt = String::from_utf8_lossy(&out.stdout);
     let idx = txt.find("CUDA Version:")?;
@@ -135,6 +136,7 @@ fn nvidia_smi_field(query: &str) -> Option<String> {
     let out = Command::new("nvidia-smi")
         .args(["--query-gpu", query])
         .arg("--format=csv,noheader,nounits")
+        .no_console()
         .output().ok()?;
     if !out.status.success() { return None; }
     let s = String::from_utf8_lossy(&out.stdout).lines().next()?.trim().to_string();
@@ -149,7 +151,7 @@ fn detect_system_python() -> (Option<String>, Option<String>) {
         vec!["python3", "python"]
     };
     for c in candidates {
-        if let Ok(out) = Command::new(c).arg("--version").output() {
+        if let Ok(out) = Command::new(c).arg("--version").no_console().output() {
             if out.status.success() {
                 let ver = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 let ver = if ver.is_empty() {
@@ -188,7 +190,7 @@ fn disk_free_gb(dir: &std::path::Path) -> f64 {
         if let Ok(out) = Command::new("powershell").args([
             "-NoProfile","-Command",
             &format!("(Get-PSDrive {}).Free", drive.trim_end_matches(':').trim_end_matches('\\'))
-        ]).output() {
+        ]).no_console().output() {
             if let Ok(s) = String::from_utf8(out.stdout) {
                 if let Ok(bytes) = s.trim().parse::<f64>() { return bytes / 1e9; }
             }
@@ -257,7 +259,7 @@ fn run_streamed(window: &WebviewWindow, mut cmd: Command, label: &str) -> Result
     use std::io::{BufRead, BufReader};
     use std::process::Stdio;
     emit_log(window, format!("$ {label}"));
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.no_console().stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(|e| format!("failed to start: {e}"))?;
     if let Some(out) = child.stdout.take() {
         for line in BufReader::new(out).lines().map_while(Result::ok) {

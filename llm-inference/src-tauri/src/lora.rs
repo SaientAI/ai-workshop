@@ -9,6 +9,7 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, WebviewWindow};
 use crate::resolve;
+use crate::resolve::NoConsole;
 
 /// PID of the currently running training process (None = not training).
 #[derive(Clone)]
@@ -95,6 +96,7 @@ pub async fn lora_start_training(
             .arg(&tmp_clone)
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
+            .no_console()
             .spawn()
         {
             Ok(c)  => c,
@@ -158,6 +160,7 @@ pub async fn lora_clean_dataset(
             .arg(&dataset_dir)
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
+            .no_console()
             .spawn()
         {
             Ok(c)  => c,

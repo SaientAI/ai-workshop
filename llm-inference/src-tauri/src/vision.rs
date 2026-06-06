@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use tauri::State;
 
 use crate::resolve;
+use crate::resolve::NoConsole;
 
 #[derive(Serialize)]
 pub struct VisionResult {
@@ -70,6 +71,7 @@ fn ensure_loaded(guard: &mut Option<VisionDaemon>) -> Result<(), String> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
+        .no_console()
         .spawn()
         .map_err(|e| format!("Failed to spawn Python: {e}"))?;
 

@@ -242,6 +242,10 @@ impl Sandbox {
             cmd.stdin(Stdio::null());
         }
 
+        // Don't pop a console window for each spawned command on Windows.
+        #[cfg(windows)]
+        cmd.creation_flags(0x0800_0000);
+
         let mut child = cmd.spawn()?;
 
         // Write stdin and drop handle to signal EOF before reading output

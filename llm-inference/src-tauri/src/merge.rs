@@ -9,6 +9,7 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, WebviewWindow};
 use crate::resolve;
+use crate::resolve::NoConsole;
 
 #[derive(Clone)]
 pub struct MergeHandle(Arc<Mutex<Option<u32>>>);
@@ -80,6 +81,7 @@ pub async fn merge_start(
             .arg(&tmp_clone)
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
+            .no_console()
             .spawn()
         {
             Ok(c)  => c,

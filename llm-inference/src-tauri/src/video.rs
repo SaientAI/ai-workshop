@@ -11,6 +11,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, State, WebviewWindow};
 use crate::resolve;
+use crate::resolve::NoConsole;
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -247,6 +248,7 @@ fn do_load(arc: VideoHandle, window: WebviewWindow, model_path: String,
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
+        .no_console()
         .spawn()
         .map_err(|e| format!("Failed to spawn Python: {e}"))?;
 
@@ -354,6 +356,7 @@ fn do_enhance(arc: VideoHandle, payload: EnhancePayload, window: WebviewWindow) 
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
+        .no_console()
         .spawn()
         .map_err(|e| format!("Failed to spawn enhancer: {e}"))?;
 

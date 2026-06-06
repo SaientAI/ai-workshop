@@ -5,6 +5,24 @@
 
 use std::path::{Path, PathBuf};
 
+/// Suppress the console window Windows pops for each child process. No-op on Unix.
+/// Apply to EVERY `std::process::Command` before spawn/output/status so the app
+/// never flashes stray cmd windows (nvidia-smi, python, the engine server, …).
+pub trait NoConsole {
+    fn no_console(&mut self) -> &mut Self;
+}
+impl NoConsole for std::process::Command {
+    fn no_console(&mut self) -> &mut Self {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            self.creation_flags(CREATE_NO_WINDOW);
+        }
+        self
+    }
+}
+
 /// Find the Python interpreter to use for helper scripts.
 ///
 /// Resolution order:
@@ -189,6 +207,7 @@ fn check_scripts() -> DepStatus {
 fn check_gpu() -> DepStatus {
     match std::process::Command::new("nvidia-smi")
         .args(["--query-gpu=name,memory.total", "--format=csv,noheader,nounits"])
+        .no_console()
         .output()
     {
         Ok(out) if out.status.success() => {

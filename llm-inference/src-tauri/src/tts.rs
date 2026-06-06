@@ -3,6 +3,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use tauri::{Emitter, WebviewWindow};
 use crate::resolve;
+use crate::resolve::NoConsole;
 
 #[derive(Deserialize)]
 pub struct TtsPayload {
@@ -47,6 +48,7 @@ fn run_tts(payload: TtsPayload, window: WebviewWindow) -> Result<TtsResult, Stri
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .no_console()
         .spawn()
         .map_err(|e| format!("Failed to spawn Python: {}", e))?;
 
