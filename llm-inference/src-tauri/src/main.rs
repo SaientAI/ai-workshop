@@ -17,6 +17,7 @@ mod pty;
 mod resolve;
 mod setup;
 mod video;
+mod vision;
 mod tts;
 mod tools;
 mod memory;
@@ -1434,6 +1435,7 @@ fn main() {
         .manage(merge::new_merge_handle())
         .manage(imggen::new_daemon_handle())
         .manage(video::new_video_handle())
+        .manage(vision::new_vision_handle())
         .manage(pty::new_handle())
         .invoke_handler(tauri::generate_handler![
             // Inference — single
@@ -1481,6 +1483,8 @@ fn main() {
             video::video_scan_models, video::video_load, video::video_unload,
             video::video_loaded_model, video::video_generate, video::video_enhance,
             video::video_scan_loras,
+            // Vision analyzer (Moondream)
+            vision::vision_describe, vision::vision_unload, vision::vision_loaded,
             // TTS
             tts::tts_voices, tts::tts_generate,
             // LoRA trainer
