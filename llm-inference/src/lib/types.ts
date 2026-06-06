@@ -57,6 +57,9 @@ export interface ChatMessage {
   streamStart?: number;
   prefillDone?: number;
   prefillTotal?: number;
+  // attached image (base64, no data: prefix) analyzed by the vision model
+  image?: string;
+  imageMime?: string;
   // dual-agent fields
   dual?: boolean;
   phase?: "drafting" | "critiquing" | "done";

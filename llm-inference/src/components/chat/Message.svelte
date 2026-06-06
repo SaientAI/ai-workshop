@@ -100,7 +100,10 @@
     <div class="role">{msg.role}</div>
     <div class="content">
       {#if msg.role === "user"}
-        <div class="user-text">{msg.content}</div>
+        {#if msg.image}
+          <img class="msg-image" src="data:{msg.imageMime ?? 'image/png'};base64,{msg.image}" alt="attached" />
+        {/if}
+        {#if msg.content}<div class="user-text">{msg.content}</div>{/if}
 
       {:else if body === "generating"}
         <div class="gen-status">
@@ -236,6 +239,7 @@
   .role { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text3); margin-bottom: 6px; }
   .content { line-height: 1.6; }
   .user-text { color: var(--text); font-size: 13px; white-space: pre-wrap; word-break: break-word; }
+  .msg-image { max-width: 280px; max-height: 280px; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 6px; display: block; }
   .answer { font-size: 13px; color: var(--text); }
   .answer :global(code) { font-family: var(--mono); font-size: 12px; background: var(--bg3); padding: 1px 4px; border-radius: 3px; }
   .answer :global(pre) { background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; margin: 8px 0; overflow-x: auto; font-size: 12px; font-family: var(--mono); }
