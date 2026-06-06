@@ -136,7 +136,7 @@
         <button class="wz-card" class:sel={profile === "full"} onclick={() => start("full")}>
           <div class="wz-card-top"><span class="wz-rec">recommended</span></div>
           <div class="wz-card-title">Full setup</div>
-          <div class="wz-card-desc">Chat · Agent · Image Gen · TTS · LoRA · Merge</div>
+          <div class="wz-card-desc">Chat · Agent · Image &amp; Video · Vision · TTS · LoRA</div>
           <div class="wz-card-meta">~6 GB · a few minutes</div>
         </button>
         <button class="wz-card" class:sel={profile === "fast"} onclick={() => start("fast")}>
@@ -204,8 +204,13 @@
         <div class="wz-done-title">You're all set</div>
         <div class="wz-done-desc">
           {profile === "full" ? "Everything's installed." : "Chat + Agent are ready."}
-          Pick a model in the sidebar (or drop a <code>.gguf</code> into the models folder) and hit Start server.
+          Pick a model in the sidebar — or hit <b>⬇ Download</b> to grab one from Hugging Face — then Start server.
         </div>
+        <ul class="wz-tips">
+          <li><b>👁 Vision</b>, <b>🎬 Video</b> and image generation live in the left rail.</li>
+          <li><b>🔒</b> in the title bar sets a launch password for shared machines.</li>
+          <li><b>⬆</b> checks for updates. You're on a <b>30-day free trial</b> — everything unlocked.</li>
+        </ul>
         <button class="wz-btn wz-btn-primary" onclick={onDone}>Get started →</button>
       </div>
     {/if}
@@ -309,7 +314,16 @@
   }
   .wz-done-title { font-size: 17px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
   .wz-done-desc { font-size: 12px; color: var(--text2); line-height: 1.6; margin-bottom: 18px; max-width: 420px; margin-inline: auto; }
-  .wz-done-desc code { font-family: var(--mono); color: var(--accent); }
+  .wz-done-desc b { color: var(--text); }
+  .wz-tips {
+    list-style: none; text-align: left; max-width: 420px; margin: 0 auto 20px;
+    display: flex; flex-direction: column; gap: 7px;
+  }
+  .wz-tips li {
+    font-size: 11.5px; color: var(--text2); line-height: 1.5;
+    padding: 8px 11px; background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  }
+  .wz-tips b { color: var(--text); }
 
   .wz-actions { display: flex; justify-content: flex-end; gap: 8px; }
   .wz-btn {

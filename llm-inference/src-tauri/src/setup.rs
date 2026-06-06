@@ -406,6 +406,18 @@ pub async fn download_starter_model(
     }
     let total = resp.content_length().unwrap_or(0);
 
+    // Guardrail: refuse to start if there clearly isn't room (keep ~0.5 GB headroom).
+    if total > 0 {
+        let free_gb = disk_free_gb(&dest_dir);
+        let need_gb = total as f64 / 1e9 + 0.5;
+        if free_gb > 0.0 && free_gb < need_gb {
+            return Err(format!(
+                "Not enough disk space: this model needs ~{:.1} GB but only {:.1} GB is free in the models folder.",
+                total as f64 / 1e9, free_gb
+            ));
+        }
+    }
+
     let part = dest.with_extension("part");
 
     // Stream to the .part file; on ANY error, clean it up so we never leave a
