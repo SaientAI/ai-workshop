@@ -17,6 +17,7 @@
   "rewrites": [
     { "source": "/pricing", "destination": "/pricing.html" },
     { "source": "/help", "destination": "/help.html" },
+    { "source": "/changelog", "destination": "/changelog.html" },
     { "source": "/terms", "destination": "/terms.html" },
     { "source": "/privacy", "destination": "/privacy.html" }
   ]
