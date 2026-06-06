@@ -5,8 +5,8 @@
 //! starter model download) streaming progress to the frontend.
 //!
 //! Everything installs into a self-contained managed dir so we never touch the
-//! user's system Python:  ~/.config/ai-workshop/venv  (Linux/Mac)
-//!                        %APPDATA%\ai-workshop\venv   (Windows)
+//! user's system Python:  ~/.config/saient/venv  (Linux/Mac)
+//!                        %APPDATA%\saient\venv   (Windows)
 
 use serde::Serialize;
 use std::path::PathBuf;
@@ -19,11 +19,11 @@ fn config_dir() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
         if let Ok(appdata) = std::env::var("APPDATA") {
-            return PathBuf::from(appdata).join("ai-workshop");
+            return PathBuf::from(appdata).join("saient");
         }
     }
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".config/ai-workshop")
+    PathBuf::from(home).join(".config/saient")
 }
 
 pub fn managed_venv() -> PathBuf {
@@ -48,6 +48,32 @@ pub fn venv_bin(name: &str) -> PathBuf {
 
 fn setup_marker() -> PathBuf {
     config_dir().join("setup_done.json")
+}
+
+/// One-time rename of the pre-rebrand dirs (ai-workshop → saient) so existing installs
+/// keep their venv, sessions, LoRAs, and settings. No-op on a fresh install. Run once at
+/// startup, before anything touches the config/data dirs.
+pub fn migrate_legacy_dirs() {
+    let mut pairs: Vec<(PathBuf, PathBuf)> = Vec::new();
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            let b = PathBuf::from(appdata);
+            pairs.push((b.join("ai-workshop"), b.join("saient")));
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let h = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()));
+        pairs.push((h.join(".config/ai-workshop"),      h.join(".config/saient")));
+        pairs.push((h.join(".local/share/ai-workshop"), h.join(".local/share/saient")));
+    }
+    for (old, new) in pairs {
+        if old.exists() && !new.exists() {
+            if let Some(parent) = new.parent() { let _ = std::fs::create_dir_all(parent); }
+            let _ = std::fs::rename(&old, &new);
+        }
+    }
 }
 
 // ── System detection ─────────────────────────────────────────────────────────

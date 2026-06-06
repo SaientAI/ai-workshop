@@ -30,7 +30,7 @@ fn kill_session(mut session: PtySession) {
 }
 
 // ── Saient terminal init ───────────────────────────────────────────────────────
-// Two generated files written to ~/.config/ai-workshop/ on each PTY spawn:
+// Two generated files written to ~/.config/saient/ on each PTY spawn:
 //   saient.bashrc  — sourced via `bash --rcfile`; defines the `saient` command and
 //                   prints a greeting. Re-sources ~/.bashrc so the user's env works.
 //   saient_cli.py  — the Saient agent TUI. Pure-stdlib Python: renders the ASCII
@@ -43,7 +43,7 @@ unset npm_config_prefix 2>/dev/null
 
 # Launch the Saient agent TUI (talks to the local tinyq4 server).
 saient() {
-  python3 "$HOME/.config/ai-workshop/saient_cli.py" "$@"
+  python3 "$HOME/.config/saient/saient_cli.py" "$@"
 }
 
 # Greeting shown when the terminal opens.
@@ -397,7 +397,7 @@ if __name__ == "__main__":
 /// (the caller then falls back to a plain shell).
 fn write_saient_rcfile() -> Option<std::path::PathBuf> {
     let home = std::env::var("HOME").ok()?;
-    let dir = std::path::PathBuf::from(&home).join(".config/ai-workshop");
+    let dir = std::path::PathBuf::from(&home).join(".config/saient");
     std::fs::create_dir_all(&dir).ok()?;
 
     let cli = dir.join("saient_cli.py");

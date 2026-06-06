@@ -154,7 +154,7 @@ pub fn video_scan_loras() -> Vec<LoraEntry> {
     let mut out = Vec::new();
     let mut roots: Vec<PathBuf> = Vec::new();
     if let Ok(home) = std::env::var("HOME") {
-        roots.push(PathBuf::from(format!("{home}/.config/ai-workshop/loras")));
+        roots.push(PathBuf::from(format!("{home}/.config/saient/loras")));
     }
     for d in resolve::model_scan_dirs() {
         roots.push(d.join("loras"));
@@ -346,7 +346,7 @@ fn do_enhance(arc: VideoHandle, payload: EnhancePayload, window: WebviewWindow) 
 
     // Default upscale weights live in the managed config dir.
     let upscale_model = std::env::var("HOME")
-        .map(|h| format!("{h}/.config/ai-workshop/upscale/RealESRGAN_x2plus.pth"))
+        .map(|h| format!("{h}/.config/saient/upscale/RealESRGAN_x2plus.pth"))
         .unwrap_or_default();
 
     let mut child = Command::new(python)

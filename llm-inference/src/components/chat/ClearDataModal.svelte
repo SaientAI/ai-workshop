@@ -109,7 +109,7 @@
         <input type="checkbox" bind:checked={clearAudit} />
         <div class="item-text">
           <span class="item-label">Action log</span>
-          <span class="item-desc">Record of file writes and commands run by the agent (<code>~/.local/share/ai-workshop/audit.jsonl</code>)</span>
+          <span class="item-desc">Record of file writes and commands run by the agent (<code>~/.local/share/saient/audit.jsonl</code>)</span>
         </div>
       </label>
 

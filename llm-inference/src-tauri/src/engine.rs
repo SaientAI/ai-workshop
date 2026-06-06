@@ -14,7 +14,7 @@ use crate::gguf::{GgufFile, ModelSummary};
 pub const PROBE_PORTS: &[u16] = &[18081, 18082, 33115, 18080];
 
 // Disk-persistent PID file — survives crashes so the next launch can reap any leftover.
-const PID_FILE: &str = "/tmp/llm-inference-tauri-server.pid";
+const PID_FILE: &str = "/tmp/saient-server.pid";
 const FIRST_TOKEN_TIMEOUT_SECS: u64 = 300;
 const STREAM_IDLE_TIMEOUT_SECS: u64 = 180;
 
@@ -177,7 +177,7 @@ impl Engine {
         let log = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open("/tmp/ai-workshop-tinyq4.log")
+            .open("/tmp/saient-tinyq4.log")
             .ok();
         let stdout = log
             .as_ref()
@@ -779,7 +779,7 @@ async fn wait_for_ready(client: &Client, port: u16, process: &mut Child) -> Resu
 /// Extract the most useful error line from the tinyq4 log so the UI can show the real
 /// reason a load failed (CUDA OOM, panic, …) instead of a generic "did not become ready".
 fn last_tinyq4_error() -> Option<String> {
-    let log = std::fs::read_to_string("/tmp/ai-workshop-tinyq4.log").ok()?;
+    let log = std::fs::read_to_string("/tmp/saient-tinyq4.log").ok()?;
     let recent: Vec<&str> = log.lines().rev().take(40).collect();
     for line in &recent {
         let l = line.to_lowercase();

@@ -156,7 +156,7 @@ fn make_state() -> AppState {
     };
 
     let audit_path = PathBuf::from(&home)
-        .join(".local/share/ai-workshop/audit.jsonl");
+        .join(".local/share/saient/audit.jsonl");
 
     AppState {
         engine: engine::new_handle(),
@@ -680,7 +680,7 @@ fn clear_user_data(
         cleared.push("audit_log".into());
     }
     if clear_logs {
-        std::fs::remove_file("/tmp/ai-workshop-tinyq4.log").ok();
+        std::fs::remove_file("/tmp/saient-tinyq4.log").ok();
         std::fs::remove_file("/tmp/llm-inference-tauri-server.pid").ok();
         cleared.push("temp_logs".into());
     }
@@ -1410,6 +1410,9 @@ fn main() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
+            // Rebrand migration: move ~/.config/ai-workshop → ~/.config/saient (etc.) before
+            // anything reads the config/data dirs, so existing installs keep their data.
+            setup::migrate_legacy_dirs();
             // Capture the resource dir so find_tinyq4 can locate the bundled engine.
             if let Ok(dir) = app.path().resource_dir() {
                 engine::set_resource_dir(dir);
