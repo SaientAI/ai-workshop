@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from "svelte";
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
   import { setupEvents } from "./lib/events.js";
-  import { ui, model, agent, license } from "./lib/state.svelte.js";
+  import { ui, model, agent, license, update } from "./lib/state.svelte.js";
   import { handleKey } from "./lib/shortcuts.js";
   import * as T from "./lib/tauri.js";
   import TitleBar from "./components/TitleBar.svelte";
@@ -11,6 +11,7 @@
   import Paywall from "./components/Paywall.svelte";
   import LockScreen from "./components/LockScreen.svelte";
   import SecuritySettings from "./components/SecuritySettings.svelte";
+  import UpdateBox from "./components/UpdateBox.svelte";
   import IconRail from "./components/IconRail.svelte";
   import ChatScreen from "./components/screens/ChatScreen.svelte";
   import AgentScreen from "./components/screens/AgentScreen.svelte";
@@ -45,6 +46,16 @@
       license.trialDays = lic.trial_days;
       license.tier = lic.tier;
     }
+
+    // Update check — best-effort, silent on failure (offline is fine).
+    T.checkUpdate().then((u) => {
+      update.checked = true;
+      update.available = u.update_available;
+      update.current = u.current;
+      update.latest = u.latest;
+      update.url = u.url;
+      update.notes = u.notes;
+    }).catch(() => {});
 
     await setupEvents();
 
@@ -140,7 +151,38 @@
   <SecuritySettings onClose={() => (ui.showSecurity = false)} />
 {/if}
 
+<!-- Update box (manual check + link to site) -->
+{#if ui.showUpdate}
+  <UpdateBox onClose={() => (ui.showUpdate = false)} />
+{/if}
+
+<!-- Auto update banner when a newer version is live -->
+{#if update.available && !update.dismissed && !showSetup}
+  <div class="update-bar">
+    <span>Saient {update.latest} is available{update.notes ? ` — ${update.notes}` : ""}</span>
+    <button class="ub-cta" onclick={() => (ui.showUpdate = true)}>Get it</button>
+    <button class="ub-x" onclick={() => (update.dismissed = true)} aria-label="Dismiss">✕</button>
+  </div>
+{/if}
+
 <style>
+  .update-bar {
+    position: fixed; top: 36px; left: 0; right: 0; z-index: 95;
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 12px;
+    background: rgba(108, 142, 245, 0.16); color: #cdd6f5;
+    font-size: 11px; border-bottom: 1px solid rgba(108,142,245,0.3);
+  }
+  .update-bar > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .update-bar .ub-cta {
+    flex-shrink: 0; padding: 3px 10px; border-radius: 6px;
+    background: var(--accent); border: 0; color: #0a0a12; font-weight: 700; cursor: pointer;
+  }
+  .update-bar .ub-cta:hover { background: #82a0ff; }
+  .update-bar .ub-x {
+    flex-shrink: 0; background: none; border: 0; color: #8a93a3; cursor: pointer; font-size: 12px; padding: 2px 4px;
+  }
+  .update-bar .ub-x:hover { color: #cdd6f5; }
   .trial-strip {
     position: fixed; bottom: 0; left: 0; right: 0; z-index: 90;
     border: 0; cursor: pointer; padding: 6px 12px;

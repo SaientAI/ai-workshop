@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { model, ui } from "../lib/state.svelte.js";
+  import { model, ui, update } from "../lib/state.svelte.js";
   import * as T from "../lib/tauri.js";
 
   let { aw }: { aw: (a: "min" | "max" | "close") => void } = $props();
@@ -53,6 +53,8 @@
       <button class="wbtn stop" onclick={stopModel}>■ Stop</button>
     {/if}
 
+    <button class="wbtn upd" class:has={update.available} onclick={() => (ui.showUpdate = true)}
+      title={update.available ? `Update available (v${update.latest})` : "Check for updates"}>⬆</button>
     <button class="wbtn" onclick={() => (ui.showSecurity = true)} title="Launch password">🔒</button>
     <button class="wbtn" onclick={() => (ui.showShortcuts = true)} title="Keyboard shortcuts (?)">⌨</button>
     <button class="wbtn" onclick={() => aw("min")}>─</button>
@@ -107,4 +109,10 @@
   .wbtn.x:hover { color: var(--red); }
   .wbtn.stop { color: var(--amber); border-color: rgba(245,166,35,0.3); }
   .wbtn.stop:hover { border-color: var(--amber); }
+  .wbtn.upd.has { color: var(--accent); position: relative; }
+  .wbtn.upd.has::after {
+    content: ""; position: absolute; top: 3px; right: 3px;
+    width: 5px; height: 5px; border-radius: 50%; background: var(--accent);
+    box-shadow: 0 0 4px var(--accent);
+  }
 </style>

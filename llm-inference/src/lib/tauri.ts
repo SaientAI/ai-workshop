@@ -414,6 +414,18 @@ export const licenseStatus = () => invoke<LicenseState>("license_status");
 export const licenseActivate = (key: string) =>
   invoke<LicenseState>("license_activate", { key });
 
+// ── Update check (best-effort; points at the site) ───────────────────────────────
+export interface UpdateInfo {
+  current: string;
+  latest: string;
+  update_available: boolean;
+  url: string;
+  notes: string;
+}
+
+/** Check the site for a newer version. Best-effort — throws if offline. */
+export const checkUpdate = () => invoke<UpdateInfo>("check_update");
+
 // ── Launch password (argon2) ────────────────────────────────────────────────────
 export const passwordIsSet  = () => invoke<boolean>("password_is_set");
 export const passwordVerify = (password: string) => invoke<boolean>("password_verify", { password });

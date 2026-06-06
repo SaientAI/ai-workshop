@@ -15,6 +15,20 @@ export const ui = $state({
   agentWriteMode: localStorage.getItem("agent_write_mode") === "true",
   showShortcuts: false,
   showSecurity: false,
+  showUpdate: false,
+});
+
+// ── Updates (best-effort version check against the site) ─────────────────────────
+export const update = $state({
+  checking: false,
+  checked: false,
+  available: false,
+  current: "",
+  latest: "",
+  url: "https://saient.co.uk/#download",
+  notes: "",
+  error: "",
+  dismissed: false,
 });
 
 // ── Licensing (30-day trial → £20 unlock) ───────────────────────────────────────
