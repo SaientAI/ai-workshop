@@ -704,13 +704,15 @@ pub fn find_tinyq4() -> Result<PathBuf> {
         if Path::new(p).exists() { return Ok(PathBuf::from(p)); }
     }
 
-    // 4. Local source build (legacy / dev).
-    let known = [
-        "/home/tiny/llm-runtime/tinyq4/target/release/tinyq4",
-        "/home/tiny/llm-runtime/tinyq4/target/debug/tinyq4",
-    ];
-    for p in &known {
-        if Path::new(p).exists() { return Ok(PathBuf::from(p)); }
+    // 4. Local source build — dev only, never baked into a release binary.
+    #[cfg(debug_assertions)]
+    {
+        let home = std::env::var("HOME").unwrap_or_default();
+        for sub in ["llm-runtime/tinyq4/target/release/tinyq4",
+                    "llm-runtime/tinyq4/target/debug/tinyq4"] {
+            let p = Path::new(&home).join(sub);
+            if p.exists() { return Ok(p); }
+        }
     }
 
     // 5. Bundled next to our own binary.
@@ -720,8 +722,8 @@ pub fn find_tinyq4() -> Result<PathBuf> {
     }
 
     anyhow::bail!(
-        "tinyq4 not found. Install it with `pip install tinyq4`, set the TINYQ4_PATH env var, \
-         or place the tinyq4 binary next to this app."
+        "Saient's inference engine could not be found. It normally ships bundled with the app; \
+         reinstall Saient, or set the TINYQ4_PATH env var to a tinyq4 binary."
     )
 }
 

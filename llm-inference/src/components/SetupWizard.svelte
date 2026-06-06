@@ -92,7 +92,7 @@
 <div class="wz-backdrop">
   <div class="wz" role="dialog" aria-modal="true" aria-label="Setup">
     <div class="wz-head">
-      <span class="wz-logo">AI<span>·</span>Workshop</span>
+      <span class="wz-logo">Saient</span>
       <span class="wz-sub">first-time setup</span>
     </div>
 

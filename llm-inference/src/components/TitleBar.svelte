@@ -33,7 +33,7 @@
 <div class="titlebar" data-tauri-drag-region>
   <div class="left">
     <div class="dot" class:green={model.loaded} class:amber={model.loading}></div>
-    <span class="logo">AI<span class="sep">·</span>Workshop</span>
+    <span class="logo">Saient</span>
   </div>
   <div class="right">
     <div class="info">
