@@ -18,6 +18,28 @@ export const ui = $state({
   showUpdate: false,
 });
 
+// ── Toasts (transient tips / confirmations) ─────────────────────────────────────
+export type ToastKind = "info" | "success" | "error";
+export interface Toast { id: number; msg: string; kind: ToastKind }
+export const toasts = $state<Toast[]>([]);
+let _toastId = 0;
+
+/** Show a transient toast. Auto-dismisses; errors linger a little longer. */
+export function toast(msg: string, kind: ToastKind = "info", ms?: number) {
+  const id = ++_toastId;
+  toasts.push({ id, msg, kind });
+  const ttl = ms ?? (kind === "error" ? 6000 : 3500);
+  setTimeout(() => {
+    const i = toasts.findIndex((t) => t.id === id);
+    if (i >= 0) toasts.splice(i, 1);
+  }, ttl);
+}
+
+export function dismissToast(id: number) {
+  const i = toasts.findIndex((t) => t.id === id);
+  if (i >= 0) toasts.splice(i, 1);
+}
+
 // ── Updates (best-effort version check against the site) ─────────────────────────
 export const update = $state({
   checking: false,

@@ -1354,6 +1354,40 @@ fn get_models_dir(state: State<'_, AppState>) -> String {
     state.models_dir.lock().unwrap().to_string_lossy().into_owned()
 }
 
+/// A plain-text diagnostics blob the user can copy into a support email. No
+/// telemetry is sent anywhere — this just gathers what we'd otherwise have to
+/// ask for: version, OS, GPU, and the folders/logs Saient uses.
+#[command]
+fn diagnostics(app: tauri::AppHandle, state: State<'_, AppState>) -> String {
+    let version = app.package_info().version.to_string();
+    let models = state.models_dir.lock().unwrap().display().to_string();
+    let cfg = setup::config_dir().display().to_string();
+    let python = resolve::find_python()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "not found".into());
+    let gpu = std::process::Command::new("nvidia-smi")
+        .args(["--query-gpu=name,driver_version,memory.total", "--format=csv,noheader"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().replace('\n', " | "))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "no NVIDIA GPU detected".into());
+    let log = std::env::temp_dir().join("saient-tinyq4.log").display().to_string();
+
+    format!(
+        "Saient v{version}\n\
+         OS: {}/{}\n\
+         GPU: {gpu}\n\
+         Python: {python}\n\
+         Models dir: {models}\n\
+         Config dir: {cfg}\n\
+         Engine log: {log}",
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+    )
+}
+
 #[command]
 fn set_models_dir(state: State<'_, AppState>, path: String) -> Result<(), String> {
     let p = PathBuf::from(&path);
@@ -1431,7 +1465,7 @@ fn main() {
             // Inference — dual agent
             load_drafter, load_critic, dual_agent_status, dual_generate,
             // Models directory / startup
-            scan_models_dir, get_models_dir, set_models_dir, open_models_dir,
+            scan_models_dir, get_models_dir, set_models_dir, open_models_dir, diagnostics,
             check_dependencies,
             // Agent write mode
             get_agent_write_mode, set_agent_write_mode,

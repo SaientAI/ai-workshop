@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from "svelte";
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
   import { setupEvents } from "./lib/events.js";
-  import { ui, model, agent, license, update } from "./lib/state.svelte.js";
+  import { ui, model, agent, license, update, toast } from "./lib/state.svelte.js";
   import { handleKey } from "./lib/shortcuts.js";
   import * as T from "./lib/tauri.js";
   import TitleBar from "./components/TitleBar.svelte";
@@ -12,6 +12,7 @@
   import LockScreen from "./components/LockScreen.svelte";
   import SecuritySettings from "./components/SecuritySettings.svelte";
   import UpdateBox from "./components/UpdateBox.svelte";
+  import Toasts from "./components/Toasts.svelte";
   import IconRail from "./components/IconRail.svelte";
   import ChatScreen from "./components/screens/ChatScreen.svelte";
   import AgentScreen from "./components/screens/AgentScreen.svelte";
@@ -55,6 +56,7 @@
       update.latest = u.latest;
       update.url = u.url;
       update.notes = u.notes;
+      if (u.update_available) toast(`Saient ${u.latest} is available — click ⬆ to update`, "info", 6000);
     }).catch(() => {});
 
     await setupEvents();
@@ -150,6 +152,8 @@
 {#if ui.showSecurity}
   <SecuritySettings onClose={() => (ui.showSecurity = false)} />
 {/if}
+
+<Toasts />
 
 <!-- Update box (manual check + link to site) -->
 {#if ui.showUpdate}

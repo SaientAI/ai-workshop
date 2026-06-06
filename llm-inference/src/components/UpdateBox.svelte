@@ -1,6 +1,6 @@
 <script lang="ts">
   import { open } from "@tauri-apps/plugin-shell";
-  import { update } from "../lib/state.svelte.js";
+  import { update, toast } from "../lib/state.svelte.js";
   import * as T from "../lib/tauri.js";
 
   let { onClose = () => {} }: { onClose?: () => void } = $props();
@@ -26,6 +26,16 @@
 
   async function getUpdate() {
     try { await open(update.url); } catch { window.open(update.url, "_blank"); }
+  }
+
+  async function copyDiagnostics() {
+    try {
+      const text = await T.diagnostics();
+      await navigator.clipboard.writeText(text);
+      toast("Diagnostics copied — paste them into your support email", "success");
+    } catch {
+      toast("Couldn't copy diagnostics", "error");
+    }
   }
 </script>
 
@@ -60,6 +70,7 @@
       <button class="ub-site" onclick={getUpdate}>Visit site</button>
     </div>
 
+    <button class="ub-diag" onclick={copyDiagnostics}>Copy diagnostics for support</button>
     <button class="ub-close" onclick={onClose}>Close</button>
   </div>
 </div>
@@ -96,8 +107,12 @@
   }
   .ub-check:hover, .ub-site:hover { border-color: #5b8cff; }
   .ub-check:disabled { opacity: 0.5; cursor: default; }
+  .ub-diag {
+    margin-top: 16px; background: none; border: 0; color: #8a93a3; cursor: pointer; font-size: 12px; display: block; width: 100%;
+  }
+  .ub-diag:hover { color: #cdd6f5; }
   .ub-close {
-    margin-top: 16px; background: none; border: 0; color: #6b7280; cursor: pointer; font-size: 12px;
+    margin-top: 6px; background: none; border: 0; color: #6b7280; cursor: pointer; font-size: 12px;
   }
   .ub-close:hover { color: #9aa3b2; }
 </style>

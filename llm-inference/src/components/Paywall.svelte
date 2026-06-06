@@ -1,6 +1,6 @@
 <script lang="ts">
   import { open } from "@tauri-apps/plugin-shell";
-  import { license } from "../lib/state.svelte.js";
+  import { license, toast } from "../lib/state.svelte.js";
   import * as T from "../lib/tauri.js";
 
   // `blocking` = trial has ended; the app is locked until activated.
@@ -22,6 +22,7 @@
       license.daysLeft = s.days_left;
       license.trialDays = s.trial_days;
       license.showUnlock = false;
+      toast("Unlocked — thank you! Saient is yours forever.", "success", 5000);
       onClose();
     } catch (e) {
       error = typeof e === "string" ? e : "Couldn't activate that key.";

@@ -426,6 +426,9 @@ export interface UpdateInfo {
 /** Check the site for a newer version. Best-effort — throws if offline. */
 export const checkUpdate = () => invoke<UpdateInfo>("check_update");
 
+/** Plain-text diagnostics (version, OS, GPU, paths) for support. No telemetry. */
+export const diagnostics = () => invoke<string>("diagnostics");
+
 // ── Launch password (argon2) ────────────────────────────────────────────────────
 export const passwordIsSet  = () => invoke<boolean>("password_is_set");
 export const passwordVerify = (password: string) => invoke<boolean>("password_verify", { password });

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { listen } from "@tauri-apps/api/event";
-  import { model, params, dual, chat } from "../../lib/state.svelte.js";
+  import { model, params, dual, chat, toast } from "../../lib/state.svelte.js";
   import * as T from "../../lib/tauri.js";
   import { friendlyLoadError, prettyPath } from "../../lib/format.js";
   import { STARTER_MODELS } from "../../lib/models.js";
@@ -74,8 +74,10 @@
       await T.downloadStarterModel(repo, file, dir);
       await scanModels();          // surface the new model in the picker
       hfFiles = [];                // collapse the picker; the model is now in the list
+      toast(`Downloaded ${file.split("/").pop()} — select it and Start server`, "success");
     } catch (e) {
       dlError = String(e);
+      toast("Download failed — see the panel for details", "error");
     } finally {
       unlisten(); downloading = "";
     }
@@ -210,8 +212,9 @@
     {#if model.models.length === 0}
       <div class="no-models">
         <div class="no-icon">📂</div>
-        <div class="no-title">No models found</div>
-        <div class="no-hint">Drop <code>.gguf</code> files into the models folder</div>
+        <div class="no-title">No models yet</div>
+        <div class="no-hint">Download one to get started, or drop <code>.gguf</code> files into the models folder.</div>
+        <button class="load-btn" style="margin-top:8px" onclick={() => (showDownload = true)}>⬇ Download a model</button>
       </div>
     {:else}
       <div class="model-list">
