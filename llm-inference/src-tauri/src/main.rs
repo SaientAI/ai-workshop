@@ -111,11 +111,12 @@ fn make_state() -> AppState {
     let root = PathBuf::from(&home).join("agent-workspace");
     std::fs::create_dir_all(&root).ok();
 
-    // Managed models directory — created on first launch. If this machine already
-    // has GGUF files under a common model folder, use that as the visible default.
+    // Managed models directory — created on first launch and the only place we
+    // scan, unless the user explicitly points us elsewhere (that choice persists).
     let managed_models_dir = PathBuf::from(&home).join("llm-runtime").join("models");
     std::fs::create_dir_all(&managed_models_dir).ok();
-    let models_dir = choose_default_models_dir(&home, &managed_models_dir);
+    let models_dir = load_models_dir_pref().unwrap_or(managed_models_dir);
+    std::fs::create_dir_all(&models_dir).ok();
 
     let fs = FsTool::new(&root).expect("sandbox root");
     let memory_path = root.join(".agent/memory.json");
@@ -1263,104 +1264,66 @@ fn is_gguf_path(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn dir_has_gguf(dir: &Path) -> bool {
-    if !dir.exists() {
-        return false;
-    }
-    walkdir::WalkDir::new(dir)
-        .max_depth(6)
-        .follow_links(true)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .any(|e| is_gguf_path(e.path()))
+// Saient owns one models folder and only scans there (plus a folder the user
+// explicitly points us at, persisted below). No PC-wide scanning.
+
+fn models_dir_pref_file() -> PathBuf {
+    setup::config_dir().join("models_dir.txt")
 }
 
-fn candidate_model_dirs(home: &str) -> Vec<PathBuf> {
-    let home = PathBuf::from(home);
-    vec![
-        home.join("models"),
-        home.join("projects").join("models"),
-        home.join(".lmstudio").join("models"),
-        PathBuf::from("/data/models"),
-    ]
+/// A user-chosen models folder, if one was set previously. Survives restarts.
+fn load_models_dir_pref() -> Option<PathBuf> {
+    let raw = std::fs::read_to_string(models_dir_pref_file()).ok()?;
+    let p = PathBuf::from(raw.trim());
+    (!p.as_os_str().is_empty()).then_some(p)
 }
 
-fn choose_default_models_dir(home: &str, managed_dir: &Path) -> PathBuf {
-    if dir_has_gguf(managed_dir) {
-        return managed_dir.to_path_buf();
+fn save_models_dir_pref(dir: &Path) {
+    let f = models_dir_pref_file();
+    if let Some(parent) = f.parent() {
+        std::fs::create_dir_all(parent).ok();
     }
-    candidate_model_dirs(home)
-        .into_iter()
-        .find(|dir| dir_has_gguf(dir))
-        .unwrap_or_else(|| managed_dir.to_path_buf())
-}
-
-fn push_model_root(roots: &mut Vec<PathBuf>, seen: &mut HashSet<PathBuf>, path: PathBuf) {
-    if !path.exists() {
-        return;
-    }
-    let key = path.canonicalize().unwrap_or_else(|_| path.clone());
-    if seen.insert(key) {
-        roots.push(path);
-    }
-}
-
-fn model_scan_roots(primary: &Path) -> Vec<PathBuf> {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    let mut roots = Vec::new();
-    let mut seen = HashSet::new();
-    push_model_root(&mut roots, &mut seen, primary.to_path_buf());
-    push_model_root(
-        &mut roots,
-        &mut seen,
-        PathBuf::from(&home).join("llm-runtime").join("models"),
-    );
-    for dir in candidate_model_dirs(&home) {
-        push_model_root(&mut roots, &mut seen, dir);
-    }
-    roots
+    std::fs::write(f, dir.to_string_lossy().as_bytes()).ok();
 }
 
 #[command]
 fn scan_models_dir(state: State<'_, AppState>) -> Vec<ModelEntry> {
     use walkdir::WalkDir;
-    let dir = state.models_dir.lock().unwrap().clone();
+    let root = state.models_dir.lock().unwrap().clone();
     let mut entries = Vec::new();
     let mut seen_files = HashSet::new();
-    for root in model_scan_roots(&dir) {
-        for e in WalkDir::new(&root)
-            .max_depth(6)
-            .follow_links(true)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            let path = e.path().to_path_buf();
-            if !is_gguf_path(&path) {
-                continue;
-            }
-            let file_key = path.canonicalize().unwrap_or_else(|_| path.clone());
-            if !seen_files.insert(file_key) {
-                continue;
-            }
-            let size = path.metadata().map(|m| m.len()).unwrap_or(0);
-            let size_gb = size as f32 / (1024.0 * 1024.0 * 1024.0);
-            let parent = path.parent().unwrap_or(&root).to_path_buf();
-            let tok = parent.join("tokenizer.json");
-            let tokenizer_path = if tok.exists() { Some(tok.to_string_lossy().into_owned()) } else { None };
-            let name = if parent != root {
-                parent.file_name().map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| path.file_stem().unwrap_or_default().to_string_lossy().into_owned())
-            } else {
-                path.file_stem().unwrap_or_default().to_string_lossy().into_owned()
-            };
-            entries.push(ModelEntry {
-                name,
-                gguf_path: path.to_string_lossy().into_owned(),
-                tokenizer_path,
-                size_gb,
-                dir: parent.to_string_lossy().into_owned(),
-            });
+    for e in WalkDir::new(&root)
+        .max_depth(6)
+        .follow_links(true)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = e.path().to_path_buf();
+        if !is_gguf_path(&path) {
+            continue;
         }
+        let file_key = path.canonicalize().unwrap_or_else(|_| path.clone());
+        if !seen_files.insert(file_key) {
+            continue;
+        }
+        let size = path.metadata().map(|m| m.len()).unwrap_or(0);
+        let size_gb = size as f32 / (1024.0 * 1024.0 * 1024.0);
+        let parent = path.parent().unwrap_or(&root).to_path_buf();
+        let tok = parent.join("tokenizer.json");
+        let tokenizer_path = if tok.exists() { Some(tok.to_string_lossy().into_owned()) } else { None };
+        let name = if parent != root {
+            parent.file_name().map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.file_stem().unwrap_or_default().to_string_lossy().into_owned())
+        } else {
+            path.file_stem().unwrap_or_default().to_string_lossy().into_owned()
+        };
+        entries.push(ModelEntry {
+            name,
+            gguf_path: path.to_string_lossy().into_owned(),
+            tokenizer_path,
+            size_gb,
+            dir: parent.to_string_lossy().into_owned(),
+        });
     }
     entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     entries
@@ -1375,6 +1338,7 @@ fn get_models_dir(state: State<'_, AppState>) -> String {
 fn set_models_dir(state: State<'_, AppState>, path: String) -> Result<(), String> {
     let p = PathBuf::from(&path);
     std::fs::create_dir_all(&p).map_err(|e| e.to_string())?;
+    save_models_dir_pref(&p);
     *state.models_dir.lock().unwrap() = p;
     Ok(())
 }
