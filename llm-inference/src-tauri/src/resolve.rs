@@ -137,7 +137,7 @@ pub fn lora_scan_dirs() -> Vec<PathBuf> {
 pub fn default_lora_dir() -> PathBuf {
     home_dir()
         .map(|h| h.join("models/lora"))
-        .unwrap_or_else(|| PathBuf::from("/tmp/lora"))
+        .unwrap_or_else(|| std::env::temp_dir().join("lora"))
 }
 
 fn home_dir() -> Option<PathBuf> {

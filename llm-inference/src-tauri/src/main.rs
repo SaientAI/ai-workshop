@@ -692,8 +692,9 @@ fn clear_user_data(
         cleared.push("audit_log".into());
     }
     if clear_logs {
-        std::fs::remove_file("/tmp/saient-tinyq4.log").ok();
-        std::fs::remove_file("/tmp/llm-inference-tauri-server.pid").ok();
+        let tmp = std::env::temp_dir();
+        std::fs::remove_file(tmp.join("saient-tinyq4.log")).ok();
+        std::fs::remove_file(tmp.join("saient-server.pid")).ok();
         cleared.push("temp_logs".into());
     }
     Ok(cleared)
