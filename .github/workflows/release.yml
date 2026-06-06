@@ -117,6 +117,10 @@ jobs:
           cuda: ${{ env.CUDA_VERSION }}
           method: 'network'
 
+      # nvcc needs the MSVC host compiler (cl.exe) on PATH.
+      - name: Set up MSVC (cl.exe for nvcc)
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: Build + stage engine (CUDA all-major + CPU + cudart dll)
         shell: pwsh
         run: |
