@@ -5,7 +5,7 @@
 //! anything — we just tell the user and point them at the site.
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 const VERSION_URL: &str = "https://saient.co.uk/version.json";
 const DOWNLOAD_URL: &str = "https://saient.co.uk/#download";
