@@ -166,7 +166,7 @@
     text-shadow: 0 0 36px rgba(108,142,245,0.45);
     filter: drop-shadow(0 14px 40px rgba(108,142,245,0.18));
   }
-  .mascot .eyes { display: block; padding-left: 1ch; } /* nudge head 1 char to center it over /|#|\ */
+  .mascot .eyes { display: inline; } /* head swapped [>_<]/[-_-] via JS; inline so all 3 rows share column 0 */
   .mascot-ring {
     position: absolute; inset: -8% -4%;
     border: 1px dashed rgba(108,142,245,0.22); border-radius: 50%;
@@ -317,8 +317,9 @@
     <div class="mascot-stage reveal" style="--d:240ms">
       <div class="mascot-ring"></div>
       <div class="mascot-ring inner"></div>
-      <pre class="mascot" id="mascot"><span class="eyes" id="eyes">[&gt;_&lt;]</span> /|#|\
-  / \</pre>
+      <pre class="mascot" id="mascot"><span class="eyes" id="eyes">[&gt;_&lt;]</span>
+/|#|\
+ / \</pre>
     </div>
   </div>
 </header>
@@ -458,8 +459,8 @@
 <section class="final" id="download">
   <div class="wrap">
     <pre class="mascot-sm reveal">[&gt;_&lt;]
- /|#|\
-  / \</pre>
+/|#|\
+ / \</pre>
     <h2 class="reveal">Saient is ready.</h2>
     <p class="reveal">Download the desktop app, point it at a GGUF model, and you've got a full AI workshop that answers to nobody but you.</p>
     <div class="hero-cta reveal">
@@ -511,7 +512,7 @@
   const term = document.getElementById('term');
   const lines = [
     { t: '~ saient', c: 'user', pre: '' },
-    { t: '  [>_<]\n /|#|\\\n  / \\', c: 'banner', pre: '', raw: true },
+    { t: '[>_<]\n/|#|\\\n / \\', c: 'banner', pre: '', raw: true },
     { t: 'saient › type saient to launch the agent', c: 'dim', pre: '' },
     { t: '', c: 'dim', pre: '' },
     { t: 'build me a snake game in python', c: 'user', pre: '› ' },
