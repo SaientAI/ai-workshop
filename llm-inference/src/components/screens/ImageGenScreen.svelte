@@ -4,6 +4,14 @@
   import { listen } from "@tauri-apps/api/event";
   import { ig } from "../../lib/state.svelte.js";
   import * as T from "../../lib/tauri.js";
+  import HfBrowser from "../HfBrowser.svelte";
+
+  let browser = $state<{ target: string; filter: string; exts: string[]; title: string } | null>(null);
+  function findModel(target: "checkpoint" | "lora") {
+    browser = target === "lora"
+      ? { target: "lora", filter: "text-to-image", exts: [".safetensors"], title: "Find a LoRA" }
+      : { target: "checkpoint", filter: "text-to-image", exts: [".safetensors", ".ckpt"], title: "Find a checkpoint" };
+  }
 
   const SCHEDULERS = ["dpm++2m_karras","euler_a","euler","ddim","pndm","lms"];
   const SIZES = [512, 768, 1024, 1280];
@@ -121,7 +129,10 @@
         <option value={m.path}>{m.label}</option>
       {/each}
     </select>
-    <button class="ig-refresh-btn" onclick={igScanModels}>⟳ Refresh</button>
+    <div style="display:flex;gap:4px;">
+      <button class="ig-refresh-btn" onclick={igScanModels} style="flex:1">⟳ Refresh</button>
+      <button class="ig-refresh-btn" onclick={() => findModel("checkpoint")} style="flex:1">⬇ Find a model</button>
+    </div>
 
     {#if hotModel && !modelChanged}
       <div class="hot-badge">🔥 Hot — {hotLabel}</div>
@@ -136,8 +147,8 @@
       {#if loadError}<div class="load-error">{loadError}</div>{/if}
     {/if}
 
+    <div class="ig-section-label" style="margin-top:12px">LoRA</div>
     {#if ig.loras.length > 0}
-      <div class="ig-section-label" style="margin-top:12px">LoRA</div>
       <select class="ig-select" bind:value={ig.loraPath}>
         <option value="">— none —</option>
         {#each ig.loras as l}
@@ -145,6 +156,7 @@
         {/each}
       </select>
     {/if}
+    <button class="ig-refresh-btn" onclick={() => findModel("lora")}>⬇ Find a LoRA</button>
 
     <div class="ig-section-label" style="margin-top:12px">Device</div>
     <select class="ig-select" bind:value={ig.device}>
@@ -236,6 +248,17 @@
       onclick={(e) => e.stopPropagation()}
     />
   </div>
+{/if}
+
+{#if browser}
+  <HfBrowser
+    target={browser.target}
+    filter={browser.filter}
+    exts={browser.exts}
+    title={browser.title}
+    onClose={() => (browser = null)}
+    onDone={igScanModels}
+  />
 {/if}
 
 <style>

@@ -112,10 +112,28 @@ pub fn model_scan_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+/// Saient's managed folder where in-app downloads land (and are scanned first).
+pub fn checkpoints_download_dir() -> PathBuf {
+    let d = home_dir().unwrap_or_else(|| std::env::temp_dir()).join("Saient/models/checkpoints");
+    std::fs::create_dir_all(&d).ok();
+    d
+}
+pub fn loras_download_dir() -> PathBuf {
+    let d = home_dir().unwrap_or_else(|| std::env::temp_dir()).join("Saient/models/lora");
+    std::fs::create_dir_all(&d).ok();
+    d
+}
+pub fn models_download_dir() -> PathBuf {
+    let d = home_dir().unwrap_or_else(|| std::env::temp_dir()).join("Saient/models");
+    std::fs::create_dir_all(&d).ok();
+    d
+}
+
 /// Return candidate directories for .safetensors checkpoint scanning.
 pub fn checkpoint_scan_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     if let Some(home) = home_dir() {
+        dirs.push(home.join("Saient/models/checkpoints"));   // managed download target
         dirs.push(home.join("projects/models/checkpoints"));
         dirs.push(home.join("models/checkpoints"));
         dirs.push(home.join("models"));
@@ -127,6 +145,7 @@ pub fn checkpoint_scan_dirs() -> Vec<PathBuf> {
 pub fn lora_scan_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     if let Some(home) = home_dir() {
+        dirs.push(home.join("Saient/models/lora"));          // managed download target
         dirs.push(home.join("projects/models/lora"));
         dirs.push(home.join("models/lora"));
     }

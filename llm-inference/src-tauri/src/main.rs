@@ -1498,6 +1498,7 @@ fn main() {
             // Setup wizard
             setup::detect_system, setup::run_setup, setup::skip_setup, setup::reset_setup,
             setup::download_starter_model, setup::hf_list_gguf,
+            setup::hf_search, setup::hf_list_files, setup::download_hf_file,
             // Update check (best-effort, points at the site)
             update::check_update,
             // Licensing (30-day trial → signed key unlock)

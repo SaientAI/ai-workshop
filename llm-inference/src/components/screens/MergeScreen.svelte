@@ -1,8 +1,13 @@
 <script lang="ts">
   import { merge, model } from "../../lib/state.svelte.js";
   import * as T from "../../lib/tauri.js";
+  import HfBrowser from "../HfBrowser.svelte";
 
   // No dedicated merge scan command — uses the main model list from the sidebar
+  let showBrowser = $state(false);
+  async function rescanModels() {
+    model.models = await T.scanModelsDir().catch(() => model.models);
+  }
 
   async function run() {
     if (!merge.modelA || !merge.modelB) { merge.error = "Select at least model A and B."; return; }
@@ -24,6 +29,9 @@
 
 <div class="ig-layout">
   <div class="ig-sidebar">
+    <div class="ig-section-label">Models</div>
+    <button class="ig-refresh-btn" onclick={() => (showBrowser = true)} style="margin-bottom:8px;width:100%">⬇ Find a model</button>
+
     <div class="ig-section-label">Model A</div>
     <select class="ig-select" bind:value={merge.modelA}>
       <option value="">— select —</option>
@@ -88,6 +96,17 @@
     </div>
   </div>
 </div>
+
+{#if showBrowser}
+  <HfBrowser
+    target="gguf"
+    filter="text-generation"
+    exts={[".gguf"]}
+    title="Find a model"
+    onClose={() => (showBrowser = false)}
+    onDone={rescanModels}
+  />
+{/if}
 
 <style>
   .ig-layout { display: flex; flex: 1; overflow: hidden; }

@@ -537,6 +537,162 @@ pub async fn hf_list_gguf(repo: String, token: Option<String>) -> Result<Vec<HfF
     Ok(files)
 }
 
+// ── Hugging Face: search + generic file list + download (for the creative studios) ──
+
+#[derive(Serialize)]
+pub struct HfRepo {
+    pub id: String,
+    pub downloads: u64,
+    pub likes: u64,
+}
+
+/// Search HuggingFace for model repos. `filter` is a pipeline tag like
+/// "text-to-image" (img gen) — pass None for an unfiltered search.
+#[tauri::command]
+pub async fn hf_search(query: String, filter: Option<String>, token: Option<String>) -> Result<Vec<HfRepo>, String> {
+    #[derive(serde::Deserialize)]
+    struct Raw { id: String, #[serde(default)] downloads: u64, #[serde(default)] likes: u64 }
+
+    let q = query.trim();
+    if q.is_empty() { return Err("Type something to search for.".into()); }
+    let mut url = format!(
+        "https://huggingface.co/api/models?search={}&sort=downloads&direction=-1&limit=20",
+        urlencoding(q)
+    );
+    if let Some(f) = filter.as_deref().filter(|f| !f.is_empty()) {
+        url.push_str(&format!("&filter={}", urlencoding(f)));
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build().map_err(|e| e.to_string())?;
+    let mut req = client.get(&url).header("User-Agent", "Saient");
+    if let Some(t) = token.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+        req = req.bearer_auth(t);
+    }
+    let resp = req.send().await.map_err(|e| format!("search failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("HuggingFace search returned HTTP {}.", resp.status()));
+    }
+    let raw: Vec<Raw> = resp.json().await.map_err(|e| format!("couldn't read results: {e}"))?;
+    Ok(raw.into_iter().map(|r| HfRepo { id: r.id, downloads: r.downloads, likes: r.likes }).collect())
+}
+
+/// List files in a repo whose name ends with one of `exts` (e.g. [".safetensors"]).
+#[tauri::command]
+pub async fn hf_list_files(repo: String, exts: Vec<String>, token: Option<String>) -> Result<Vec<HfFile>, String> {
+    #[derive(serde::Deserialize)]
+    struct Lfs { #[serde(default)] size: u64 }
+    #[derive(serde::Deserialize)]
+    struct TreeEntry { #[serde(rename = "type")] kind: String, path: String, #[serde(default)] size: u64, #[serde(default)] lfs: Option<Lfs> }
+
+    let repo = repo.trim().trim_matches('/');
+    if repo.split('/').count() != 2 { return Err("Enter a repo like \"owner/name\".".into()); }
+    let exts: Vec<String> = exts.iter().map(|e| e.to_lowercase()).collect();
+
+    let url = format!("https://huggingface.co/api/models/{repo}/tree/main");
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30)).build().map_err(|e| e.to_string())?;
+    let mut req = client.get(&url).header("User-Agent", "Saient");
+    if let Some(t) = token.as_deref().map(str::trim).filter(|t| !t.is_empty()) { req = req.bearer_auth(t); }
+    let resp = req.send().await.map_err(|e| format!("request failed: {e}"))?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND { return Err(format!("Repo \"{repo}\" not found.")); }
+    if resp.status() == reqwest::StatusCode::UNAUTHORIZED || resp.status() == reqwest::StatusCode::FORBIDDEN {
+        return Err("This repo is gated/private. Add a Hugging Face token to use it.".into());
+    }
+    if !resp.status().is_success() { return Err(format!("HuggingFace returned HTTP {}.", resp.status())); }
+    let entries: Vec<TreeEntry> = resp.json().await.map_err(|e| format!("couldn't read file list: {e}"))?;
+
+    let mut files: Vec<HfFile> = entries.into_iter()
+        .filter(|e| e.kind == "file" && exts.iter().any(|x| e.path.to_lowercase().ends_with(x)))
+        .map(|e| { let size = e.lfs.map(|l| l.size).filter(|&s| s > 0).unwrap_or(e.size); HfFile { file: e.path, size } })
+        .collect();
+    if files.is_empty() { return Err("No matching model files found in that repo.".into()); }
+    files.sort_by(|a, b| b.size.cmp(&a.size)); // biggest first (usually the full model)
+    Ok(files)
+}
+
+/// Download a single file from a repo straight into the managed folder for `target`
+/// ("checkpoint" | "lora"), so it shows up in that studio with no path fiddling.
+#[tauri::command]
+pub async fn download_hf_file(
+    window: WebviewWindow,
+    repo: String,
+    file: String,
+    target: String,
+    token: Option<String>,
+) -> Result<String, String> {
+    use futures::StreamExt;
+    use tokio::io::AsyncWriteExt;
+
+    let dest_dir = match target.as_str() {
+        "lora" => crate::resolve::loras_download_dir(),
+        "gguf" => crate::resolve::models_download_dir(),
+        _      => crate::resolve::checkpoints_download_dir(),
+    };
+    std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
+    let fname = std::path::Path::new(&file).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| file.clone());
+    let dest = dest_dir.join(&fname);
+
+    if let Ok(m) = std::fs::metadata(&dest) {
+        if m.len() > 0 {
+            let _ = window.emit("model-progress", serde_json::json!({"downloaded": m.len(), "total": m.len(), "done": true}));
+            return Ok(dest.to_string_lossy().into_owned());
+        }
+    }
+
+    let url = format!("https://huggingface.co/{repo}/resolve/main/{file}?download=true");
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(3600)).build().map_err(|e| e.to_string())?;
+    let mut rq = client.get(&url).header("User-Agent", "Saient");
+    if let Some(t) = token.as_deref().map(str::trim).filter(|t| !t.is_empty()) { rq = rq.bearer_auth(t); }
+    let resp = rq.send().await.map_err(|e| format!("request failed: {e}"))?;
+    if resp.status() == reqwest::StatusCode::UNAUTHORIZED || resp.status() == reqwest::StatusCode::FORBIDDEN {
+        return Err("This model is gated/private. Add a Hugging Face token (and accept its licence on HF) to download it.".into());
+    }
+    if !resp.status().is_success() { return Err(format!("download failed: HTTP {}", resp.status())); }
+    let total = resp.content_length().unwrap_or(0);
+
+    if total > 0 {
+        let free_gb = disk_free_gb(&dest_dir);
+        let need_gb = total as f64 / 1e9 + 0.5;
+        if free_gb > 0.0 && free_gb < need_gb {
+            return Err(format!("Not enough disk space: needs ~{:.1} GB but only {:.1} GB free.", total as f64/1e9, free_gb));
+        }
+    }
+
+    let part = dest.with_extension("part");
+    let result: Result<u64, String> = async {
+        let mut out = tokio::fs::File::create(&part).await.map_err(|e| e.to_string())?;
+        let mut stream = resp.bytes_stream();
+        let mut downloaded: u64 = 0;
+        let mut last = std::time::Instant::now();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| e.to_string())?;
+            out.write_all(&chunk).await.map_err(|e| e.to_string())?;
+            downloaded += chunk.len() as u64;
+            if last.elapsed().as_millis() >= 200 {
+                let _ = window.emit("model-progress", serde_json::json!({"downloaded": downloaded, "total": total}));
+                last = std::time::Instant::now();
+            }
+        }
+        out.flush().await.map_err(|e| e.to_string())?;
+        drop(out);
+        std::fs::rename(&part, &dest).map_err(|e| e.to_string())?;
+        Ok(downloaded)
+    }.await;
+
+    let downloaded = match result { Ok(d) => d, Err(e) => { let _ = std::fs::remove_file(&part); return Err(e); } };
+    let _ = window.emit("model-progress", serde_json::json!({"downloaded": downloaded, "total": total, "done": true}));
+    Ok(dest.to_string_lossy().into_owned())
+}
+
+/// Minimal URL-encoder for query values (avoids pulling a crate).
+fn urlencoding(s: &str) -> String {
+    s.bytes().map(|b| match b {
+        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+        b' ' => "+".to_string(),
+        _ => format!("%{b:02X}"),
+    }).collect()
+}
+
 /// Mark setup as complete without installing (e.g. user already has everything).
 #[tauri::command]
 pub fn skip_setup() -> Result<(), String> {

@@ -384,6 +384,21 @@ export interface HfFile { file: string; size: number }
 export const hfListGguf = (repo: string, token?: string) =>
   invoke<HfFile[]>("hf_list_gguf", { repo, token: token || null });
 
+/** A HuggingFace model repo from search. */
+export interface HfRepo { id: string; downloads: number; likes: number }
+
+/** Search HuggingFace models. `filter` is a pipeline tag e.g. "text-to-image". */
+export const hfSearch = (query: string, filter?: string, token?: string) =>
+  invoke<HfRepo[]>("hf_search", { query, filter: filter || null, token: token || null });
+
+/** List files in a repo matching the given extensions (e.g. [".safetensors"]). */
+export const hfListFiles = (repo: string, exts: string[], token?: string) =>
+  invoke<HfFile[]>("hf_list_files", { repo, exts, token: token || null });
+
+/** Download a repo file into the managed folder for `target` ("checkpoint" | "lora"). */
+export const downloadHfFile = (repo: string, file: string, target: string, token?: string) =>
+  invoke<string>("download_hf_file", { repo, file, target, token: token || null });
+
 // ── PTY terminal ──────────────────────────────────────────────────────────────
 
 /** Spawn the platform shell at cwd in a real PTY. Emits "pty-data" events for output. */
