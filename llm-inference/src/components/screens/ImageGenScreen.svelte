@@ -6,11 +6,20 @@
   import * as T from "../../lib/tauri.js";
   import HfBrowser from "../HfBrowser.svelte";
 
-  let browser = $state<{ target: string; filter: string; exts: string[]; title: string } | null>(null);
+  // Curated, known-good single-file base checkpoints (HF search buries these).
+  const BASE_CHECKPOINTS = [
+    { label: "SDXL Base 1.0", repo: "stabilityai/stable-diffusion-xl-base-1.0" },
+    { label: "SDXL Turbo (fast)", repo: "stabilityai/sdxl-turbo" },
+    { label: "DreamShaper XL", repo: "Lykon/dreamshaper-xl-1-0" },
+    { label: "SD 1.5", repo: "stable-diffusion-v1-5/stable-diffusion-v1-5" },
+    { label: "SD 2.1", repo: "stabilityai/stable-diffusion-2-1" },
+  ];
+
+  let browser = $state<{ target: string; filter: string; exts: string[]; title: string; suggestions: { label: string; repo: string }[] } | null>(null);
   function findModel(target: "checkpoint" | "lora") {
     browser = target === "lora"
-      ? { target: "lora", filter: "text-to-image", exts: [".safetensors"], title: "Find a LoRA" }
-      : { target: "checkpoint", filter: "text-to-image", exts: [".safetensors", ".ckpt"], title: "Find a checkpoint" };
+      ? { target: "lora", filter: "text-to-image", exts: [".safetensors"], title: "Find a LoRA", suggestions: [] }
+      : { target: "checkpoint", filter: "text-to-image", exts: [".safetensors", ".ckpt"], title: "Find a checkpoint", suggestions: BASE_CHECKPOINTS };
   }
 
   const SCHEDULERS = ["dpm++2m_karras","euler_a","euler","ddim","pndm","lms"];
@@ -256,6 +265,7 @@
     filter={browser.filter}
     exts={browser.exts}
     title={browser.title}
+    suggestions={browser.suggestions}
     onClose={() => (browser = null)}
     onDone={igScanModels}
   />

@@ -10,6 +10,7 @@
     filter = "",
     exts = [".safetensors"],
     title = "Find a model",
+    suggestions = [],
     onClose = () => {},
     onDone = () => {},
   }: {
@@ -17,6 +18,7 @@
     filter?: string;
     exts?: string[];
     title?: string;
+    suggestions?: { label: string; repo: string }[];
     onClose?: () => void;
     onDone?: () => void;
   } = $props();
@@ -146,7 +148,15 @@
           {/each}
         </div>
       {:else if !busy}
-        <div class="hb-hint">Search by name (e.g. <b>anime</b>, <b>realistic</b>) and pick a model — it downloads straight into the right folder, no setup.</div>
+        {#if suggestions.length}
+          <div class="hb-suggest-label">Popular base models — one click</div>
+          <div class="hb-suggest">
+            {#each suggestions as s}
+              <button class="hb-chip" onclick={() => listFiles(s.repo)}>{s.label}</button>
+            {/each}
+          </div>
+        {/if}
+        <div class="hb-hint">Or search by name (e.g. <b>anime</b>, <b>realistic</b>) and pick a model — it downloads straight into the right folder, no setup.</div>
       {/if}
     {/if}
   </div>
@@ -167,6 +177,10 @@
   .hb-go:disabled { opacity: 0.5; cursor: default; }
   .hb-token-toggle { background: none; border: 0; color: #6b7280; font-size: 11px; cursor: pointer; text-align: left; margin-top: 8px; padding: 2px 0; }
   .hb-token-toggle:hover { color: #9aa3b2; }
+  .hb-suggest-label { font-size: 11px; color: #8a93a3; text-transform: uppercase; letter-spacing: 0.05em; margin: 14px 0 8px; }
+  .hb-suggest { display: flex; flex-wrap: wrap; gap: 6px; }
+  .hb-chip { padding: 7px 12px; border-radius: 8px; background: rgba(108,142,245,0.1); border: 1px solid #2a2f39; color: #cdd6f5; font-size: 12.5px; cursor: pointer; }
+  .hb-chip:hover { border-color: #5b8cff; background: rgba(108,142,245,0.18); }
   .hb-hint { font-size: 12px; color: #8a93a3; line-height: 1.5; margin-top: 14px; }
   .hb-hint b { color: #aeb6c2; }
   .hb-err { font-size: 12px; color: #ff8080; margin-top: 10px; line-height: 1.4; }
