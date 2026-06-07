@@ -109,6 +109,14 @@ def load_pipeline(model_path, lora_path, req_device, status_fn=None):
         if os.path.exists(index_path):
             with open(index_path) as f:
                 cls_name = json.load(f).get("_class_name", "")
+            # Reject non-image pipelines (video etc.) with a clear message rather
+            # than letting diffusers fail with a cryptic "no unet" error.
+            if "StableDiffusion" not in cls_name:
+                raise RuntimeError(
+                    f"'{os.path.basename(model_path)}' is a '{cls_name}' model, "
+                    "not a Stable Diffusion image model. Use the Video tab for "
+                    "video models, or pick an SD1.5 / SDXL model here."
+                )
             if "XL" not in cls_name:
                 pipeline_cls = StableDiffusionPipeline
         status(f"Loading {pipeline_cls.__name__} weights (this may take a few minutes)…")
@@ -116,6 +124,15 @@ def load_pipeline(model_path, lora_path, req_device, status_fn=None):
             model_path, torch_dtype=dtype,
             safety_checker=None, local_files_only=True,
         ).to(device)
+
+    # Hard-disable the NSFW safety checker on every path (single_file / pretrained,
+    # SD1.5 + SDXL). Passing safety_checker=None at load isn't always enough — some
+    # SD1.5 checkpoints re-attach it or keep requires_safety_checker=True, which
+    # black-outs "flagged" frames. Null it out explicitly so output is never censored.
+    if hasattr(pipe, "safety_checker"):
+        pipe.safety_checker = None
+    if hasattr(pipe, "requires_safety_checker"):
+        pipe.requires_safety_checker = False
 
     if lora_path and os.path.isfile(lora_path):
         status("Loading LoRA weights…")

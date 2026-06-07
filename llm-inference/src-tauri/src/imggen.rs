@@ -292,11 +292,18 @@ fn scan_diffusers_dir(base: PathBuf, depth: usize, out: &mut Vec<ModelEntry>) {
         let path = entry.path();
         if !path.is_dir() { continue; }
         if path.join("model_index.json").exists() {
-            out.push(ModelEntry {
-                label: path.file_name().unwrap_or_default().to_string_lossy().to_string(),
-                path:  path.to_string_lossy().to_string(),
-                kind:  detect_kind(&path),
-            });
+            let kind = detect_kind(&path);
+            // Only surface loadable image pipelines. Video models (CogVideoX, Wan,
+            // …) also carry a model_index.json but have a transformer, not a unet —
+            // loading them as a StableDiffusionPipeline blows up ("no unet"). They
+            // have their own scanner in video.rs, so skip anything not sd15/sdxl.
+            if kind == "sd15" || kind == "sdxl" {
+                out.push(ModelEntry {
+                    label: path.file_name().unwrap_or_default().to_string_lossy().to_string(),
+                    path:  path.to_string_lossy().to_string(),
+                    kind,
+                });
+            }
         } else if depth > 1 {
             scan_diffusers_dir(path, depth - 1, out);
         }
