@@ -88,6 +88,12 @@
     finally { un(); video.loading = false; }
   }
 
+  async function unload() {
+    await T.videoUnload().catch(() => null);
+    video.loadedPath = "";
+    logln("✓ unloaded · VRAM freed");
+  }
+
   async function generate() {
     if (!loaded || video.generating || !video.prompt.trim()) return;
     video.generating = true; video.error = ""; video.resultB64 = ""; video.enhanced = false;
@@ -160,6 +166,9 @@
     <button class="load-btn" onclick={load} disabled={!video.modelPath || video.loading}>
       {video.loading ? `⟳ ${video.loadStatus || "Loading…"}` : loaded ? "✓ Loaded · Reload" : "▶ Load Model"}
     </button>
+    {#if loaded && !video.loading}
+      <button class="vbtn-ghost" onclick={unload} disabled={video.generating || video.enhancing}>⏏ Unload · Free VRAM</button>
+    {/if}
     {#if video.models.length === 0}
       <div class="vhint">No video models found. Drop a diffusers Wan/LTX folder into your models dir, then Refresh.</div>
     {/if}
