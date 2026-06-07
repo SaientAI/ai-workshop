@@ -1,5 +1,5 @@
 {
-  "version": "1.0.1",
+  "version": "1.0.2",
   "url": "https://saient.co.uk/#download",
-  "notes": "Base-model shortcuts in Image Gen & Merge, analyze images in chat, OS-aware commands, and a smoother CPU experience."
+  "notes": "Fixes downloaded models not appearing in the Image Gen / Merge dropdowns on Windows."
 }
