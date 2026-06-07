@@ -17,14 +17,19 @@ use tauri::{Emitter, WebviewWindow};
 // ── Paths ──────────────────────────────────────────────────────────────────────
 
 pub fn config_dir() -> PathBuf {
+    // Dev (debug) builds use a separate folder so local tinkering can't touch the
+    // installed/production app's settings, license, or launch password.
+    let name = if cfg!(debug_assertions) { "saient-dev" } else { "saient" };
     #[cfg(target_os = "windows")]
     {
         if let Ok(appdata) = std::env::var("APPDATA") {
-            return PathBuf::from(appdata).join("saient");
+            return PathBuf::from(appdata).join(name);
         }
     }
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".config/saient")
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| ".".into());
+    PathBuf::from(home).join(".config").join(name)
 }
 
 pub fn managed_venv() -> PathBuf {

@@ -172,6 +172,14 @@ fn verify_key(key: &str) -> Option<Payload> {
 
 /// Current license state. Anchors first_run on first launch and ratchets last_seen.
 pub fn status() -> LicenseState {
+    // Dev (debug) builds are always unlocked — we never gate our own tinkering,
+    // and the trial/paywall only applies to shipped (release) builds.
+    if cfg!(debug_assertions) {
+        return LicenseState {
+            status: "licensed".into(), days_left: 0, trial_days: TRIAL_DAYS,
+            tier: Some("dev".into()),
+        };
+    }
     let mut rec = load_merged();
 
     // Paid key wins and never expires.
