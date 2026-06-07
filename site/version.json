@@ -1,5 +1,5 @@
 {
-  "version": "1.0.2",
+  "version": "1.0.3",
   "url": "https://saient.co.uk/#download",
-  "notes": "Fixes downloaded models not appearing in the Image Gen / Merge dropdowns on Windows."
+  "notes": "Image generator no longer lists video models (which caused a load error) and shows clearer messages when a model can't be used for images. The NSFW safety checker is fully disabled so generations are never blacked out."
 }
