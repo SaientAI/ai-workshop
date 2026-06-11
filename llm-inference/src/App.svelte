@@ -29,6 +29,20 @@
   let locked = $state(false);
 
   onMount(async () => {
+    // ── Global safety net ──────────────────────────────────────────────────
+    // An uncaught error or promise rejection must NEVER white-screen the app —
+    // route anything that slips past a feature's own try/catch into a dismissible
+    // toast instead of freezing the webview (prod) or raising the dev overlay (dev).
+    // This is the backstop behind every screen's error handling.
+    const benign = /ResizeObserver/i;
+    const surfaceErr = (msg: string) => {
+      if (!msg || benign.test(msg)) return;
+      console.error("[uncaught]", msg);
+      toast(msg.length > 220 ? msg.slice(0, 220) + "…" : msg, "error", 8000);
+    };
+    window.addEventListener("error", (e: ErrorEvent) => surfaceErr(e.message || String(e.error ?? e)));
+    window.addEventListener("unhandledrejection", (e: PromiseRejectionEvent) => { surfaceErr(String(e.reason)); e.preventDefault(); });
+
     // Launch password gate — check first so we lock before content is usable.
     locked = await T.passwordIsSet().catch(() => false);
 
