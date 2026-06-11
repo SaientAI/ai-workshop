@@ -108,6 +108,53 @@ fn is_safe_command(cmd: &str) -> bool {
     SAFE_COMMANDS.iter().any(|s| cmd.trim() == *s || cmd.trim().starts_with(&format!("{} ", s)))
 }
 
+/// Whether an autonomous agent `exec` step may run `command`. Centralised + tested so the
+/// gate can't be silently dropped from the step executor again — it was once: the `exec`
+/// branch had NO check, so the agent could run `rm` with write mode OFF and "yolo" changed
+/// nothing. With write mode off only the read-only SAFE_COMMANDS allowlist is permitted.
+fn exec_step_allowed(write_mode: bool, command: &str) -> bool {
+    if write_mode { return true; }
+    // Write mode OFF: command substitution or redirection can hide a write/delete behind a
+    // safe-looking leading word (e.g. "echo x > important", "cat $(rm y)") — refuse outright.
+    if command.contains('`') || command.contains("$(") || command.contains('>') || command.contains('<') {
+        return false;
+    }
+    // …and EVERY chained/piped segment must itself be a read-only allowlisted command, so
+    // "cat x; rm -rf y" can't pass just because it starts with "cat". Legit read-only pipes
+    // like "grep x | wc -l" still work.
+    command
+        .split(|c| matches!(c, ';' | '|' | '&' | '\n'))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .all(is_safe_command)
+}
+
+#[cfg(test)]
+mod agent_safety_tests {
+    use super::exec_step_allowed;
+    #[test]
+    fn exec_step_blocks_destructive_commands_without_write_mode() {
+        // Write mode OFF → destructive / non-allowlisted commands must be refused.
+        assert!(!exec_step_allowed(false, "rm -rf project"));
+        assert!(!exec_step_allowed(false, "rm file.txt"));
+        assert!(!exec_step_allowed(false, "mv src dst"));
+        assert!(!exec_step_allowed(false, "dd if=/dev/zero of=x"));
+        // Write mode ON (the user explicitly opted in) → allowed.
+        assert!(exec_step_allowed(true, "rm -rf project"));
+        // Read-only commands stay usable without write mode.
+        assert!(exec_step_allowed(false, "ls -la"));
+        assert!(exec_step_allowed(false, "cat foo.txt"));
+        assert!(exec_step_allowed(false, "grep -r x ."));
+        // Chaining / redirection / substitution must not smuggle a write or delete past the
+        // first-token check — but legit read-only pipes still work.
+        assert!(!exec_step_allowed(false, "cat x; rm -rf y"));
+        assert!(!exec_step_allowed(false, "ls && rm foo"));
+        assert!(!exec_step_allowed(false, "echo pwned > important.txt"));
+        assert!(!exec_step_allowed(false, "cat $(rm foo)"));
+        assert!(exec_step_allowed(false, "grep -r x . | wc -l"));
+    }
+}
+
 fn make_state() -> AppState {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))   // Windows has no HOME
@@ -824,7 +871,7 @@ async fn exec_command(
     req: ExecRequest,
 ) -> Result<ExecResult, String> {
     let write_mode = state.write_mode.load(Ordering::Relaxed);
-    if !write_mode && !is_safe_command(&req.command) {
+    if !exec_step_allowed(write_mode, &req.command) {
         return Err(format!(
             "Agent write mode is OFF. '{}' is not in the safe read-only list. \
              Enable write mode to run arbitrary commands.",
@@ -1197,9 +1244,20 @@ async fn execute_step(
             if !write_ok { return Err("Agent write mode is OFF.".into()); }
             Ok(serde_json::Value::String(fs.lock().unwrap().copy_file(&sp(p,"from"),&sp(p,"to")).map_err(|e|e.to_string())?))
         }
-        "exec" => {
+        "exec" | "exec_command" => {
+            let command = sp(p, "command");
+            // SAME gate as the frontend exec_command: an autonomous step must NOT run an
+            // arbitrary, potentially destructive command (e.g. `rm`) while write mode is OFF.
+            // Without this the executor bypassed write-mode entirely — the agent could delete
+            // files when told not to, and toggling "yolo" changed nothing. (Accept the
+            // "exec_command" tool name the planner prompt advertises, too, so neither is ungated.)
+            if !exec_step_allowed(write_ok, &command) {
+                return Err(format!(
+                    "Agent write mode is OFF — '{}' is not a safe read-only command. \
+                     Enable write mode to let the agent run it.", command));
+            }
             let req = ExecRequest {
-                command: sp(p, "command"),
+                command,
                 args: p.get("args").and_then(|v| v.as_array())
                     .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
                     .unwrap_or_default(),
