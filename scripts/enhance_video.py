@@ -322,7 +322,61 @@ def stage_interpolate(frames, req):
     return out
 
 
-STAGES = {"refine": stage_refine, "upscale": stage_upscale, "interpolate": stage_interpolate}
+# ── Stage: face restoration (CodeFormer via spandrel + facexlib detect/align/paste) ──────
+# i2v animation softens/"melts" faces (small region + frame-to-frame drift). CodeFormer
+# restores each detected face on a crisp 512 crop and facexlib pastes it back into the frame
+# with seamless blending, leaving the rest of the image untouched. Sidesteps the dead
+# basicsr/gfpgan stack: spandrel runs the model, spandrel_extra_arches registers the
+# CodeFormer arch. Per-frame, so mild temporal flicker is possible; the dramatic de-melt is
+# worth it. Weights: ~/.config/saient/face/codeformer.pth (+ facexlib auto-downloads its
+# detector on first use).
+def stage_face(frames, req):
+    import torch, numpy as np
+    try:
+        import spandrel, spandrel_extra_arches
+        from facexlib.utils.face_restoration_helper import FaceRestoreHelper
+    except Exception as e:
+        emit({"loading_status": f"face: deps missing ({e}); skipping — install facexlib + spandrel_extra_arches"})
+        return frames
+    spandrel_extra_arches.install()
+    model_path = req.get("face_model") or os.path.expanduser("~/.config/saient/face/codeformer.pth")
+    if not os.path.exists(model_path):
+        emit({"loading_status": "face: codeformer.pth not found — skipping"})
+        return frames
+    emit({"loading_status": "face: loading CodeFormer + face detector…"})
+    m = spandrel.ModelLoader().load_from_file(model_path)
+    m.cuda().eval()
+    helper = FaceRestoreHelper(1, face_size=512, crop_ratio=(1, 1),
+                               det_model="retinaface_resnet50", save_ext="png", device="cuda")
+    n = len(frames)
+    out, restored = [], 0
+    with torch.no_grad():
+        for i, f in enumerate(frames):
+            f = to_uint8(f)
+            helper.clean_all()
+            helper.read_image(f[:, :, ::-1])              # facexlib works in BGR
+            try:
+                helper.get_face_landmarks_5(only_center_face=False, resize=640, eye_dist_threshold=5)
+                helper.align_warp_face()
+            except Exception:
+                out.append(f); emit({"step": i + 1, "total": n}); continue
+            if not helper.cropped_faces:                  # no face this frame → leave untouched
+                out.append(f); emit({"step": i + 1, "total": n}); continue
+            for crop in helper.cropped_faces:             # BGR uint8 512×512
+                t = torch.from_numpy(crop[:, :, ::-1].copy()).permute(2, 0, 1).unsqueeze(0).float().div(255).cuda()
+                r = m(t).clamp(0, 1).squeeze(0).permute(1, 2, 0).mul(255).round().byte().cpu().numpy()  # RGB
+                helper.add_restored_face(r[:, :, ::-1])   # back to BGR for the paste
+            helper.get_inverse_affine(None)
+            out.append(helper.paste_faces_to_input_image()[:, :, ::-1])  # BGR→RGB
+            restored += 1
+            emit({"step": i + 1, "total": n})
+    del m
+    _free_cuda()
+    emit({"loading_status": f"face: CodeFormer restored faces in {restored}/{n} frames"})
+    return out
+
+
+STAGES = {"refine": stage_refine, "face": stage_face, "upscale": stage_upscale, "interpolate": stage_interpolate}
 
 
 def main():
@@ -344,7 +398,7 @@ def main():
         # base res) → interpolate (flow is robust on small frames) → upscale (enlarge
         # the already-smooth sequence). Interpolating AFTER upscaling makes flow noisy
         # on 4× pixels → juddery in-betweens.
-        order = ["refine", "interpolate", "upscale"]
+        order = ["refine", "face", "interpolate", "upscale"]
         stages = sorted(req.get("stages", []),
                         key=lambda s: order.index(s) if s in order else 99)
         emit({"loading_status": f"pass order: {' → '.join(stages)}"})

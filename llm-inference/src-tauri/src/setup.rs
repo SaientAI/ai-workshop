@@ -263,6 +263,12 @@ pub fn detect_system() -> SystemInfo {
 const CREATIVE_PKGS: &[&str] = &[
     "diffusers", "transformers", "peft", "safetensors",
     "numpy", "pillow", "soundfile", "kokoro",
+    // Video enhancers: spandrel (RealESRGAN upscale) + face restoration (CodeFormer, registered
+    // by spandrel_extra_arches; facexlib does detect/align/paste). NOTE before relying on this
+    // for shipping: facexlib pulls scipy, which can drag numpy to 2.x — verify a FRESH managed
+    // venv keeps the gen stack working (dev pinned numpy<2 by hand). CodeFormer weights live at
+    // ~/.config/saient/face/codeformer.pth; facexlib's detector auto-downloads on first use.
+    "spandrel", "spandrel_extra_arches", "facexlib",
 ];
 
 fn emit_log(window: &WebviewWindow, line: impl AsRef<str>) {

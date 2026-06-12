@@ -230,6 +230,7 @@ export const video = $state({
   doRefine: true,
   doUpscale: true,
   doInterpolate: false,      // RIFE not wired yet
+  doFace: false,             // CodeFormer face restoration — fixes melted faces on animated people
   refineStrength: 0.35,
   refineSteps: 20,
 });

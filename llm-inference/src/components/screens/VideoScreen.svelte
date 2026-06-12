@@ -137,6 +137,7 @@
     if (!video.resultB64 || video.enhancing) return;
     const stages: string[] = [];
     if (video.doRefine) stages.push("refine");
+    if (video.doFace) stages.push("face");
     if (video.doUpscale) stages.push("upscale");
     if (video.doInterpolate) stages.push("interpolate");
     if (stages.length === 0) return;
@@ -291,13 +292,14 @@
           <div class="qpass-head">✨ Quality Pass <span class="qpass-sub">— frees the generator, runs each stage on its own</span></div>
           <div class="qpass-toggles">
             <label><input type="checkbox" bind:checked={video.doRefine} disabled={video.enhancing} /> Refine <span class="qpass-tag">bf16 v2v</span></label>
+            <label><input type="checkbox" bind:checked={video.doFace} disabled={video.enhancing} /> Restore faces <span class="qpass-tag">CodeFormer</span></label>
             <label><input type="checkbox" bind:checked={video.doUpscale} disabled={video.enhancing} /> Upscale <span class="qpass-tag">2× ESRGAN</span></label>
             <label><input type="checkbox" bind:checked={video.doInterpolate} disabled={video.enhancing} /> Interpolate <span class="qpass-tag">2× flow</span></label>
           </div>
           {#if video.doRefine}
             <div class="vrow"><span>Strength</span><input type="number" bind:value={video.refineStrength} min="0.1" max="0.9" step="0.05" disabled={video.enhancing} /></div>
           {/if}
-          <button class="qpass-run" onclick={enhance} disabled={video.enhancing || (!video.doRefine && !video.doUpscale && !video.doInterpolate)}>
+          <button class="qpass-run" onclick={enhance} disabled={video.enhancing || (!video.doRefine && !video.doFace && !video.doUpscale && !video.doInterpolate)}>
             {video.enhancing ? (video.loadStatus || "Enhancing…") : "✨ Run Quality Pass"}
           </button>
           {#if video.enhancing}
