@@ -53,6 +53,20 @@ def _vram():
     return u, p
 
 
+def _cache_dir(name):
+    """Managed cache dir ~/.config/saient/<name>. Migrate a pre-rebrand
+    ~/.config/ai-workshop/<name> in place on first use so we never re-quantize."""
+    new = os.path.expanduser(f"~/.config/saient/{name}")
+    old = os.path.expanduser(f"~/.config/ai-workshop/{name}")
+    if not os.path.exists(new) and os.path.exists(old):
+        try:
+            os.makedirs(os.path.dirname(new), exist_ok=True)
+            os.rename(old, new)
+        except Exception:
+            return old
+    return new
+
+
 def load(cfg):
     global PIPE, MODEL_PATH, STREAM_TRANSFORMER
     import torch
@@ -141,7 +155,7 @@ def encode(prompt, neg, do_cfg):
 
     u0, _ = _vram()
     emit({"loading_status": f"  · VRAM before T5 load: {u0:.1f} GB"})
-    cache = os.path.expanduser("~/.config/ai-workshop/t5-cogvideo-4bit")
+    cache = _cache_dir("t5-cogvideo-4bit")
     te = None
     if os.path.exists(os.path.join(cache, "config.json")):
         emit({"loading_status": "loading pre-quantized T5 (cached 4-bit)…"})

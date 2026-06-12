@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Launch AI Workshop.
+# Launch Saient.
 # If the window is already open, focus it. Otherwise kill any stale port and start fresh.
 
 APP_DIR="$(cd "$(dirname "$0")/llm-inference" && pwd)"
-APP_TITLE="AI Workshop"
-PID_FILE="${XDG_RUNTIME_DIR:-/tmp}/ai-workshop-dev.pid"
+APP_TITLE="Saient"
+PID_FILE="${XDG_RUNTIME_DIR:-/tmp}/saient-dev.pid"
 
 focus_existing_window() {
     if command -v xdotool >/dev/null 2>&1; then
@@ -52,7 +52,7 @@ fi
 
 if is_dev_app_running; then
     if command -v notify-send >/dev/null 2>&1; then
-        notify-send "AI Workshop" "Already running. Install wmctrl or xdotool to focus it from this launcher."
+        notify-send "Saient" "Already running. Install wmctrl or xdotool to focus it from this launcher."
     fi
     exit 0
 fi

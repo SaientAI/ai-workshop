@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""LoRA dataset cleaner for AI Workshop.
+"""LoRA dataset cleaner for Saient.
 Streams JSON progress lines to stdout.
 
 What it does:

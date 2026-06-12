@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SDXL LoRA trainer for AI Workshop.
+"""SDXL LoRA trainer for Saient.
 Reads JSON config from the path given as argv[1].
 Streams JSON progress lines to stdout.
 """

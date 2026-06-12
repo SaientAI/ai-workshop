@@ -46,6 +46,20 @@ def _free_cuda():
         torch.cuda.synchronize()
 
 
+def _cache_dir(name):
+    """Managed cache dir ~/.config/saient/<name>. Migrate a pre-rebrand
+    ~/.config/ai-workshop/<name> in place on first use so we never re-quantize."""
+    new = os.path.expanduser(f"~/.config/saient/{name}")
+    old = os.path.expanduser(f"~/.config/ai-workshop/{name}")
+    if not os.path.exists(new) and os.path.exists(old):
+        try:
+            os.makedirs(os.path.dirname(new), exist_ok=True)
+            os.rename(old, new)
+        except Exception:
+            return old
+    return new
+
+
 def to_uint8(frame):
     """Normalise any frame (PIL / float[0,1] / float[-1,1] / CHW / uint8) to
     HxWx3 uint8 RGB. Stages produce different formats — Wan v2v returns float
@@ -157,7 +171,7 @@ def stage_refine(frames, req):
 
     # Encode prompt with a 4-bit text encoder, then free it (same staged trick).
     # Reuse the shared pre-quantized 4-bit UMT5 cache built by generate_video.py.
-    cache = os.path.expanduser("~/.config/ai-workshop/umt5-xxl-4bit")
+    cache = _cache_dir("umt5-xxl-4bit")
     te = None
     if os.path.exists(os.path.join(cache, "config.json")):
         emit({"loading_status": "refine: loading pre-quantized text encoder (cached)…"})

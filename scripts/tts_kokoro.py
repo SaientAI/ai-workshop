@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Kokoro TTS for AI Workshop.
+"""Kokoro TTS for Saient.
 Reads JSON from stdin, writes WAV as base64 to stdout.
 Progress lines ({"progress": 0-100}) go to stderr.
 """

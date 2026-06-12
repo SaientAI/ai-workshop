@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SDXL / SD1.5 image generation daemon for AI Workshop.
+"""SDXL / SD1.5 image generation daemon for Saient.
 
 Daemon protocol — newline-delimited JSON on stdin/stdout:
   stdin line 1:  {"model_path":"...","lora_path":"...","device":"auto"}

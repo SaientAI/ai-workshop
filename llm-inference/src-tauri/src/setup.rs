@@ -75,9 +75,23 @@ pub fn migrate_legacy_dirs() {
         pairs.push((h.join(".local/share/ai-workshop"), h.join(".local/share/saient")));
     }
     for (old, new) in pairs {
-        if old.exists() && !new.exists() {
+        if !old.exists() { continue; }
+        if !new.exists() {
+            // Clean move — the new-brand dir doesn't exist yet.
             if let Some(parent) = new.parent() { let _ = std::fs::create_dir_all(parent); }
             let _ = std::fs::rename(&old, &new);
+        } else {
+            // Partial rebrand: new/ already exists (e.g. upscale weights got written there
+            // first), so the plain rename was SKIPPED and pre-rebrand caches/sessions/venv
+            // were stranded at old/. Merge each item across (skip ones already in new), then
+            // drop old/ if it's now empty. Renames are instant (same filesystem).
+            if let Ok(entries) = std::fs::read_dir(&old) {
+                for e in entries.flatten() {
+                    let dest = new.join(e.file_name());
+                    if !dest.exists() { let _ = std::fs::rename(e.path(), &dest); }
+                }
+            }
+            let _ = std::fs::remove_dir(&old);
         }
     }
 }

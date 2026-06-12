@@ -116,6 +116,21 @@ def _lora_state_dict(path):
     return out if out else sd
 
 
+def _cache_dir(name):
+    """Managed cache dir ~/.config/saient/<name>. If a pre-rebrand ~/.config/ai-workshop/<name>
+    exists and the new one doesn't, migrate it in place on first use (instant rename, same
+    filesystem) so we never re-quantize a cache the old brand already built."""
+    new = os.path.expanduser(f"~/.config/saient/{name}")
+    old = os.path.expanduser(f"~/.config/ai-workshop/{name}")
+    if not os.path.exists(new) and os.path.exists(old):
+        try:
+            os.makedirs(os.path.dirname(new), exist_ok=True)
+            os.rename(old, new)
+        except Exception:
+            return old
+    return new
+
+
 def _safetensors_gb(folder):
     """Total size (GB) of the *.safetensors shards in a model subfolder (0 if none)."""
     total = 0
@@ -222,7 +237,7 @@ def load(cfg):
         # later time (no re-read, no re-quantize → seconds). Keyed per model.
         import hashlib
         key = os.path.basename(os.path.normpath(MODEL_PATH)) or hashlib.md5(MODEL_PATH.encode()).hexdigest()[:8]
-        t_cache = os.path.expanduser(f"~/.config/ai-workshop/wan-transformer-4bit/{key}")
+        t_cache = os.path.join(_cache_dir("wan-transformer-4bit"), key)
         transformer = None
         if os.path.exists(os.path.join(t_cache, "config.json")):
             emit({"loading_status": "loading pre-quantized transformer (cached 4-bit)…"})
@@ -332,7 +347,7 @@ def encode(prompt, neg, do_cfg):
 
     u0, _ = _vram()
     emit({"loading_status": f"  · VRAM before text-encoder load: {u0:.1f} GB free-baseline"})
-    cache = os.path.expanduser("~/.config/ai-workshop/umt5-xxl-4bit")
+    cache = _cache_dir("umt5-xxl-4bit")
     cached = os.path.exists(os.path.join(cache, "config.json"))
     te = None
     if cached:
