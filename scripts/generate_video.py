@@ -403,6 +403,22 @@ def _i2v_pipe():
             transformer_2=None, boundary_ratio=None, expand_timesteps=True,
         )
         I2V_PIPE.set_progress_bar_config(disable=True)
+        # Park the heavy VAE on CPU the instant it finishes encoding the input image. The VAE's
+        # ONLY use before decode is that single image-encode inside prepare_latents; keeping its
+        # ~2.6 GB (5B) resident through the whole denoise loop is what OOM'd i2v at 480p/33f+.
+        # Wrap encode → park, so denoise runs without it; _decode_latents moves it back. (t2v
+        # never calls vae.encode, so this is i2v-only.) Re-arm on each call in case a prior gen
+        # parked it.
+        _vae = I2V_PIPE.vae
+        _orig_encode = _vae.encode
+        def _encode_then_park(*a, **k):
+            import torch
+            if next(_vae.parameters()).device.type != "cuda":
+                _vae.to("cuda:0")
+            out = _orig_encode(*a, **k)
+            _vae.to("cpu"); torch.cuda.empty_cache()
+            return out
+        _vae.encode = _encode_then_park
     return I2V_PIPE
 
 
