@@ -15,6 +15,9 @@ os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 PIPE = None
 MODEL_PATH = ""
 EMBED_CACHE = {"key": None, "pe": None, "ne": None}
+# "fast" (default) = 4-bit transformer, GPU-resident. "quality" = bf16 transformer streamed
+# per-layer from CPU RAM (sharper, slower; the GPU still does the math). Set from cfg["precision"].
+STREAM_TRANSFORMER = False
 
 
 def emit(obj):
@@ -51,7 +54,7 @@ def _vram():
 
 
 def load(cfg):
-    global PIPE, MODEL_PATH
+    global PIPE, MODEL_PATH, STREAM_TRANSFORMER
     import torch
     from diffusers import (CogVideoXImageToVideoPipeline, CogVideoXTransformer3DModel,
                            AutoencoderKLCogVideoX, BitsAndBytesConfig as DBnb)
@@ -59,6 +62,7 @@ def load(cfg):
     import diffusers as _df
 
     MODEL_PATH = cfg.get("model_path", "")
+    STREAM_TRANSFORMER = (cfg.get("precision") or "fast").strip().lower() == "quality"
     dev = 0
     t_load = time.time()
 
@@ -69,11 +73,18 @@ def load(cfg):
     # clip diverges into a rainbow/waffle field by mid-clip. 49 frames is coherent AND fits
     # (~14.5 GB peak with tiling). Do NOT lower frames to "reduce drift" — that CAUSES the drift.
     _t = time.time()
-    emit({"loading_status": "loading transformer (4-bit nf4) onto GPU…"})
-    dbnb = DBnb(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=torch.bfloat16)
-    transformer = CogVideoXTransformer3DModel.from_pretrained(
-        MODEL_PATH, subfolder="transformer", quantization_config=dbnb,
-        torch_dtype=torch.bfloat16, device_map={"": dev})
+    if STREAM_TRANSFORMER:
+        # Quality: full-precision bf16 transformer kept in CPU RAM (per-layer offload applied
+        # after the pipe is built). Sharper than 4-bit; the decode wall is unchanged.
+        emit({"loading_status": "loading transformer (bf16 — streamed from RAM, quality)…"})
+        transformer = CogVideoXTransformer3DModel.from_pretrained(
+            MODEL_PATH, subfolder="transformer", torch_dtype=torch.bfloat16)
+    else:
+        emit({"loading_status": "loading transformer (4-bit nf4) onto GPU…"})
+        dbnb = DBnb(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=torch.bfloat16)
+        transformer = CogVideoXTransformer3DModel.from_pretrained(
+            MODEL_PATH, subfolder="transformer", quantization_config=dbnb,
+            torch_dtype=torch.bfloat16, device_map={"": dev})
     emit({"loading_status": f"  ⏱ transformer: {time.time()-_t:.0f}s"})
 
     emit({"loading_status": "loading VAE…"})
@@ -97,6 +108,25 @@ def load(cfg):
         if hasattr(PIPE.vae, fn):
             getattr(PIPE.vae, fn)()
     PIPE.set_progress_bar_config(disable=True)
+
+    if STREAM_TRANSFORMER:
+        # CogVideoX decodes INSIDE the pipe call, so we can't park the transformer by hand
+        # between denoise and decode (as the Wan path does). enable_model_cpu_offload moves the
+        # WHOLE bf16 transformer (~10 GB) to the GPU for denoise → overflows 16 GB by a hair.
+        # enable_SEQUENTIAL_cpu_offload streams it LAYER-BY-LAYER instead: peak VRAM is ~one
+        # layer, so the bf16 5B fits in a few GB. Slower (every layer streamed each step) but it
+        # actually fits — this is the method diffusers documents for CogVideoX on low VRAM, and
+        # it sets up the offload buffers correctly (no "expected device meta" error).
+        try:
+            PIPE.enable_sequential_cpu_offload(gpu_id=dev)
+            emit({"loading_status": "quality: sequential (per-layer) CPU offload — bf16 fits, slower"})
+        except Exception as oe:
+            STREAM_TRANSFORMER = False
+            try:
+                PIPE.transformer.to(f"cuda:{dev}")
+            except Exception:
+                pass
+            emit({"loading_status": f"  ⚠ sequential offload unavailable ({oe}); transformer GPU-resident"})
     _free_cuda()
     used, _ = _vram()
     EMBED_CACHE["key"] = None
@@ -109,6 +139,8 @@ def encode(prompt, neg, do_cfg):
     import torch
     from transformers import T5EncoderModel, BitsAndBytesConfig as TBnb
 
+    u0, _ = _vram()
+    emit({"loading_status": f"  · VRAM before T5 load: {u0:.1f} GB"})
     cache = os.path.expanduser("~/.config/ai-workshop/t5-cogvideo-4bit")
     te = None
     if os.path.exists(os.path.join(cache, "config.json")):

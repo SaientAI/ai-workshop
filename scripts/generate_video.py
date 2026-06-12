@@ -52,6 +52,12 @@ MODEL_PATH = ""
 # competes with denoise activations — embeds are tiny, the encoder is not.
 EMBED_CACHE = {"key": None, "pe": None, "ne": None}
 I2V_PIPE = None    # WanImageToVideoPipeline, lazily assembled from the t2v components
+# "fast" (default) = 4-bit transformer, GPU-resident — today's behaviour, unchanged.
+# "quality" = bf16 transformer that LIVES in CPU RAM and is streamed onto the GPU only
+# for the denoise loop (then parked back), so the full-precision weights never have to
+# share VRAM with the text encoder or VAE. Better fidelity at the cost of a ~10 GB PCIe
+# round-trip per generation. Set from the load config's "precision" field.
+STREAM_TRANSFORMER = False
 
 
 def emit(obj):
@@ -110,9 +116,65 @@ def _lora_state_dict(path):
     return out if out else sd
 
 
+def _safetensors_gb(folder):
+    """Total size (GB) of the *.safetensors shards in a model subfolder (0 if none)."""
+    total = 0
+    try:
+        for f in os.listdir(folder):
+            if f.endswith(".safetensors"):
+                total += os.path.getsize(os.path.join(folder, f))
+    except Exception:
+        return 0.0
+    return total / 2**30
+
+
+def _available_ram_gb():
+    """Best-effort available system RAM (GB), or None if we can't tell (then don't block
+    — better to attempt the load than to refuse one we couldn't size up)."""
+    try:
+        import psutil
+        return psutil.virtual_memory().available / 2**30
+    except Exception:
+        pass
+    try:  # Linux fallback if psutil isn't present
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) / 2**20   # kB → GB
+    except Exception:
+        pass
+    return None
+
+
+def _guard_loadable(model_path, use_lora, quality):
+    """Refuse loads that would swap-freeze the whole PC instead of failing cleanly — the
+    "waited 15 min then the machine died" case. Two killers on a 16 GB / 40 GB box:
+
+    1. Dual-expert MoE (Wan2.2 A14B): a `transformer_2` subfolder means two ~14B experts.
+       This single-transformer pipeline can't even drive the second expert, and the bf16
+       read alone (~28-54 GB) tips the box into swap. Point the user at the model that DOES
+       do HD here.
+    2. bf16 path (Quality mode / LoRA) reads the FULL transformer into RAM. If that won't
+       fit with headroom, refuse rather than thrash swap to death."""
+    if os.path.isdir(os.path.join(model_path, "transformer_2")):
+        raise RuntimeError(
+            "This is a dual-expert (A14B) model — not supported on a 16 GB card yet: it "
+            "needs both ~14B experts and a load big enough to swap-freeze the PC. "
+            "Use Wan2.2-TI2V-5B for stable HD / 720p instead.")
+    if use_lora or quality:
+        need = _safetensors_gb(os.path.join(model_path, "transformer"))
+        avail = _available_ram_gb()
+        if avail is not None and need > 0 and need > avail - 6.0:
+            mode = "Quality mode" if quality else "LoRA"
+            raise RuntimeError(
+                f"{mode} loads the full-precision transformer (~{need:.0f} GB) into RAM, but "
+                f"only ~{avail:.0f} GB is free — that would swap-freeze the machine. Switch to "
+                f"Fast mode (untick Quality) or pick a smaller model.")
+
+
 def load(cfg):
     """Load the SMALL resident pieces (transformer 4-bit + VAE). Fast, low RAM."""
-    global PIPE, TOKENIZER, MODEL_PATH
+    global PIPE, TOKENIZER, MODEL_PATH, STREAM_TRANSFORMER
     import torch
     from diffusers import WanPipeline, WanTransformer3DModel, AutoencoderKLWan
     from diffusers import BitsAndBytesConfig as DBnb
@@ -122,18 +184,37 @@ def load(cfg):
     lora_path = (cfg.get("lora_path") or "").strip()
     lora_strength = float(cfg.get("lora_strength", 1.0))
     use_lora = bool(lora_path)
+    precision = (cfg.get("precision") or "fast").strip().lower()
+    quality = precision == "quality"
+    # The transformer goes bf16 for BOTH quality mode and LoRA (4-bit breaks adapter scaling).
+    # On a 16 GB card a resident bf16 5B (~10 GB) + the 5.5 GB text encoder at encode time OOMs,
+    # so STREAM it: keep the bf16 transformer in CPU RAM and move it to the GPU only for the
+    # denoise loop (see generate()), freeing the card for the encoder. Cheap CPU↔GPU hop for the
+    # 1.3B (~2.6 GB); the win is heavy models (5B) that otherwise OOM at encode with a LoRA on.
+    STREAM_TRANSFORMER = quality or use_lora
+
+    # Refuse loads that would tip the box into swap (A14B dual-expert / oversized bf16) with
+    # a clear message, BEFORE reading any weights — never freeze the machine.
+    _guard_loadable(MODEL_PATH, use_lora, quality)
     dev = 0  # cuda:0
 
     t_load = time.time()
     _t = time.time()
-    if use_lora:
-        # LoRA applies cleanly to a bf16 transformer (a 4-bit base makes adapter
-        # scaling unreliable). The 1.3B transformer is only ~2.6 GB in bf16 and
-        # still fits with the text encoder freed before denoise.
-        emit({"loading_status": "loading transformer (bf16 — for LoRA)…"})
+    if use_lora or quality:
+        # bf16 transformer (4-bit makes LoRA adapter scaling unreliable, and is the
+        # quality ceiling for the denoise loop). GPU-resident for fast/LoRA; left on CPU
+        # for quality so it can be streamed in/out around denoise.
+        if quality:
+            label = "bf16 — streamed from RAM (quality)"
+        elif use_lora:
+            label = "bf16 — for LoRA"
+        else:
+            label = "bf16"
+        emit({"loading_status": f"loading transformer ({label})…"})
+        place = {} if STREAM_TRANSFORMER else {"device_map": {"": dev}}
         transformer = WanTransformer3DModel.from_pretrained(
             MODEL_PATH, subfolder="transformer",
-            torch_dtype=torch.bfloat16, device_map={"": dev})
+            torch_dtype=torch.bfloat16, **place)
     else:
         # PRE-QUANTIZED 4-bit cache (mirrors the umt5 TE cache). The bitsandbytes nf4
         # quantize-on-load reads the bf16 shards and packs them (~54s/shard → ~4.5 min
@@ -221,6 +302,14 @@ def load(cfg):
         except Exception as le:
             emit({"loading_status": f"  ⚠ LoRA failed ({le}); continuing without it"})
 
+    if STREAM_TRANSFORMER:
+        # Quality mode: the bf16 transformer stays in CPU RAM. Wan decodes OUTSIDE the pipe
+        # call (see _decode_latents), so generate() can move the whole transformer GPU↔CPU
+        # by hand — onto the GPU for denoise, back to RAM before the VAE decode. No accelerate
+        # hooks (those tripped CogVideoX with a meta-device error); just plain .to() moves, so
+        # only one heavy component is ever resident. Nothing to do here — it's left on CPU.
+        emit({"loading_status": "quality: bf16 transformer parked in RAM (streamed for denoise)…"})
+
     _free_cuda()
     used, _ = _vram()
     EMBED_CACHE["key"] = None   # invalidate any stale embeds from a previous model
@@ -241,6 +330,8 @@ def encode(prompt, neg, do_cfg):
     from transformers import UMT5EncoderModel
     from transformers import BitsAndBytesConfig as TBnb
 
+    u0, _ = _vram()
+    emit({"loading_status": f"  · VRAM before text-encoder load: {u0:.1f} GB free-baseline"})
     cache = os.path.expanduser("~/.config/ai-workshop/umt5-xxl-4bit")
     cached = os.path.exists(os.path.join(cache, "config.json"))
     te = None
@@ -300,6 +391,28 @@ def _i2v_pipe():
     return I2V_PIPE
 
 
+def _vae_is_heavy():
+    """True for the Wan2.2-5B VAE (48 latent channels). Its fp32 weights are big enough
+    that we park it on CPU whenever it isn't actively encoding/decoding, to leave VRAM
+    for the ~5.5 GB text-encoder reload and the denoise activations on a 16 GB card."""
+    try:
+        return int(getattr(PIPE.vae.config, "z_dim", 16) or 16) >= 32
+    except Exception:
+        return False
+
+
+def _vae_to(device):
+    """Move the VAE if it isn't already there. Cheap no-op when already on `device`."""
+    import torch
+    try:
+        if next(PIPE.vae.parameters()).device.type != ("cuda" if "cuda" in device else "cpu"):
+            PIPE.vae.to(device); _free_cuda()
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def _decode_latents(latents):
     """Decode denoised latents → frames, OUTSIDE the pipeline — so two things are on us:
 
@@ -334,6 +447,12 @@ def generate(req):
     t0 = time.time()
     _free_cuda()  # release reserved blocks left over from the previous generation
     _vram()       # reset peak counter for this run
+    # The previous generation's decode left a heavy VAE resident on the GPU. The text
+    # encoder we may reload below is the single biggest transient (~5.5 GB), so on a 16 GB
+    # card a 2nd generation with a NEW prompt (cache miss → TE reload) OOMed on top of it.
+    # Park the heavy VAE on CPU now; it's brought back only for i2v conditioning / decode.
+    if _vae_is_heavy() and _vae_to("cpu"):
+        emit({"loading_status": "headroom: VAE parked on CPU before encode…"})
     total = int(req.get("steps", 30))
     cfg_scale = float(req.get("cfg_scale", 6.0))
     do_cfg = cfg_scale > 1.0
@@ -375,6 +494,12 @@ def generate(req):
     image_b64 = (req.get("image_b64") or "").strip()
 
     t_dn = time.time()
+    if STREAM_TRANSFORMER:
+        # Quality mode: stream the bf16 transformer from RAM onto the GPU for denoise. Encode
+        # is done (text encoder freed) and the heavy VAE is parked on CPU, so it has the card
+        # to itself. Moved back to RAM before decode (below).
+        emit({"loading_status": "quality: streaming bf16 transformer → GPU for denoise…"})
+        PIPE.transformer.to("cuda:0"); _free_cuda()
     # output_type="latent": the pipe RETURNS the denoised latents without decoding, so
     # the denoise activation set is freed before the VAE decode. The Wan2.2-5B VAE (48
     # latent ch) decode is heavy and was OOMing by ~130 MB when run inline (denoise
@@ -384,6 +509,10 @@ def generate(req):
         import io
         from PIL import Image
         img = Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB").resize((width, height))
+        # i2v encodes the input image through the VAE inside the pipe call, so the VAE must
+        # be back on the GPU (we parked it before encode for text-encoder headroom).
+        if _vae_to("cuda:0"):
+            emit({"loading_status": "i2v: VAE back on GPU for image conditioning…"})
         pipe = _i2v_pipe()
         emit({"loading_status": "i2v: conditioning on your image, denoising…"})
         latents = pipe(
@@ -395,17 +524,13 @@ def generate(req):
             output_type="latent",
         ).frames
     else:
-        # Headroom: a heavy VAE (5B, 48-ch) isn't used during t2v denoise — park it on CPU
-        # to give the denoise ~2.6 GB more room (so 480p/49f has real margin and a modest
-        # res bump fits). _decode_latents moves it back for decode. (i2v keeps the VAE
-        # resident — it encodes the input image inside the pipe call, so we don't offload there.)
-        try:
-            if int(getattr(PIPE.vae.config, "z_dim", 16) or 16) >= 32:
-                PIPE.vae.to("cpu"); _free_cuda()
-                emit({"loading_status": "headroom: VAE parked on CPU during denoise…"})
-        except Exception:
-            pass
-        emit({"loading_status": "denoising…"})
+        # t2v doesn't use the VAE during denoise. A heavy (5B) VAE was already parked on CPU
+        # before encode; this is a defensive re-park in case it's somehow still resident.
+        # _decode_latents moves it back for decode. (1.3B VAE is tiny — left wherever it is.)
+        if _vae_is_heavy() and _vae_to("cpu"):
+            emit({"loading_status": "headroom: VAE parked on CPU during denoise…"})
+        if not STREAM_TRANSFORMER:
+            emit({"loading_status": "denoising…"})
         latents = PIPE(
             prompt_embeds=pe, negative_prompt_embeds=ne,
             height=height, width=width, num_frames=num_frames,
@@ -414,6 +539,11 @@ def generate(req):
             output_type="latent",
         ).frames
     t_dn_end = time.time()
+    if STREAM_TRANSFORMER:
+        # Park the bf16 transformer back in RAM so its ~10 GB of VRAM is freed for the VAE
+        # decode and the next prompt's text-encoder load. Only one heavy component resident.
+        PIPE.transformer.to("cpu"); _free_cuda()
+        emit({"loading_status": "quality: transformer parked back in RAM — VRAM freed for decode…"})
     del pe, ne
     resident = torch.cuda.memory_allocated() / 2**30 if torch.cuda.is_available() else 0.0
     emit({"loading_status": f"denoise done ({t_dn_end - t_dn:.0f}s) · {resident:.1f} GB resident · decoding (GPU freed)…"})

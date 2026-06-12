@@ -61,6 +61,13 @@
     video.width = pr.width; video.height = pr.height; video.numFrames = pr.numFrames;
     video.steps = pr.steps; video.cfg = pr.cfg; video.fps = pr.fps; video.resLocked = pr.resLocked;
   }
+  // One-click SD/HD. 720p rounds to 704 because Wan requires multiples of 32 (1280×720
+  // would be silently adjusted to 1280×704 anyway) — set the real value so there's no
+  // surprise. HD fits a CLEAN 16 GB card (~14 GB peak); the loader now guarantees that.
+  function setRes(w: number, h: number) {
+    if (video.resLocked) return;
+    video.width = w; video.height = h;
+  }
 
   // i2v: pick a still image, read it to base64 (strip the data: prefix for the daemon)
   function pickImage(e: Event) {
@@ -81,7 +88,12 @@
     logln(`▶ loading ${video.models.find(m => m.path === video.modelPath)?.label ?? "model"}…`);
     const un = await listen<string>("vidload-progress", (e) => { video.loadStatus = e.payload; logln(e.payload); });
     try {
-      await T.videoLoad(video.modelPath, video.loraPath, video.loraStrength, video.numFrames);
+      // One GPU, one model. Drop the chat LLM first so its VRAM is gone before the video
+      // model loads — otherwise HD generation OOMs on top of a resident chat server. (The
+      // backend also kills stray servers and waits for the memory, but unloading here keeps
+      // the chat engine's own state clean so it reloads correctly next time.)
+      await T.unloadModel().catch(() => null);
+      await T.videoLoad(video.modelPath, video.loraPath, video.loraStrength, video.numFrames, video.qualityMode ? "quality" : "fast");
       video.loadedPath = video.modelPath; video.loadStatus = "";
       logln(video.loraPath ? `✓ model ready (+ LoRA @ ${video.loraStrength})` : "✓ model ready");
     } catch (e) { video.error = String(e); logln(`✗ load failed: ${e}`); }
@@ -183,6 +195,17 @@
       <div class="vhint">LoRA forces bf16 transformer. Re-Load after changing it.</div>
     {/if}
 
+    <div class="vlabel" style="margin-top:14px">Quality <span style="font-weight:400;text-transform:none;color:var(--text3)">(applied at load)</span></div>
+    <label class="vrow" style="cursor:pointer">
+      <span>bf16 transformer <span style="font-size:0.85em;color:var(--accent2,#e0a060)">· experimental</span></span>
+      <input type="checkbox" bind:checked={video.qualityMode} disabled={video.loading} />
+    </label>
+    <div class="vhint">
+      {video.qualityMode
+        ? "Experimental: full-precision transformer streamed from RAM (sharper, slower). Not all models support it — if a gen errors, untick and Re-Load to fall back to fast."
+        : "Fast 4-bit transformer (recommended). Toggle on for higher fidelity (experimental), then Re-Load."}
+    </div>
+
     <div class="vlabel" style="margin-top:14px; display:flex; justify-content:space-between; align-items:center">
       <span>Params</span>
       <button class="vauto" onclick={autoSet} title="Snap all params to this model's best/required settings">⚙ Auto</button>
@@ -190,6 +213,16 @@
     <div class="vrow"><span>Frames</span><input type="number" bind:value={video.numFrames} min="9" max="161" step="4" /></div>
     <div class="vrow"><span>Steps</span><input type="number" bind:value={video.steps} min="1" max="60" /></div>
     <div class="vrow"><span>CFG</span><input type="number" bind:value={video.cfg} min="1" max="15" step="0.5" /></div>
+    <div class="vrow"><span>Size</span>
+      <div class="vsize">
+        <button class="vsize-btn" class:on={!video.resLocked && video.width === 832 && video.height === 480}
+                disabled={video.resLocked} onclick={() => setRes(832, 480)}
+                title="832×480 — fastest and rock-solid stable">SD 480p</button>
+        <button class="vsize-btn" class:on={!video.resLocked && video.width === 1280 && video.height === 704}
+                disabled={video.resLocked} onclick={() => setRes(1280, 704)}
+                title="1280×704 native HD — best on the Wan2.2-5B (~14 GB, fits a clean card). Slower.">HD 720p</button>
+      </div>
+    </div>
     <div class="vrow"><span>Width</span><input type="number" bind:value={video.width} min="256" max="1360" step="16" disabled={video.resLocked} /></div>
     <div class="vrow"><span>Height</span><input type="number" bind:value={video.height} min="256" max="768" step="16" disabled={video.resLocked} /></div>
     <div class="vrow"><span>FPS</span><input type="number" bind:value={video.fps} min="6" max="30" /></div>
@@ -293,6 +326,11 @@
   .vrow { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
   .vrow span { font-size: 11px; color: var(--text2); min-width: 48px; }
   .vrow input { flex: 1; font-family: var(--mono); }
+  .vsize { flex: 1; display: flex; gap: 6px; }
+  .vsize-btn { flex: 1; font-size: 11px; font-weight: 600; background: var(--bg3); border: 1px solid var(--border); color: var(--text2); border-radius: var(--radius-sm); padding: 4px 0; cursor: pointer; }
+  .vsize-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
+  .vsize-btn.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .vsize-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
   /* Mini non-typable terminal — live activity log. */
   .vterm {
@@ -328,7 +366,7 @@
   .vbar-indet .vbar-fill { width: 35%; transition: none; animation: vbar-sweep 1.1s ease-in-out infinite; }
   @keyframes vbar-sweep { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
   .vbar-label { font-size: 11px; color: var(--text3); font-family: var(--mono); }
-  .verr { background: rgba(248,113,113,0.08); border: 1px solid rgba(248,113,113,0.3); color: var(--red); font-size: 12px; padding: 10px 12px; border-radius: var(--radius-sm); line-height: 1.5; white-space: pre-wrap; }
+  .verr { background: rgba(248,113,113,0.08); border: 1px solid rgba(248,113,113,0.3); color: var(--red); font-size: 12px; padding: 10px 12px; border-radius: var(--radius-sm); line-height: 1.5; white-space: pre-wrap; max-height: 30vh; overflow-y: auto; }
 
   .vresult { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 

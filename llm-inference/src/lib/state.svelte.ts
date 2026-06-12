@@ -198,6 +198,8 @@ export const video = $state({
   loras: [] as Array<{ path: string; label: string }>,
   loraPath: "",
   loraStrength: 1.0,
+  qualityMode: false,    // false = fast 4-bit transformer (default); true = bf16 transformer
+                         // streamed from RAM (higher fidelity, ~10 GB PCIe round-trip/gen)
   imageB64: "",          // i2v input still (base64, no data: prefix)
   imageName: "",         // display name of the picked image
   resLocked: false,      // model requires a fixed resolution (e.g. CogVideoX)

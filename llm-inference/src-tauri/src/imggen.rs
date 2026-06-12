@@ -95,11 +95,15 @@ pub fn imggen_scan_loras() -> Vec<ModelEntry> {
 #[tauri::command]
 pub async fn imggen_load(
     daemon: State<'_, DaemonHandle>,
+    vid: State<'_, crate::video::VideoHandle>,
     window: tauri::WebviewWindow,
     model_path: String,
     lora_path: String,
     device: String,
 ) -> Result<String, String> {
+    // Free a resident video daemon first — image + video models can't co-exist on a 16 GB
+    // card (mirrors video_load freeing the image daemon).
+    if let Ok(mut g) = vid.lock() { *g = None; }
     let arc = daemon.inner().clone();
     tokio::task::spawn_blocking(move || do_load(arc, window, model_path, lora_path, device))
         .await

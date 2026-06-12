@@ -133,14 +133,20 @@ fn scan(base: PathBuf, depth: usize, out: &mut Vec<VideoModelEntry>) {
 #[tauri::command]
 pub async fn video_load(
     handle: State<'_, VideoHandle>,
+    img: State<'_, crate::imggen::DaemonHandle>,
     window: WebviewWindow,
     model_path: String,
     lora_path: Option<String>,
     lora_strength: Option<f32>,
     frames: Option<u32>,
+    precision: Option<String>,
 ) -> Result<String, String> {
+    // A 16 GB card can't hold an image model + a video model at once. The image (SDXL)
+    // daemon lives on its own screen and stays resident in the background; free it here so
+    // loading a video model doesn't OOM on top of ~6–7 GB the user can't see is in use.
+    if let Ok(mut g) = img.lock() { *g = None; }
     let arc = handle.inner().clone();
-    tokio::task::spawn_blocking(move || do_load(arc, window, model_path, lora_path, lora_strength, frames))
+    tokio::task::spawn_blocking(move || do_load(arc, window, model_path, lora_path, lora_strength, frames, precision))
         .await
         .map_err(|e| format!("task join: {e}"))?
 }
@@ -225,10 +231,76 @@ pub async fn video_enhance(
 
 // ── Internal ────────────────────────────────────────────────────────────────
 
+/// Poll free VRAM until it reaches `want_mib` or `timeout_ms` elapses; returns the last
+/// reading (None only if nvidia-smi isn't available — a CPU box, nothing to wait for).
+/// Used after evicting other GPU models so we don't spawn the video daemon onto memory the
+/// driver hasn't reclaimed yet. Advisory — the caller proceeds either way.
+fn wait_for_vram(window: &WebviewWindow, want_mib: u64, timeout_ms: u64) -> Option<u64> {
+    use std::time::{Duration, Instant};
+    let start = Instant::now();
+    let mut last = None;
+    loop {
+        match crate::engine::gpu_free_mib() {
+            Some(free) => {
+                last = Some(free);
+                if free >= want_mib {
+                    return Some(free);
+                }
+                let _ = window.emit(
+                    "vidload-progress",
+                    format!("waiting for GPU memory… {:.1} GB free", free as f64 / 1024.0),
+                );
+            }
+            None => return last,
+        }
+        if start.elapsed() >= Duration::from_millis(timeout_ms) {
+            return last;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
 fn do_load(arc: VideoHandle, window: WebviewWindow, model_path: String,
-           lora_path: Option<String>, lora_strength: Option<f32>, frames: Option<u32>) -> Result<String, String> {
+           lora_path: Option<String>, lora_strength: Option<f32>, frames: Option<u32>,
+           precision: Option<String>) -> Result<String, String> {
     let mut guard = arc.lock().map_err(|e| e.to_string())?;
     *guard = None; // kill any existing daemon (frees VRAM)
+
+    // Refuse a dual-expert (A14B) model up front — a `transformer_2` subfolder means two
+    // ~14 GB experts whose bf16 load would swap-freeze a 40 GB box (the "15 min then the PC
+    // died" failure). Bail BEFORE evicting chat or spawning Python so it's instant and the
+    // user's other models are untouched. The 5B does HD on this card; the A14B can't yet.
+    if PathBuf::from(&model_path).join("transformer_2").is_dir() {
+        return Err("This is a dual-expert (A14B) model — not supported on a 16 GB card yet \
+                    (it would need ~28 GB+ of weights and swap-freeze the machine). \
+                    Use Wan2.2-TI2V-5B for stable HD / 720p instead."
+            .into());
+    }
+
+    // A 16 GB card holds exactly ONE model at a time. Native 720p denoise peaks at
+    // ~13.9 GB (measured on the 5B), so a resident chat server (tinyq4) — or any server we
+    // spawned — means an instant CUDA OOM the moment the user hits Generate. That is THE
+    // cause of "720p never stable": the standalone daemon fits, but the app left the chat
+    // model on the GPU underneath it. Kill our background servers now (the image daemon was
+    // already dropped in video_load and the frontend unloads chat before calling us), then
+    // WAIT for the driver to actually hand the VRAM back — kill() returns long before the
+    // memory is reclaimed, so spawning immediately would race onto not-yet-freed VRAM.
+    crate::engine::kill_our_stale_servers();
+    if crate::engine::gpu_available() {
+        let _ = window.emit("vidload-progress", "clearing GPU memory from other models…");
+        let free = wait_for_vram(&window, 13_500, 8_000);
+        if let Some(mib) = free {
+            if mib < 12_000 {
+                // Couldn't get the card clean — something we don't manage (an external
+                // tinyq4/Saient server, another GPU app) is holding it. Don't swap-die or
+                // OOM cryptically: tell the user plainly. (We still proceed; a 480p gen may
+                // fit, and the daemon turns any residual OOM into a clean error, not a crash.)
+                let _ = window.emit("vidload-progress", format!(
+                    "⚠ only {:.1} GB GPU free — close other GPU apps/servers or HD may run out of memory",
+                    mib as f64 / 1024.0));
+            }
+        }
+    }
 
     let python = resolve::find_python().map_err(|e: anyhow::Error| e.to_string())?;
     // Pick the daemon by model family (CogVideoX is a different architecture).
@@ -260,6 +332,7 @@ fn do_load(arc: VideoHandle, window: WebviewWindow, model_path: String,
         "lora_path": lora_path.unwrap_or_default(),
         "lora_strength": lora_strength.unwrap_or(1.0_f32),
         "frames_hint": frames.unwrap_or(49),
+        "precision": precision.unwrap_or_else(|| "fast".into()),
     });
     writeln!(stdin, "{cfg}").map_err(|e| format!("stdin write: {e}"))?;
     stdin.flush().map_err(|e| format!("stdin flush: {e}"))?;
@@ -342,6 +415,14 @@ fn do_enhance(arc: VideoHandle, payload: EnhancePayload, window: WebviewWindow) 
         *guard = None;
     }
     let _ = window.emit("vidload-progress", "freeing generator — handing the GPU to the quality pass…");
+
+    // Same one-GPU rule as load: the enhancer loads its OWN models (refine transformer +
+    // RealESRGAN), so a resident chat server left over from a chat session would OOM the
+    // pass. Evict it and wait for the VRAM (the video daemon was just dropped above).
+    crate::engine::kill_our_stale_servers();
+    if crate::engine::gpu_available() {
+        wait_for_vram(&window, 13_500, 8_000);
+    }
 
     let python = resolve::find_python().map_err(|e: anyhow::Error| e.to_string())?;
     let script = resolve::find_script("enhance_video.py").map_err(|e: anyhow::Error| e.to_string())?;
