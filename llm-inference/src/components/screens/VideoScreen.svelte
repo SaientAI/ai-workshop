@@ -5,6 +5,15 @@
   import { video } from "../../lib/state.svelte.js";
   import * as T from "../../lib/tauri.js";
 
+  // Simple (default) hides every tunable behind Auto; Advanced shows the full panel.
+  const ADV_KEY = "saient.video.advanced";
+  let advanced = $state(localStorage.getItem(ADV_KEY) === "1");
+  function setAdvanced(on: boolean) {
+    advanced = on;
+    localStorage.setItem(ADV_KEY, on ? "1" : "0");
+    if (!on) autoSet();   // returning to Simple snaps everything back to known-good
+  }
+
   const loaded = $derived(!!video.loadedPath && video.loadedPath === video.modelPath);
   const pct = $derived(video.progressTotal > 0 ? Math.round((video.progress / video.progressTotal) * 100) : 0);
 
@@ -87,7 +96,23 @@
     video.width = pr.width; video.height = pr.height; video.numFrames = pr.numFrames;
     video.steps = pr.steps; video.cfg = pr.cfg; video.fps = pr.fps;
     video.scheduler = pr.scheduler; video.shift = pr.shift; video.resLocked = pr.resLocked;
+    if (!advanced) autoPickLora(m.label);
     loraAutoTune();
+  }
+
+  // Simple mode: choose the right speed LoRA for the model, so "pick model → Load →
+  // Generate" always lands on the verified fast recipe. A14B without its Lightning
+  // pair is a ~2 h/clip trap — never let simple mode walk into it.
+  function autoPickLora(modelLabel: string) {
+    const l = modelLabel.toLowerCase();
+    if (l.includes("wan2.2") && l.includes("a14b")) {
+      const lightning = video.loras.find((x) => /lightning/i.test(x.label) && /high/i.test(x.label))
+        ?? video.loras.find((x) => /lightning/i.test(x.label));
+      if (lightning && video.loraPath !== lightning.path) {
+        video.loraPath = lightning.path;
+        logln(`auto: paired ${modelLabel} with ${lightning.label}`);
+      }
+    }
   }
 
   // A speed-distill LoRA dictates steps/CFG no matter which model it sits on — running
@@ -296,6 +321,12 @@
 
 <div class="ig-layout">
   <div class="ig-sidebar">
+    <div class="vrow" style="margin-bottom:10px"><span>Setup</span>
+      <div class="vsize">
+        <button class="vsize-btn" class:on={!advanced} onclick={() => setAdvanced(false)} title="Just pick a model and generate — everything else is chosen for you">Simple</button>
+        <button class="vsize-btn" class:on={advanced} onclick={() => setAdvanced(true)} title="Show every parameter (LoRA, steps, CFG, scheduler, recipes…)">Advanced</button>
+      </div>
+    </div>
     <div class="vlabel">Model</div>
     <select class="vsel" bind:value={video.modelPath} onchange={autoSet}>
       <option value="">— select a video model —</option>
@@ -312,6 +343,33 @@
       <div class="vhint">No video models found. Drop a diffusers Wan/LTX folder into your models dir, then Refresh.</div>
     {/if}
 
+    {#if !advanced}
+      <!-- Simple mode: the only two choices that are actually taste, not tuning. -->
+      <div class="vlabel" style="margin-top:14px">Clip</div>
+      <div class="vrow"><span>Length</span>
+        <div class="vsize">
+          <button class="vsize-btn" class:on={video.numFrames === framesFor(2)} onclick={() => setSeconds(2)} title="~2 second clip">2s</button>
+          <button class="vsize-btn" class:on={video.numFrames === framesFor(3)} onclick={() => setSeconds(3)} title="~3 second clip">3s</button>
+          <button class="vsize-btn" class:on={video.numFrames === framesFor(5)} onclick={() => setSeconds(5)} title="~5 second clip">5s</button>
+        </div>
+      </div>
+      <div class="vrow"><span>Size</span>
+        <div class="vsize">
+          <button class="vsize-btn" class:on={!video.resLocked && video.width === 832 && video.height === 480}
+                  disabled={video.resLocked} onclick={() => setRes(832, 480)}
+                  title="832×480 — fastest and rock-solid stable">SD 480p</button>
+          <button class="vsize-btn" class:on={!video.resLocked && video.width === 1280 && video.height === 704}
+                  disabled={video.resLocked} onclick={() => setRes(1280, 704)}
+                  title="1280×704 native HD — slower">HD 720p</button>
+        </div>
+      </div>
+      <div class="vhint">
+        Auto setup: {video.steps} steps · CFG {video.cfg}{video.loraPath ? ` · ${video.loras.find((l) => l.path === video.loraPath)?.label ?? "LoRA"}` : ""}.
+        Everything is picked for this model — switch to Advanced to override.
+      </div>
+    {/if}
+
+    {#if advanced}
     <div class="vlabel" style="margin-top:14px">LoRA <span style="font-weight:400;text-transform:none;color:var(--text3)">(optional, applied at load)</span></div>
     <select class="vsel" bind:value={video.loraPath} onchange={loraAutoTune} disabled={video.loading}>
       <option value="">— none —</option>
@@ -403,6 +461,7 @@
     <div class="vhint" style="margin-top:4px">
       {#if video.resLocked}🔒 This model locks resolution — Width/Height fixed.{:else}−1 seed = random. ~49 frames @ 16 fps ≈ 3 s clip.{/if}
     </div>
+    {/if}
 
     <div class="vlabel" style="margin-top:14px; display:flex; justify-content:space-between; align-items:center">
       <span>Activity</span>
