@@ -17,8 +17,14 @@
   "rewrites": [
     { "source": "/pricing", "destination": "/pricing.html" },
     { "source": "/help", "destination": "/help.html" },
+    { "source": "/ai-prompt-maker", "destination": "/ai-prompt-maker.html" },
+    { "source": "/ai-image-generator", "destination": "/ai-image-generator.html" },
+    { "source": "/ai-video-generator", "destination": "/ai-video-generator.html" },
+    { "source": "/local-ai-agent", "destination": "/local-ai-agent.html" },
+    { "source": "/how-to-run-ai-locally", "destination": "/how-to-run-ai-locally.html" },
     { "source": "/changelog", "destination": "/changelog.html" },
     { "source": "/terms", "destination": "/terms.html" },
-    { "source": "/privacy", "destination": "/privacy.html" }
+    { "source": "/privacy", "destination": "/privacy.html" },
+    { "source": "/guard-down/privacy", "destination": "/guard-down/privacy.html" }
   ]
 }

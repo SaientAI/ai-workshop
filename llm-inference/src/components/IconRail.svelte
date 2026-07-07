@@ -6,6 +6,7 @@
     { id: "chat",   icon: "💬", label: "Chat" },
     { id: "agent",  icon: "🖥",  label: "Agent" },
     { id: "imggen", icon: "🖼",  label: "Image Gen" },
+    { id: "assets", icon: "🧱",  label: "Game Assets" },
     { id: "video",  icon: "🎬",  label: "Video Gen" },
     { id: "tts",    icon: "🔊",  label: "TTS" },
     { id: "lora",   icon: "🎛",  label: "LoRA" },
@@ -24,6 +25,15 @@
       {item.icon}
     </button>
   {/each}
+  <div class="rail-spacer"></div>
+  <button
+    class="rail-btn"
+    onclick={() => (ui.showSettings = true)}
+    title="Settings"
+    aria-label="Settings"
+  >
+    ⚙
+  </button>
 </nav>
 
 <style>
@@ -54,4 +64,5 @@
     background: rgba(108,142,245,0.12);
     border-color: rgba(108,142,245,0.3);
   }
+  .rail-spacer { flex: 1; }
 </style>

@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AI Prompt Maker for Images, Video and Agents — Saient</title>
+<meta name="description" content="Use Saient as an AI prompt maker for image generation, video generation, local chat and coding agents. Learn a simple prompt structure with examples you can copy." />
+<link rel="canonical" href="https://saient.co.uk/ai-prompt-maker" />
+<meta property="og:type" content="article" />
+<meta property="og:title" content="AI Prompt Maker for Images, Video and Agents — Saient" />
+<meta property="og:description" content="A practical prompt-making guide for local AI image generation, video generation and agent tasks." />
+<meta property="og:url" content="https://saient.co.uk/ai-prompt-maker" />
+<meta name="twitter:card" content="summary" />
+<script type="application/ld+json">
+{
+  "@context":"https://schema.org",
+  "@type":"HowTo",
+  "name":"How to make better AI prompts",
+  "description":"A repeatable prompt structure for image generation, video generation, chat and local AI agents.",
+  "step":[
+    {"@type":"HowToStep","name":"State the task","text":"Say exactly what you want the model to create or do."},
+    {"@type":"HowToStep","name":"Add context and constraints","text":"Include style, audience, files, format, length, hardware limits or safety boundaries."},
+    {"@type":"HowToStep","name":"Ask for the output format","text":"Specify whether you want a prompt, checklist, command, file patch, image description, shot list or final answer."},
+    {"@type":"HowToStep","name":"Iterate locally","text":"Run the prompt in Saient, keep the best result, and refine without sending your data to a cloud service."}
+  ]
+}
+</script>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230d0d0f'/%3E%3Ctext x='16' y='21' font-family='monospace' font-size='12' fill='%236c8ef5' text-anchor='middle' font-weight='700'%3E%5B%3E_%3C%5D%3C/text%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Martian+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/assets/seo.css" />
+</head>
+<body>
+<nav>
+  <div class="wrap nav-inner">
+    <a class="brand" href="/"><span class="face">[&gt;_&lt;]</span><span>SAIENT</span></a>
+    <div class="nav-links">
+      <a class="link" href="/#features">Features</a>
+      <a class="link" href="/ai-image-generator">Image gen</a>
+      <a class="link" href="/ai-video-generator">Video gen</a>
+      <a class="link" href="/pricing">Pricing</a>
+      <a class="btn btn-primary" href="/#download">Download</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <div class="eyebrow"><span class="dot"></span> Prompt maker guide</div>
+      <h1>AI prompt maker for images, video, chat and agents.</h1>
+      <p class="lede">A good prompt is not magic wording. It is a clear brief. Saient lets you draft, test and improve prompts locally for image generation, video generation, coding tasks, chat and vision work.</p>
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="/#download">Download Saient</a>
+        <a class="btn" href="#templates">Copy prompt templates</a>
+      </div>
+    </div>
+    <aside class="signal">
+      <div class="label">Prompt shape</div>
+      <pre>Goal:
+Context:
+Inputs:
+Constraints:
+Output format:
+Quality checks:</pre>
+    </aside>
+  </div>
+</header>
+
+<div class="wrap article">
+  <main>
+    <section id="formula">
+      <div class="sec-tag">Formula</div>
+      <h2>The simple prompt structure that works</h2>
+      <p>Start with the outcome, then add the details that would help a capable person do the same job. That usually means the subject, context, constraints, style, output format and how success should be judged.</p>
+      <ol class="steps">
+        <li><b>State the task.</b> Say whether you want an image prompt, video shot, code change, article outline, analysis or finished answer.</li>
+        <li><b>Add useful context.</b> Include the product, audience, source material, model type, platform and what should be avoided.</li>
+        <li><b>Define the output.</b> Ask for bullets, JSON, a filename, a command, a shot list, a negative prompt or a final rewritten prompt.</li>
+        <li><b>Iterate.</b> In Saient, you can run the same idea through local chat, image gen, video gen and the agent without cloud prompts or API keys.</li>
+      </ol>
+      <div class="note">Short prompts are fine for exploration. For repeatable results, use a structured prompt so the model has enough information to obey you.</div>
+    </section>
+
+    <section id="templates">
+      <div class="sec-tag">Templates</div>
+      <h2>Prompt templates you can copy</h2>
+      <h3>General AI prompt maker</h3>
+      <div class="prompt-box">Turn this idea into a strong AI prompt.
+
+Idea: [paste the rough idea]
+Audience: [who this is for]
+Goal: [what the output must achieve]
+Style: [tone, format, visual style, or constraints]
+Avoid: [things that should not appear]
+
+Return:
+1. A polished prompt
+2. A shorter version
+3. Three useful variations</div>
+
+      <h3>Image generation prompt</h3>
+      <div class="prompt-box">Create an SDXL image prompt for:
+
+Subject: [main person, object or scene]
+Setting: [place, time, environment]
+Mood: [lighting, color, emotion]
+Composition: [camera angle, lens, framing]
+Style: [realistic, product render, anime, oil painting, etc.]
+Details to include: [specific details]
+Negative prompt: [things to avoid]
+
+Return a final prompt and a negative prompt.</div>
+
+      <h3>Video generation prompt</h3>
+      <div class="prompt-box">Create a text-to-video prompt.
+
+Scene: [what happens]
+Motion: [camera movement and subject movement]
+Duration feel: [short loop, cinematic shot, product reveal]
+Lighting: [natural, studio, neon, soft, etc.]
+Continuity: [what must stay consistent]
+Avoid: [flicker, warped hands, text artifacts, extra limbs]
+
+Return a single video prompt and a shorter backup prompt.</div>
+
+      <h3>Local AI agent prompt</h3>
+      <div class="prompt-box">You are working in my local project.
+
+Goal: [what to change]
+Scope: [files or folders to inspect]
+Constraints: [do not touch unrelated files, preserve style, etc.]
+Verification: [test, command, build or manual check]
+Deliverable: [final behavior or files changed]
+
+Plan first, then make the smallest working change and verify it.</div>
+    </section>
+
+    <section id="why-local">
+      <div class="sec-tag">Local workflow</div>
+      <h2>Why make prompts locally?</h2>
+      <p>Prompt work often includes private code, product ideas, client assets, images or unfinished scripts. Saient runs on your machine, so prompt drafts and outputs do not need to leave your computer.</p>
+      <p>The same local workflow can send a refined brief to <a href="/ai-image-generator">image generation</a>, <a href="/ai-video-generator">video generation</a>, chat, vision analysis or the <a href="/local-ai-agent">local AI agent</a>.</p>
+    </section>
+
+    <section class="cta-band">
+      <h2>Build a prompt, then use it.</h2>
+      <p>Saient is a local AI desktop app with chat, image generation, video generation, a coding agent, vision, TTS and LoRA tools in one place.</p>
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="/#download">Download Saient</a>
+        <a class="btn" href="/pricing">See pricing</a>
+      </div>
+    </section>
+  </main>
+
+  <aside class="toc">
+    <h4>On this page</h4>
+    <a href="#formula">Prompt formula</a>
+    <a href="#templates">Templates</a>
+    <a href="#why-local">Why local?</a>
+    <a href="/ai-image-generator">AI image generator</a>
+    <a href="/ai-video-generator">AI video generator</a>
+    <a href="/local-ai-agent">Local AI agent</a>
+  </aside>
+</div>
+
+<footer>
+  <div class="wrap foot-inner">
+    <a class="brand" href="/"><span class="face">[&gt;_&lt;]</span><span>SAIENT</span></a>
+    <div class="foot-links">
+      <a href="/ai-prompt-maker">Prompt maker</a>
+      <a href="/ai-image-generator">Image gen</a>
+      <a href="/ai-video-generator">Video gen</a>
+      <a href="/local-ai-agent">Agent</a>
+      <a href="/help">Help</a>
+    </div>
+    <div>saient.co.uk · Local-first AI</div>
+  </div>
+</footer>
+</body>
+</html>

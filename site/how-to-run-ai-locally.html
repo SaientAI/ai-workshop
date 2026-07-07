@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>How to Run AI Locally on Your PC — Saient</title>
+<meta name="description" content="Learn how to run AI locally on your PC with Saient: install the desktop app, choose a GGUF model, use GPU acceleration and work offline with chat, agents, image and video tools." />
+<link rel="canonical" href="https://saient.co.uk/how-to-run-ai-locally" />
+<meta property="og:type" content="article" />
+<meta property="og:title" content="How to Run AI Locally on Your PC — Saient" />
+<meta property="og:description" content="A practical guide to running local AI models and tools on your own machine." />
+<meta property="og:url" content="https://saient.co.uk/how-to-run-ai-locally" />
+<meta name="twitter:card" content="summary" />
+<script type="application/ld+json">
+{
+  "@context":"https://schema.org",
+  "@type":"HowTo",
+  "name":"How to run AI locally on your PC",
+  "description":"Install Saient, choose a local model, load it and use chat, agent and generation tools offline.",
+  "step":[
+    {"@type":"HowToStep","name":"Install Saient","text":"Download the Linux or Windows desktop app and run the installer."},
+    {"@type":"HowToStep","name":"Choose a model","text":"Use a GGUF model that fits your RAM or VRAM."},
+    {"@type":"HowToStep","name":"Load the model","text":"Place the model in the Saient models folder or pick it in the app."},
+    {"@type":"HowToStep","name":"Use local tools","text":"Chat, use the agent, generate images or video, and keep prompts and outputs on your machine."}
+  ]
+}
+</script>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230d0d0f'/%3E%3Ctext x='16' y='21' font-family='monospace' font-size='12' fill='%236c8ef5' text-anchor='middle' font-weight='700'%3E%5B%3E_%3C%5D%3C/text%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Martian+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/assets/seo.css" />
+</head>
+<body>
+<nav>
+  <div class="wrap nav-inner">
+    <a class="brand" href="/"><span class="face">[&gt;_&lt;]</span><span>SAIENT</span></a>
+    <div class="nav-links">
+      <a class="link" href="/local-ai-agent">Agent</a>
+      <a class="link" href="/ai-image-generator">Image gen</a>
+      <a class="link" href="/ai-video-generator">Video gen</a>
+      <a class="link" href="/help">Help</a>
+      <a class="btn btn-primary" href="/#download">Download</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <div class="eyebrow"><span class="dot"></span> Local AI guide</div>
+      <h1>How to run AI locally on your own PC.</h1>
+      <p class="lede">Running AI locally means the model, prompts and outputs stay on your machine. With Saient, you can load GGUF chat models, use a local agent and run creative tools from one desktop app.</p>
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="/#download">Download Saient</a>
+        <a class="btn" href="#steps">Read the steps</a>
+      </div>
+    </div>
+    <aside class="signal">
+      <div class="label">Local setup</div>
+      <pre>1. Install Saient
+2. Add a GGUF model
+3. Load the model
+4. Ask, build, generate
+5. Work offline</pre>
+    </aside>
+  </div>
+</header>
+
+<div class="wrap article">
+  <main>
+    <section id="why">
+      <div class="sec-tag">Why local?</div>
+      <h2>Why run AI locally?</h2>
+      <p>Local AI is useful when you want privacy, repeatable costs and direct control over models. Instead of sending prompts to a hosted API, your PC runs inference and stores outputs locally.</p>
+      <ul>
+        <li><b>Privacy:</b> prompts, code, images and outputs can stay on your computer.</li>
+        <li><b>No metering:</b> once the app and models are installed, you are not charged per prompt.</li>
+        <li><b>Model choice:</b> swap models depending on speed, quality and hardware.</li>
+        <li><b>Offline work:</b> chat and agent workflows can run without an internet connection after setup.</li>
+      </ul>
+    </section>
+
+    <section id="steps">
+      <div class="sec-tag">Steps</div>
+      <h2>How to run AI locally with Saient</h2>
+      <ol class="steps">
+        <li><b>Download Saient.</b> Install the Linux or Windows build from the homepage.</li>
+        <li><b>Choose a GGUF model.</b> Smaller quantized models run on less memory. Larger models need more VRAM or RAM.</li>
+        <li><b>Load the model.</b> Put the model in the Saient models folder or select it in the app.</li>
+        <li><b>Use the tools.</b> Chat with the model, ask the <a href="/local-ai-agent">local AI agent</a> to work in a project, or use image and video generation studios.</li>
+        <li><b>Iterate locally.</b> Keep prompts, files and outputs on your disk.</li>
+      </ol>
+      <div class="note">An NVIDIA GPU is recommended for speed, but local AI can still run on CPU with smaller models and more patience.</div>
+    </section>
+
+    <section id="tools">
+      <div class="sec-tag">Tools</div>
+      <h2>What you can run locally in Saient</h2>
+      <div class="grid">
+        <a class="card" href="/local-ai-agent"><span class="k">AI</span><h3>Local AI agent</h3><p>Plan, edit files, run commands and verify work in your workspace.</p></a>
+        <a class="card" href="/ai-image-generator"><span class="k">IMG</span><h3>AI image generator</h3><p>Create SDXL images and LoRA style tests on your machine.</p></a>
+        <a class="card" href="/ai-video-generator"><span class="k">VID</span><h3>AI video generator</h3><p>Try text-to-video and image-to-video prompts locally.</p></a>
+      </div>
+    </section>
+
+    <section class="cta-band">
+      <h2>Start with one model, then expand into a full local AI workshop.</h2>
+      <p>Saient brings chat, agents, image generation, video generation, vision, TTS and LoRA tools into a single desktop app.</p>
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="/#download">Download Saient</a>
+        <a class="btn" href="/help">Open setup help</a>
+      </div>
+    </section>
+  </main>
+
+  <aside class="toc">
+    <h4>On this page</h4>
+    <a href="#why">Why local?</a>
+    <a href="#steps">Steps</a>
+    <a href="#tools">Local tools</a>
+    <a href="/help">Setup help</a>
+    <a href="/pricing">Pricing</a>
+  </aside>
+</div>
+
+<footer>
+  <div class="wrap foot-inner">
+    <a class="brand" href="/"><span class="face">[&gt;_&lt;]</span><span>SAIENT</span></a>
+    <div class="foot-links">
+      <a href="/ai-prompt-maker">Prompt maker</a>
+      <a href="/local-ai-agent">Agent</a>
+      <a href="/ai-image-generator">Image gen</a>
+      <a href="/ai-video-generator">Video gen</a>
+      <a href="/help">Help</a>
+    </div>
+    <div>saient.co.uk · Local-first AI</div>
+  </div>
+</footer>
+</body>
+</html>

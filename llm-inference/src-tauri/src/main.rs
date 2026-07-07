@@ -14,6 +14,7 @@ mod license;
 mod lora;
 mod merge;
 mod pty;
+mod remote;
 mod resolve;
 mod setup;
 mod update;
@@ -1483,6 +1484,285 @@ fn check_dependencies(state: State<'_, AppState>) -> resolve::DepReport {
     resolve::check_dependencies(&models_dir)
 }
 
+// ── Game asset builder ────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct AssetFile {
+    name: String,
+    path: String,
+    size: u64,
+}
+
+#[derive(Serialize)]
+struct AssetScan {
+    project_dir: String,
+    source_dir: String,
+    output_dir: String,
+    blender_path: Option<String>,
+    sources: Vec<AssetFile>,
+    outputs: Vec<AssetFile>,
+}
+
+#[derive(Serialize)]
+struct AssetRunResult {
+    ok: bool,
+    code: i32,
+    stdout: String,
+    stderr: String,
+}
+
+fn asset_project_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+}
+
+fn asset_source_dir() -> PathBuf {
+    asset_project_dir().join("assets").join("source-png")
+}
+
+fn asset_output_dir() -> PathBuf {
+    asset_project_dir().join("assets").join("game-assets")
+}
+
+fn ensure_asset_dirs() -> Result<(), String> {
+    std::fs::create_dir_all(asset_source_dir()).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(asset_output_dir()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn find_blender_bin() -> Option<String> {
+    if let Ok(path) = std::env::var("BLENDER_BIN") {
+        let p = PathBuf::from(&path);
+        if p.exists() {
+            return Some(path);
+        }
+    }
+    #[cfg(target_os = "windows")]
+    let out = std::process::Command::new("where").arg("blender").no_console().output().ok()?;
+    #[cfg(not(target_os = "windows"))]
+    let out = std::process::Command::new("which").arg("blender").no_console().output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .next()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+fn list_assets(dir: &Path, ext: &str) -> Vec<AssetFile> {
+    let mut files = Vec::new();
+    if let Ok(read) = std::fs::read_dir(dir) {
+        for entry in read.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let matches_ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case(ext))
+                .unwrap_or(false);
+            if !matches_ext {
+                continue;
+            }
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            files.push(AssetFile {
+                name: path.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+                path: path.to_string_lossy().into_owned(),
+                size,
+            });
+        }
+    }
+    files.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    files
+}
+
+#[command]
+fn asset_builder_scan() -> Result<AssetScan, String> {
+    ensure_asset_dirs()?;
+    let project_dir = asset_project_dir();
+    let source_dir = asset_source_dir();
+    let output_dir = asset_output_dir();
+    Ok(AssetScan {
+        project_dir: project_dir.to_string_lossy().into_owned(),
+        source_dir: source_dir.to_string_lossy().into_owned(),
+        output_dir: output_dir.to_string_lossy().into_owned(),
+        blender_path: find_blender_bin(),
+        sources: list_assets(&source_dir, "png"),
+        outputs: list_assets(&output_dir, "glb"),
+    })
+}
+
+#[command]
+fn asset_builder_open_dir(kind: String) -> Result<(), String> {
+    ensure_asset_dirs()?;
+    let dir = if kind == "output" { asset_output_dir() } else { asset_source_dir() };
+    #[cfg(target_os = "linux")]
+    let res = std::process::Command::new("xdg-open").arg(&dir).spawn();
+    #[cfg(target_os = "macos")]
+    let res = std::process::Command::new("open").arg(&dir).spawn();
+    #[cfg(target_os = "windows")]
+    let res = std::process::Command::new("explorer").arg(&dir).no_console().spawn();
+    res.map(|_| ()).map_err(|e| e.to_string())
+}
+
+fn normalize_asset_log(raw: &str) -> String {
+    let mut lines = Vec::new();
+    let mut saw_draco_warning = false;
+    let mut saw_blender_syntax_warning = false;
+    let mut skip_known_warning_context = false;
+
+    for line in raw.lines() {
+        if skip_known_warning_context {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("regex_dot =") || trimmed.starts_with("new_name =") {
+                skip_known_warning_context = false;
+                continue;
+            }
+            skip_known_warning_context = false;
+        }
+
+        if line.contains("Draco mesh compression is not available") {
+            if !saw_draco_warning {
+                lines.push("WARNING: Draco mesh compression unavailable; exported uncompressed GLB.".to_string());
+                saw_draco_warning = true;
+            }
+            continue;
+        }
+
+        if line.contains("gltf2_io_image_data.py")
+            && line.contains("SyntaxWarning: invalid escape sequence")
+        {
+            if !saw_blender_syntax_warning {
+                lines.push("WARNING: Blender glTF add-on emitted non-fatal Python syntax warnings.".to_string());
+                saw_blender_syntax_warning = true;
+            }
+            skip_known_warning_context = true;
+            continue;
+        }
+
+        lines.push(line.to_string());
+    }
+
+    lines.join("\n")
+}
+
+fn selected_asset_inputs(source_names: &[String]) -> Result<Vec<PathBuf>, String> {
+    let source_dir = asset_source_dir();
+    let mut inputs = Vec::new();
+    for raw in source_names {
+        let name = Path::new(raw)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| format!("Invalid source PNG name: {raw}"))?;
+        if !name.to_lowercase().ends_with(".png") {
+            return Err(format!("Selected file is not a PNG: {name}"));
+        }
+        let path = source_dir.join(name);
+        if !path.is_file() {
+            return Err(format!("Selected PNG does not exist: {name}"));
+        }
+        inputs.push(path);
+    }
+    inputs.sort();
+    inputs.dedup();
+    Ok(inputs)
+}
+
+fn asset_python_bin() -> String {
+    if let Ok(path) = std::env::var("SAIENT_ASSET_PYTHON") {
+        if Path::new(&path).exists() {
+            return path;
+        }
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        let venv = PathBuf::from(home).join(".venvs").join("ltx").join("bin").join("python");
+        if venv.exists() {
+            return venv.to_string_lossy().into_owned();
+        }
+    }
+    "python3".to_string()
+}
+
+#[command]
+async fn asset_builder_run(dry_run: bool, sources: Option<Vec<String>>, builder: Option<String>) -> Result<AssetRunResult, String> {
+    ensure_asset_dirs()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let project_dir = asset_project_dir();
+        let selected = selected_asset_inputs(&sources.unwrap_or_default())?;
+        let inputs = if selected.is_empty() {
+            vec![asset_source_dir()]
+        } else {
+            selected
+        };
+        let builder = builder.unwrap_or_else(|| "relief".to_string());
+        let is_local3d = builder == "local3d";
+
+        let mut ok = true;
+        let mut code = 0;
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let python = if is_local3d { "python3".to_string() } else { asset_python_bin() };
+
+        if inputs.len() == 1 && inputs[0].is_file() {
+            stdout.push_str("Selected assets: 1\n");
+        } else if inputs.len() > 1 {
+            stdout.push_str(&format!("Selected assets: {}\n", inputs.len()));
+        }
+
+        for input in inputs {
+            let input_arg = if input.is_absolute() {
+                input
+            } else {
+                project_dir.join(input)
+            };
+            let mut cmd = std::process::Command::new(&python);
+            cmd.current_dir(&project_dir);
+            if is_local3d {
+                cmd.arg("tools/local-3d/run_triposr.py");
+            } else {
+                cmd.arg("tools/blender-pipeline/png_to_asset.py");
+            }
+            cmd.arg("--input")
+                .arg(&input_arg)
+                .arg("--output")
+                .arg("assets/game-assets")
+                .no_console();
+            if dry_run {
+                cmd.arg("--dry-run");
+            }
+            let out = cmd.output().map_err(|e| e.to_string())?;
+            let this_code = out.status.code().unwrap_or(-1);
+            if !out.status.success() {
+                ok = false;
+                code = this_code;
+            }
+            stdout.push_str(&normalize_asset_log(&String::from_utf8_lossy(&out.stdout)));
+            if !stdout.ends_with('\n') {
+                stdout.push('\n');
+            }
+            stderr.push_str(&normalize_asset_log(&String::from_utf8_lossy(&out.stderr)));
+            if !stderr.ends_with('\n') {
+                stderr.push('\n');
+            }
+        }
+
+        Ok(AssetRunResult {
+            ok,
+            code,
+            stdout,
+            stderr,
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn now_ms() -> u64 {
@@ -1509,6 +1789,11 @@ fn main() {
             }
             // Kill any server left over from a previous session (crash or force-quit).
             engine::kill_our_stale_servers();
+            remote::start(
+                app.handle().clone(),
+                app.state::<imggen::DaemonHandle>().inner().clone(),
+                app.state::<video::VideoHandle>().inner().clone(),
+            );
             Ok(())
         })
         .on_window_event(|_window, event| {
@@ -1536,6 +1821,8 @@ fn main() {
             // Models directory / startup
             scan_models_dir, get_models_dir, set_models_dir, open_models_dir, diagnostics, os_name,
             check_dependencies,
+            // Game asset builder
+            asset_builder_scan, asset_builder_open_dir, asset_builder_run,
             // Agent write mode
             get_agent_write_mode, set_agent_write_mode,
             // Agent — Filesystem
@@ -1561,6 +1848,8 @@ fn main() {
             setup::hf_search, setup::hf_list_files, setup::download_hf_file,
             // Update check (best-effort, points at the site)
             update::check_update,
+            // Remote phone pairing
+            remote::remote_pairing_info,
             // Licensing (30-day trial → signed key unlock)
             license::license_status, license::license_activate,
             // Launch password

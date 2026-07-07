@@ -9,14 +9,14 @@ import { ui, chat, agent } from "./state.svelte.js";
 import type { Screen, AgentTab, ChatTab } from "./types.js";
 import * as T from "./tauri.js";
 
-const SCREENS: Screen[]       = ["chat", "agent", "imggen", "video", "tts", "lora", "merge"];
+const SCREENS: Screen[]       = ["chat", "agent", "imggen", "assets", "video", "tts", "lora", "merge"];
 const AGENT_TABS: AgentTab[]  = ["files", "terminal", "planner", "memory"];
 
 export interface Shortcut { keys: string[]; desc: string; group: string; }
 
 // Shown in the help overlay (ShortcutsHelp.svelte).
 export const SHORTCUTS: Shortcut[] = [
-  { group: "Navigation", keys: ["Ctrl", "1 – 6"], desc: "Switch screen — Chat · Agent · Image · TTS · LoRA · Merge" },
+  { group: "Navigation", keys: ["Ctrl", "1 – 8"], desc: "Switch screen — Chat · Agent · Image · Assets · Video · TTS · LoRA · Merge" },
   { group: "Navigation", keys: ["Ctrl", "Tab"],   desc: "Cycle tabs (chat ⇄ system · agent files/terminal/planner/memory)" },
   { group: "Chat",       keys: ["Enter"],          desc: "Send message" },
   { group: "Chat",       keys: ["Shift", "Enter"], desc: "Newline in the message box" },
@@ -51,8 +51,8 @@ export function handleKey(e: KeyboardEvent) {
 
   // ── Always-on (work even while typing or with the terminal focused) ──────────
 
-  // Ctrl+1..6 → switch screen
-  if (ctrl && !e.shiftKey && !e.altKey && k >= "1" && k <= "6") {
+  // Ctrl+1..8 → switch screen
+  if (ctrl && !e.shiftKey && !e.altKey && k >= "1" && k <= "8") {
     ui.screen = SCREENS[+k - 1]; claim(); return;
   }
 

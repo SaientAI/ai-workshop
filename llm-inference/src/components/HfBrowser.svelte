@@ -149,7 +149,7 @@
         </div>
       {:else if !busy}
         {#if suggestions.length}
-          <div class="hb-suggest-label">Popular base models — one click</div>
+          <div class="hb-suggest-label">Suggested models — one click</div>
           <div class="hb-suggest">
             {#each suggestions as s}
               <button class="hb-chip" onclick={() => listFiles(s.repo)}>{s.label}</button>

@@ -10,6 +10,7 @@
   import SetupWizard from "./components/SetupWizard.svelte";
   import Paywall from "./components/Paywall.svelte";
   import LockScreen from "./components/LockScreen.svelte";
+  import SettingsModal from "./components/SettingsModal.svelte";
   import SecuritySettings from "./components/SecuritySettings.svelte";
   import UpdateBox from "./components/UpdateBox.svelte";
   import Toasts from "./components/Toasts.svelte";
@@ -17,6 +18,7 @@
   import ChatScreen from "./components/screens/ChatScreen.svelte";
   import AgentScreen from "./components/screens/AgentScreen.svelte";
   import ImageGenScreen from "./components/screens/ImageGenScreen.svelte";
+  import AssetBuilderScreen from "./components/screens/AssetBuilderScreen.svelte";
   import VideoScreen from "./components/screens/VideoScreen.svelte";
   import VisionScreen from "./components/screens/VisionScreen.svelte";
   import TTSScreen from "./components/screens/TTSScreen.svelte";
@@ -116,6 +118,8 @@
     <AgentScreen />
   {:else if ui.screen === "imggen"}
     <ImageGenScreen />
+  {:else if ui.screen === "assets"}
+    <AssetBuilderScreen />
   {:else if ui.screen === "video"}
     <VideoScreen />
   {:else if ui.screen === "vision"}
@@ -163,6 +167,16 @@
 {/if}
 
 <!-- Security settings (set/change/remove the launch password) -->
+{#if ui.showSettings}
+  <SettingsModal
+    onClose={() => (ui.showSettings = false)}
+    onSecurity={() => {
+      ui.showSettings = false;
+      ui.showSecurity = true;
+    }}
+  />
+{/if}
+
 {#if ui.showSecurity}
   <SecuritySettings onClose={() => (ui.showSecurity = false)} />
 {/if}

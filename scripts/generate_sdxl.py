@@ -11,7 +11,7 @@ Daemon protocol — newline-delimited JSON on stdin/stdout:
           {"base64_png":"...","device":"cuda","elapsed":3.5}  (final result)
           {"error":"..."}  (on failure — daemon keeps running)
 """
-import base64, io, json, os, sys, time
+import base64, io, json, os, re, sys, time
 
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
@@ -21,6 +21,49 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 _MODEL_DIRS = ["/home/tiny/models", "/home/tiny/projects/models"]
+
+_MONOCHROME_TERMS = (
+    "black and white", "black-and-white", "b&w", "bw", "monochrome",
+    "grayscale", "greyscale", "sepia", "pencil", "sketch", "line art",
+    "lineart", "ink drawing", "manga panel", "coloring book",
+)
+
+_COLOR_PROMPT_TERMS = "full color, vibrant colors"
+_COLOR_NEGATIVE_TERMS = (
+    "monochrome, grayscale, greyscale, black and white, b&w, sepia, "
+    "sketch, line art"
+)
+_ASSET_NEGATIVE_TERMS = (
+    "cropped, close-up, portrait, bust, out of frame, duplicate, two characters, "
+    "multiple views, character sheet, color palette, text, logo, blurry, lowres, "
+    "bad anatomy, extra limbs"
+)
+_HUMANOID_NEGATIVE_TERMS = (
+    "pony, horse, animal ears, tail, hooves, paws, quadruped, furry, anthro, animal face"
+)
+_CREATURE_NEGATIVE_TERMS = "extra heads, malformed creature, unclear silhouette"
+_BUILDING_NEGATIVE_TERMS = "person, humanoid, character, creature, face, arms, legs"
+_PROP_NEGATIVE_TERMS = "person, humanoid, character, creature, face, arms, legs"
+_ASSET_PROMPT_REPLACEMENTS = (
+    ("(style of lords mobile:1.3)", "lords mobile style"),
+    ("3d stylized digital art", "stylized 3d art"),
+    ("mobile strategy game icon", "mobile game asset"),
+    ("single game character asset", "single character asset"),
+    ("exaggerated cartoon proportions", "cartoon proportions"),
+    ("hand-painted textures", "hand-painted texture"),
+    ("clean studio lighting", "studio lighting"),
+    ("full body shot", "full body"),
+    ("solid neutral gray background", "plain gray background"),
+    ("solid neutral grey background", "plain gray background"),
+)
+_NEGATIVE_PRIORITY = (
+    "lowres", "blurry", "bad anatomy", "cropped", "close-up", "portrait", "bust",
+    "out of frame", "duplicate", "two characters", "multiple views",
+    "character sheet", "color palette", "text", "watermark", "monochrome",
+    "grayscale", "black and white", "sketch", "line art", "extra limbs",
+    "pony", "horse", "animal ears", "tail", "hooves", "paws", "quadruped",
+    "furry", "anthro", "animal face", "score_6", "score_5", "score_4",
+)
 
 
 def _find_local_sdxl_base():
@@ -53,6 +96,166 @@ def _is_sdxl_checkpoint(path):
 def emit(obj):
     sys.stdout.write(json.dumps(obj) + "\n")
     sys.stdout.flush()
+
+
+def _contains_any(text, terms):
+    t = f" {text.lower().replace('-', ' ')} "
+    return any(term.replace("-", " ") in t for term in terms)
+
+
+def _append_terms(text, terms):
+    text = text.strip()
+    if not text:
+        return terms
+    existing = {term.strip().lower() for term in text.split(",") if term.strip()}
+    missing = [term.strip() for term in terms.split(",") if term.strip() and term.strip().lower() not in existing]
+    if not missing:
+        return text
+    return text.rstrip(" ,") + ", " + ", ".join(missing)
+
+
+def _prepend_terms(text, terms):
+    text = text.strip()
+    if not text:
+        return terms
+    existing = {term.strip().lower() for term in text.split(",") if term.strip()}
+    missing = [term.strip() for term in terms.split(",") if term.strip() and term.strip().lower() not in existing]
+    if not missing:
+        return text
+    return ", ".join(missing) + ", " + text.lstrip(" ,")
+
+
+def _append_if_missing_concept(text, term, aliases):
+    if _contains_any(text, aliases):
+        return text
+    return _append_terms(text, term)
+
+
+def _compact_asset_prompt(prompt):
+    out = prompt
+    for src, dst in _ASSET_PROMPT_REPLACEMENTS:
+        out = re.sub(re.escape(src), dst, out, flags=re.IGNORECASE)
+    return re.sub(r"\s+", " ", out).strip(" ,")
+
+
+def _prioritize_negative_prompt(neg_prompt):
+    terms = [t.strip() for t in neg_prompt.split(",") if t.strip()]
+    seen = set()
+    deduped = []
+    for term in terms:
+        key = term.lower()
+        if key not in seen:
+            seen.add(key)
+            deduped.append(term)
+
+    ordered = []
+    for wanted in _NEGATIVE_PRIORITY:
+        for term in deduped:
+            if term.lower() == wanted and term not in ordered:
+                ordered.append(term)
+                break
+    ordered.extend(term for term in deduped if term not in ordered)
+    return ", ".join(ordered)
+
+
+def _token_count(pipe, text):
+    tokenizers = [
+        tok for tok in (getattr(pipe, "tokenizer", None), getattr(pipe, "tokenizer_2", None))
+        if tok is not None
+    ]
+    if not tokenizers:
+        return len(text.split())
+    try:
+        from transformers import logging as hf_logging
+        previous = hf_logging.get_verbosity()
+        hf_logging.set_verbosity_error()
+        try:
+            return max(len(tok(text, truncation=False).input_ids) for tok in tokenizers)
+        finally:
+            hf_logging.set_verbosity(previous)
+    except Exception:
+        return max(len(tok(text, truncation=False).input_ids) for tok in tokenizers)
+
+
+def _fit_to_token_limit(pipe, text, limit=77):
+    count = _token_count(pipe, text)
+    if count <= limit:
+        return text, count, False
+
+    parts = [p.strip() for p in text.split(",") if p.strip()]
+    while len(parts) > 1:
+        candidate = ", ".join(parts)
+        count = _token_count(pipe, candidate)
+        if count <= limit:
+            return candidate, count, True
+        parts.pop()
+    return ", ".join(parts), _token_count(pipe, ", ".join(parts)), True
+
+
+def apply_color_guard(prompt, neg_prompt):
+    """Default normal prompts toward color, while preserving explicit sketch/mono requests."""
+    if _contains_any(prompt, _MONOCHROME_TERMS):
+        return prompt, neg_prompt
+    # If the user already asked for color, don't add extra color prose to the
+    # positive prompt. Long SDXL/Pony prompts get truncated at 77 CLIP tokens.
+    if _contains_any(prompt, ("color", "colour", "vibrant", "richly colored", "colorful")):
+        return prompt, _append_terms(neg_prompt, _COLOR_NEGATIVE_TERMS)
+    return (
+        _append_terms(prompt, _COLOR_PROMPT_TERMS),
+        _append_terms(neg_prompt, _COLOR_NEGATIVE_TERMS),
+    )
+
+
+def _is_pony_model(model_path):
+    return "pony" in os.path.basename(model_path).lower() or "pony" in model_path.lower()
+
+
+def _has_pony_score_tags(prompt):
+    low = prompt.lower()
+    return "score_9" in low or "score_8" in low or "score_7" in low
+
+
+def apply_asset_guard(prompt, neg_prompt, asset_kind="humanoid", model_path=""):
+    kind = (asset_kind or "humanoid").lower()
+    prompt = _compact_asset_prompt(prompt)
+    neg_prompt = _append_terms(neg_prompt, _ASSET_NEGATIVE_TERMS)
+
+    # Keep prompt guard terms very short. If the user's prompt already contains
+    # the concept, leave it alone; otherwise prepend critical layout terms so
+    # they survive CLIP truncation.
+    prompt = _append_if_missing_concept(prompt, "game asset", ("game asset", "character asset", "building asset", "prop asset", "game icon", "icon"))
+    prompt = _append_if_missing_concept(prompt, "plain background", ("plain background", "clean background", "neutral background", "gray background", "grey background", "solid neutral", "studio background"))
+    prompt = _prepend_terms(prompt, "" if _contains_any(prompt, ("centered", "centre", "center")) else "centered")
+
+    if kind not in ("building", "prop"):
+        prompt = _prepend_terms(prompt, "" if _contains_any(prompt, ("full body", "full-body", "whole body")) else "full body")
+        prompt = _prepend_terms(prompt, "" if _contains_any(prompt, ("solo", "single", "1 character", "one character")) else "solo")
+
+    if kind == "humanoid":
+        prompt = _append_if_missing_concept(prompt, "humanoid", ("humanoid", "human", "warrior", "hero", "knight", "armor", "armour"))
+        neg_prompt = _append_terms(neg_prompt, _HUMANOID_NEGATIVE_TERMS)
+    elif kind == "creature":
+        prompt = _append_if_missing_concept(prompt, "creature", ("creature", "monster", "beast", "dragon"))
+        neg_prompt = _append_terms(neg_prompt, _CREATURE_NEGATIVE_TERMS)
+    elif kind == "building":
+        prompt = _append_if_missing_concept(prompt, "building", ("building", "structure", "castle", "tower", "house", "barracks"))
+        neg_prompt = _append_terms(neg_prompt, _BUILDING_NEGATIVE_TERMS)
+    elif kind == "prop":
+        prompt = _append_if_missing_concept(prompt, "prop", ("prop", "item", "object", "weapon", "tool"))
+        neg_prompt = _append_terms(neg_prompt, _PROP_NEGATIVE_TERMS)
+
+    # Pony-style checkpoints often need quality tags and otherwise drift into
+    # animal/furry anatomy. Keep the tags additive so users can still override
+    # by switching Asset type to Creature or turning the guard off.
+    if _is_pony_model(model_path) and kind != "free":
+        if not _has_pony_score_tags(prompt):
+            prompt = "score_9, score_8_up, score_7_up, " + prompt
+        if kind == "humanoid":
+            neg_prompt = _append_terms(
+                neg_prompt,
+                "score_6, score_5, score_4, pony anatomy, feral, animal head, large animal ears, long tail",
+            )
+    return prompt, _prioritize_negative_prompt(neg_prompt)
 
 
 def load_pipeline(model_path, lora_path, req_device, status_fn=None):
@@ -145,10 +348,19 @@ def load_pipeline(model_path, lora_path, req_device, status_fn=None):
     return pipe, device
 
 
-def apply_scheduler(pipe, scheduler_id):
+def resolve_scheduler_id(scheduler_id, model_path):
+    scheduler_id = (scheduler_id or "auto").lower()
+    if scheduler_id == "auto":
+        return "dpm++2m_karras"
+    return scheduler_id
+
+
+def apply_scheduler(pipe, scheduler_id, model_path=""):
     from diffusers import (DPMSolverMultistepScheduler, EulerDiscreteScheduler,
                            EulerAncestralDiscreteScheduler, DDIMScheduler,
-                           UniPCMultistepScheduler)
+                           UniPCMultistepScheduler, PNDMScheduler,
+                           LMSDiscreteScheduler)
+    scheduler_id = resolve_scheduler_id(scheduler_id, model_path)
     cfg = pipe.scheduler.config
     if scheduler_id == "dpm++2m_karras":
         pipe.scheduler = DPMSolverMultistepScheduler.from_config(
@@ -161,10 +373,15 @@ def apply_scheduler(pipe, scheduler_id):
         pipe.scheduler = EulerDiscreteScheduler.from_config(cfg)
     elif scheduler_id == "ddim":
         pipe.scheduler = DDIMScheduler.from_config(cfg)
+    elif scheduler_id == "pndm":
+        pipe.scheduler = PNDMScheduler.from_config(cfg)
+    elif scheduler_id == "lms":
+        pipe.scheduler = LMSDiscreteScheduler.from_config(cfg)
     elif scheduler_id == "unipc":
         pipe.scheduler = UniPCMultistepScheduler.from_config(cfg)
     else:
         pipe.scheduler = DPMSolverMultistepScheduler.from_config(cfg)
+    return scheduler_id
 
 
 def _detail_faces(pipe, device, req, image):
@@ -236,6 +453,7 @@ def _detail_faces(pipe, device, req, image):
     fprompt = (base_prompt + ", detailed face, sharp eyes, detailed skin, sharp focus").strip(", ")
     fneg = req.get("neg_prompt", "").strip()
     seed = int(req.get("seed", 42))
+    is_pony = _is_pony_model(req.get("model_path", ""))
 
     out = arr.copy()
     n = 0
@@ -297,14 +515,49 @@ def generate_image(pipe, device, req):
 
     prompt      = req.get("prompt", "").strip()
     neg_prompt  = req.get("neg_prompt", "").strip()
+    if req.get("asset_guard", True):
+        prompt, neg_prompt = apply_asset_guard(
+            prompt,
+            neg_prompt,
+            req.get("asset_kind", "humanoid"),
+            req.get("model_path", ""),
+        )
+    prompt, neg_prompt = apply_color_guard(prompt, neg_prompt)
     steps       = int(req.get("steps", 20))
     cfg_scale   = float(req.get("cfg_scale", 7.0))
     seed        = int(req.get("seed", 42))
     width       = int(req.get("width", 1024))
     height      = int(req.get("height", 1024))
-    scheduler_id = req.get("scheduler", "dpm++2m_karras")
+    scheduler_id = req.get("scheduler", "auto")
+    model_path = req.get("model_path", "")
+    is_pony = _is_pony_model(model_path)
+    auto_scheduler = (scheduler_id or "auto").lower() == "auto"
 
-    apply_scheduler(pipe, scheduler_id)
+    scheduler_id = apply_scheduler(pipe, scheduler_id, model_path)
+
+    if is_pony and auto_scheduler:
+        # Pony checkpoints are sensitive to high guidance in this app path.
+        # Low CFG tends to look washed/soft; very high CFG
+        # tends to create artifacts. Keep explicit fixed-scheduler runs untouched.
+        steps = max(30, min(45, steps))
+        cfg_scale = max(6.0, min(7.5, cfg_scale))
+
+    neg_prompt = _prioritize_negative_prompt(neg_prompt)
+    prompt, prompt_tokens, prompt_trimmed = _fit_to_token_limit(pipe, prompt)
+    neg_prompt, neg_tokens, neg_trimmed = _fit_to_token_limit(pipe, neg_prompt)
+    if prompt_trimmed or neg_trimmed:
+        emit({
+            "loading_status": (
+                f"prompt compacted for CLIP: prompt {prompt_tokens}/77, "
+                f"negative {neg_tokens}/77"
+            )
+        })
+    emit({
+        "loading_status": (
+            f"generate: scheduler={scheduler_id}, steps={steps}, "
+            f"cfg={cfg_scale:.1f}, prompt={prompt_tokens}/77"
+        )
+    })
 
     if isinstance(pipe, StableDiffusionPipeline):
         width  = min(width, 512)

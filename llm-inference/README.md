@@ -98,6 +98,12 @@ The `.deb` package lands at `src-tauri/target/release/bundle/deb/`.
 | `npm run build` | `vite build` | Frontend production build |
 | `npm run check` | `svelte-check` | TypeScript + Svelte type checking |
 | `npm run test` | `node src/artifact.test.js && node src/contract.test.js` | Unit + contract tests |
+| `npm run asset:test` | `python3 tools/blender-pipeline/png_to_asset.py --self-test` | Smoke-test the PNG-to-relief-GLB pipeline; exits even if Blender is missing |
+| `npm run asset:dry-run` | `python3 tools/blender-pipeline/png_to_asset.py --dry-run` | Scan `assets/source-png/` and show planned relief asset outputs |
+| `npm run asset:build` | `python3 tools/blender-pipeline/png_to_asset.py` | Convert PNGs in `assets/source-png/` to prototype relief `.glb` files through Blender |
+| `npm run local3d:setup` | `python3 tools/local-3d/setup_triposr.py` | Install isolated local TripoSR image-to-3D support |
+| `npm run local3d:dry-run` | `python3 tools/local-3d/run_triposr.py --dry-run` | Show planned local image-to-3D GLB outputs |
+| `npm run local3d:run` | `python3 tools/local-3d/run_triposr.py` | Generate real local image-to-3D `.glb` files from `assets/source-png/` |
 | `npm run lint` | `svelte-check --fail-on-warnings` | Strict check (CI gate) |
 | `npm run ci` | `check && test && build` | Full CI pipeline |
 

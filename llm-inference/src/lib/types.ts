@@ -1,6 +1,6 @@
 // Shared TypeScript types for Saient
 
-export type Screen = "chat" | "agent" | "imggen" | "video" | "vision" | "tts" | "lora" | "merge";
+export type Screen = "chat" | "agent" | "imggen" | "assets" | "video" | "vision" | "tts" | "lora" | "merge";
 export type AgentTab = "files" | "terminal" | "planner" | "memory";
 export type ChatTab = "chat" | "system";
 export type StepStatus = "pending" | "running" | "done" | "failed" | "skipped" | "retrying";
@@ -166,6 +166,8 @@ export interface IgState {
   device: "auto" | "cuda" | "cpu";
   scheduler: string;
   faceDetail: boolean;
+  assetGuard: boolean;
+  assetKind: "humanoid" | "creature" | "building" | "prop" | "free";
   generating: boolean;
   progress: number;
   progressTotal: number;

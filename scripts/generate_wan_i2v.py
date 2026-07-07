@@ -61,9 +61,6 @@ STREAM_TRANSFORMER = False
 LORA_PATH = ""
 LORA_STRENGTH = 1.0
 SCHEDULER_BASE_CONFIG = None
-MODEL_INDEX_CONFIG = {}
-DUAL_EXPERT = False
-TRANSFORMER2_CACHE_PATH = None
 # Big single-transformer models (14B nf4 ~8 GB) can't hold the transformer AND the 5.5 GB
 # UMT5 text encoder on a 16 GB card at once — encoding on top of the resident transformer
 # once hard-froze the display GPU. When PARK_TRANSFORMER is set (decided at load by VRAM
@@ -138,16 +135,13 @@ def _unload_transformer():
     change device cleanly; _reload_transformer() brings it back from the packed nf4 cache."""
     global PIPE, I2V_PIPE
     t = getattr(PIPE, "transformer", None)
-    t2 = getattr(PIPE, "transformer_2", None)
     try:
         PIPE.transformer = None
-        if hasattr(PIPE, "transformer_2"):
-            PIPE.transformer_2 = None
         if I2V_PIPE is not None:
             I2V_PIPE.transformer = None
     except Exception:
         pass
-    del t, t2
+    del t
     _free_cuda()
 
 
@@ -160,28 +154,11 @@ def _reload_transformer():
     t = WanTransformer3DModel.from_pretrained(
         NF4_CACHE_PATH, torch_dtype=torch.bfloat16, device_map={"": 0})
     PIPE.transformer = t
-    if hasattr(PIPE, "transformer_2") and DUAL_EXPERT:
-        PIPE.transformer_2 = None
     if I2V_PIPE is not None:
         I2V_PIPE.transformer = t
     _free_cuda()
     if LORA_PATH:
         _apply_lora()
-
-
-def _reload_transformer2():
-    """Load Wan2.2's low-noise expert from its packed 4-bit cache. This is only used
-    for dual-expert T2V; the high expert has already been freed before this runs."""
-    global PIPE
-    if not TRANSFORMER2_CACHE_PATH:
-        raise RuntimeError("Wan2.2 low-noise transformer cache is not configured")
-    # First run has no packed cache yet — the helper falls back to quantizing
-    # MODEL_PATH/transformer_2 on the fly and saves the cache for next time.
-    t = _load_transformer_cached("transformer_2", TRANSFORMER2_CACHE_PATH, "low-noise expert")
-    PIPE.transformer_2 = t
-    _free_cuda()
-    if LORA_PATH:
-        _apply_lora(load_into_transformer_2=True)
 
 
 def _lora_state_dict(path):
@@ -268,31 +245,7 @@ def _lora_state_dict(path):
     return out if out else sd
 
 
-def _expert_lora_path(for_low_expert):
-    """Wan2.2 distill LoRAs (e.g. Wan2.2-Lightning) ship as a PAIRED set: one file per
-    expert, named ...high.../...low... side by side. If the selected file is one half of
-    such a pair, return the half matching the expert being loaded; otherwise return the
-    selection unchanged (single-file LoRAs keep working exactly as before)."""
-    p = LORA_PATH
-    if not p:
-        return p
-    d, b = os.path.split(p)
-    swaps = [("high", "low"), ("HIGH", "LOW"), ("High", "Low"),
-             ("low", "high"), ("LOW", "HIGH"), ("Low", "High")]
-    want_low = bool(for_low_expert)
-    for frm, to in swaps:
-        if frm not in b:
-            continue
-        is_low_file = frm.lower() == "low"
-        if is_low_file == want_low:
-            return p  # already the right half
-        cand = os.path.join(d, b.replace(frm, to))
-        if os.path.exists(cand):
-            return cand
-    return p
-
-
-def _apply_lora(lora_path=None, lora_strength=None, load_into_transformer_2=False):
+def _apply_lora(lora_path=None, lora_strength=None):
     """Attach a Wan LoRA as a PEFT adapter to the currently-loaded transformer.
     This is intentionally NOT a model merge: the base remains the cached 4-bit
     transformer and the LoRA stays as a small sidecar adapter."""
@@ -304,14 +257,9 @@ def _apply_lora(lora_path=None, lora_strength=None, load_into_transformer_2=Fals
     if not LORA_PATH:
         return
     import os as _os
-    path = _expert_lora_path(load_into_transformer_2)
-    emit({"loading_status": f"applying LoRA {_os.path.basename(path)} @ {LORA_STRENGTH}…"})
-    sd = _lora_state_dict(path)
-    if load_into_transformer_2:
-        PIPE.load_lora_into_transformer(
-            sd, transformer=PIPE.transformer_2, adapter_name="extra", _pipeline=PIPE)
-    else:
-        PIPE.load_lora_weights(sd, adapter_name="extra")
+    emit({"loading_status": f"applying LoRA {_os.path.basename(LORA_PATH)} @ {LORA_STRENGTH}…"})
+    sd = _lora_state_dict(LORA_PATH)
+    PIPE.load_lora_weights(sd, adapter_name="extra")
     _set_lora_strength(LORA_STRENGTH)
     emit({"loading_status": f"  ✓ LoRA adapter active ({len(sd)} tensors)"})
     _free_cuda()
@@ -380,37 +328,6 @@ def _configure_scheduler(req):
         emit({"loading_status": f"  ⚠ scheduler override failed ({type(e).__name__}); using model default"})
 
 
-def _load_transformer_cached(subfolder, cache_path, label, dev=0):
-    """Load one Wan transformer subfolder through the packed 4-bit cache."""
-    import torch
-    from diffusers import WanTransformer3DModel
-    from diffusers import BitsAndBytesConfig as DBnb
-
-    transformer = None
-    if os.path.exists(os.path.join(cache_path, "config.json")):
-        emit({"loading_status": f"loading pre-quantized {label} (cached 4-bit)…"})
-        try:
-            transformer = WanTransformer3DModel.from_pretrained(
-                cache_path, torch_dtype=torch.bfloat16, device_map={"": dev})
-        except Exception as ce:
-            emit({"loading_status": f"  ⚠ {label} cache load failed ({type(ce).__name__}); rebuilding…"})
-            transformer = None
-    if transformer is None:
-        emit({"loading_status": f"loading {label} (4-bit nf4) + caching for next time…"})
-        dbnb = DBnb(load_in_4bit=True, bnb_4bit_quant_type="nf4",
-                    bnb_4bit_compute_dtype=torch.bfloat16)
-        transformer = WanTransformer3DModel.from_pretrained(
-            MODEL_PATH, subfolder=subfolder,
-            quantization_config=dbnb, torch_dtype=torch.bfloat16, device_map={"": dev})
-        try:
-            os.makedirs(cache_path, exist_ok=True)
-            transformer.save_pretrained(cache_path)
-            emit({"loading_status": f"  ✓ {label} cached — fast loads from now on"})
-        except Exception as se:
-            emit({"loading_status": f"  ⚠ couldn't cache {label} ({type(se).__name__})"})
-    return transformer
-
-
 def _cache_dir(name):
     """Managed cache dir ~/.config/saient/<name>. If a pre-rebrand ~/.config/ai-workshop/<name>
     exists and the new one doesn't, migrate it in place on first use (instant rename, same
@@ -458,14 +375,21 @@ def _available_ram_gb():
 
 def _guard_loadable(model_path, quality):
     """Refuse loads that would swap-freeze the whole PC instead of failing cleanly — the
-    "waited 15 min then the machine died" case. The bf16 Quality path reads the FULL
-    transformer into RAM. If that won't fit with headroom, refuse rather than thrash
-    swap to death. Wan2.2 dual-expert fast mode is allowed because only one 4-bit
-    expert is loaded at a time."""
+    "waited 15 min then the machine died" case. Two killers on a 16 GB / 40 GB box:
+
+    1. Dual-expert MoE (Wan2.2 A14B): a `transformer_2` subfolder means two ~14B experts.
+       This single-transformer pipeline can't even drive the second expert, and the bf16
+       read alone (~28-54 GB) tips the box into swap. Point the user at the model that DOES
+       do HD here.
+    2. bf16 Quality mode reads the FULL transformer into RAM. If that won't fit with
+       headroom, refuse rather than thrash swap to death."""
+    if os.path.isdir(os.path.join(model_path, "transformer_2")):
+        raise RuntimeError(
+            "This is a dual-expert (A14B) model — not supported on a 16 GB card yet: it "
+            "needs both ~14B experts and a load big enough to swap-freeze the PC. "
+            "Use Wan2.2-TI2V-5B for stable HD / 720p instead.")
     if quality:
         need = _safetensors_gb(os.path.join(model_path, "transformer"))
-        if os.path.isdir(os.path.join(model_path, "transformer_2")):
-            need = max(need, _safetensors_gb(os.path.join(model_path, "transformer_2")))
         avail = _available_ram_gb()
         if avail is not None and need > 0 and need > avail - 6.0:
             raise RuntimeError(
@@ -478,23 +402,15 @@ def load(cfg):
     """Load the SMALL resident pieces (transformer 4-bit + VAE). Fast, low RAM."""
     global PIPE, TOKENIZER, MODEL_PATH, STREAM_TRANSFORMER
     global NF4_CACHE_PATH, RESIDENT_GB, PARK_TRANSFORMER, LORA_PATH, LORA_STRENGTH
-    global SCHEDULER_BASE_CONFIG, MODEL_INDEX_CONFIG, DUAL_EXPERT, TRANSFORMER2_CACHE_PATH
+    global SCHEDULER_BASE_CONFIG
     import torch
-    from diffusers import WanPipeline, WanTransformer3DModel, AutoencoderKLWan
+    from diffusers import WanImageToVideoPipeline, WanTransformer3DModel, AutoencoderKLWan
     from diffusers import BitsAndBytesConfig as DBnb
-    from transformers import AutoTokenizer
+    from transformers import AutoTokenizer, CLIPVisionModelWithProjection, CLIPImageProcessor
 
     _cap_vram()   # reserve VRAM for the desktop — this GPU also drives the display
 
     MODEL_PATH = cfg.get("model_path", "")
-    MODEL_INDEX_CONFIG = {}
-    try:
-        with open(os.path.join(MODEL_PATH, "model_index.json")) as f:
-            MODEL_INDEX_CONFIG = json.load(f)
-    except Exception:
-        MODEL_INDEX_CONFIG = {}
-    DUAL_EXPERT = os.path.isdir(os.path.join(MODEL_PATH, "transformer_2"))
-    TRANSFORMER2_CACHE_PATH = None
     lora_path = (cfg.get("lora_path") or "").strip()
     lora_strength = float(cfg.get("lora_strength", 1.0))
     use_lora = bool(lora_path)
@@ -515,8 +431,6 @@ def load(cfg):
     t_load = time.time()
     _t = time.time()
     if quality:
-        if DUAL_EXPERT:
-            raise RuntimeError("Wan2.2 dual-expert Quality mode is not supported here yet. Use Fast mode so experts can stay staged 4-bit.")
         # bf16 transformer for the denoise loop. Left on CPU so generate() can stream
         # it onto the GPU after the text encoder has been freed.
         label = "bf16 — streamed from RAM (quality)"
@@ -534,10 +448,28 @@ def load(cfg):
         key = os.path.basename(os.path.normpath(MODEL_PATH)) or hashlib.md5(MODEL_PATH.encode()).hexdigest()[:8]
         t_cache = os.path.join(_cache_dir("wan-transformer-4bit"), key)
         NF4_CACHE_PATH = t_cache   # remember for reload-after-encode on big models
-        if DUAL_EXPERT:
-            TRANSFORMER2_CACHE_PATH = os.path.join(_cache_dir("wan-transformer-4bit"), f"{key}--transformer_2")
-            emit({"loading_status": "Wan2.2 T2V dual-expert: loading high-noise expert only…"})
-        transformer = _load_transformer_cached("transformer", t_cache, "transformer", dev)
+        transformer = None
+        if os.path.exists(os.path.join(t_cache, "config.json")):
+            emit({"loading_status": "loading pre-quantized transformer (cached 4-bit)…"})
+            try:
+                transformer = WanTransformer3DModel.from_pretrained(
+                    t_cache, torch_dtype=torch.bfloat16, device_map={"": dev})
+            except Exception as ce:
+                emit({"loading_status": f"  ⚠ transformer cache load failed ({ce}); rebuilding…"})
+                transformer = None
+        if transformer is None:
+            emit({"loading_status": "loading transformer (4-bit nf4) + caching for next time…"})
+            dbnb = DBnb(load_in_4bit=True, bnb_4bit_quant_type="nf4",
+                        bnb_4bit_compute_dtype=torch.bfloat16)
+            transformer = WanTransformer3DModel.from_pretrained(
+                MODEL_PATH, subfolder="transformer",
+                quantization_config=dbnb, torch_dtype=torch.bfloat16, device_map={"": dev})
+            try:
+                os.makedirs(t_cache, exist_ok=True)
+                transformer.save_pretrained(t_cache)
+                emit({"loading_status": "  ✓ transformer cached — fast loads from now on"})
+            except Exception as se:
+                emit({"loading_status": f"  ⚠ couldn't cache 4-bit transformer ({se})"})
     emit({"loading_status": f"  ⏱ transformer: {time.time()-_t:.0f}s"})
 
     emit({"loading_status": "loading VAE…"})
@@ -547,36 +479,32 @@ def load(cfg):
     emit({"loading_status": "loading tokenizer…"})
     TOKENIZER = AutoTokenizer.from_pretrained(MODEL_PATH, subfolder="tokenizer")
 
-    emit({"loading_status": "assembling pipeline (no text encoder yet)…"})
-    # Build WanPipeline directly with text_encoder=None so the 21 GB component is
-    # never loaded here. We construct via __init__ (not from_pretrained) to dodge
-    # from_pretrained's "required component is None" validation; the scheduler is
-    # the only thing left to load and it's a tiny JSON config.
+    emit({"loading_status": "loading CLIP image encoder…"})
+    # Wan2.1-I2V conditions on the input frame via a CLIP-H image encoder (image_dim=1280
+    # cross-attn) PLUS the VAE-encoded first frame. ~1.2 GB fp16, kept GPU-resident.
+    image_encoder = CLIPVisionModelWithProjection.from_pretrained(
+        MODEL_PATH, subfolder="image_encoder", torch_dtype=torch.float16)
+    image_processor = CLIPImageProcessor.from_pretrained(MODEL_PATH, subfolder="image_processor")
+
+    emit({"loading_status": "assembling i2v pipeline (no text encoder yet)…"})
+    # Build WanImageToVideoPipeline with text_encoder=None (21 GB UMT5 loaded 4-bit at encode
+    # time from the shared cache). expand_timesteps=False → the native Wan2.1-I2V path (uses the
+    # CLIP image_encoder), NOT the Wan2.2-TI2V first-frame-latent trick.
     import diffusers as _df
     with open(os.path.join(MODEL_PATH, "scheduler", "scheduler_config.json")) as f:
         SCHEDULER_BASE_CONFIG = json.load(f)
         sched_cls = getattr(_df, SCHEDULER_BASE_CONFIG["_class_name"])
     scheduler = sched_cls.from_pretrained(MODEL_PATH, subfolder="scheduler")
-    try:
-        PIPE = WanPipeline(
-            vae=vae, text_encoder=None, tokenizer=TOKENIZER,
-            transformer=transformer, transformer_2=None,
-            scheduler=scheduler,
-            boundary_ratio=MODEL_INDEX_CONFIG.get("boundary_ratio"),
-            expand_timesteps=bool(MODEL_INDEX_CONFIG.get("expand_timesteps", False)),
-        )
-    except Exception:
-        if DUAL_EXPERT:
-            raise
-        # Fallback: let from_pretrained assemble, still skipping the text encoder.
-        PIPE = WanPipeline.from_pretrained(
-            MODEL_PATH, transformer=transformer, vae=vae, tokenizer=TOKENIZER,
-            scheduler=scheduler, text_encoder=None, torch_dtype=torch.bfloat16)
+    PIPE = WanImageToVideoPipeline(
+        vae=vae, text_encoder=None, tokenizer=TOKENIZER, transformer=transformer,
+        scheduler=scheduler, image_processor=image_processor, image_encoder=image_encoder,
+        transformer_2=None, boundary_ratio=None, expand_timesteps=False)
 
     # Move only the non-quantized parts to GPU (the 4-bit transformer is already
     # placed by device_map; calling .to() on the whole pipe would error on it).
     try:
         PIPE.vae.to(f"cuda:{dev}")
+        PIPE.image_encoder.to(f"cuda:{dev}")   # CLIP encoder resident (~1.2 GB) for image conditioning
     except Exception:
         pass
     if hasattr(PIPE, "vae") and hasattr(PIPE.vae, "enable_tiling"):
@@ -766,111 +694,6 @@ def _decode_latents(latents):
     return PIPE.video_processor.postprocess_video(video, output_type="np")[0]
 
 
-def _denoise_dual_expert(pe, ne, total, cfg_scale, height, width, num_frames, generator, cb):
-    """Wan2.2 T2V-A14B staged denoise. Diffusers' normal WanPipeline keeps both
-    experts addressable; on this 16 GB display GPU we keep only one expert live:
-    high-noise first, then unload it and load the low-noise expert at boundary_ratio."""
-    import torch
-    global PIPE
-
-    if getattr(PIPE, "transformer", None) is None:
-        if getattr(PIPE, "transformer_2", None) is not None:
-            low = PIPE.transformer_2
-            PIPE.transformer_2 = None
-            del low
-            _free_cuda()
-        emit({"loading_status": "Wan2.2: reloading high-noise expert for new clip…"})
-        _reload_transformer()
-
-    device = "cuda:0"
-    transformer_dtype = PIPE.transformer.dtype
-    pe = pe.to(transformer_dtype)
-    if ne is not None:
-        ne = ne.to(transformer_dtype)
-
-    if num_frames % PIPE.vae_scale_factor_temporal != 1:
-        num_frames = num_frames // PIPE.vae_scale_factor_temporal * PIPE.vae_scale_factor_temporal + 1
-    num_frames = max(num_frames, 1)
-
-    patch_size = PIPE.transformer.config.patch_size
-    h_multiple_of = PIPE.vae_scale_factor_spatial * patch_size[1]
-    w_multiple_of = PIPE.vae_scale_factor_spatial * patch_size[2]
-    height = height // h_multiple_of * h_multiple_of
-    width = width // w_multiple_of * w_multiple_of
-
-    PIPE.scheduler.set_timesteps(total, device=device)
-    timesteps = PIPE.scheduler.timesteps
-    num_channels_latents = PIPE.transformer.config.in_channels
-    latents = PIPE.prepare_latents(
-        1, num_channels_latents, height, width, num_frames, torch.float32,
-        device, generator, None)
-    mask = torch.ones(latents.shape, dtype=torch.float32, device=device)
-
-    boundary = float(PIPE.config.boundary_ratio) * PIPE.scheduler.config.num_train_timesteps
-    switched = False
-    PIPE._guidance_scale = cfg_scale
-    PIPE._guidance_scale_2 = cfg_scale
-    PIPE._attention_kwargs = None
-    PIPE._current_timestep = None
-    PIPE._interrupt = False
-    PIPE._num_timesteps = len(timesteps)
-
-    emit({"loading_status": f"Wan2.2 T2V: high-noise expert until t < {boundary:.0f}…"})
-    with torch.no_grad():
-        for i, t in enumerate(timesteps):
-            use_low = float(t.detach().cpu()) < boundary
-            if use_low and not switched:
-                emit({"loading_status": "Wan2.2: switching high-noise → low-noise expert…"})
-                # The previous iteration's loop ref pins the high expert on the GPU —
-                # drop it or the del below frees nothing and the low-expert load OOMs.
-                current_model = None
-                high = PIPE.transformer
-                PIPE.transformer = None
-                del high
-                _free_cuda()
-                _reload_transformer2()
-                transformer_dtype = PIPE.transformer_2.dtype
-                switched = True
-
-            current_model = PIPE.transformer_2 if use_low else PIPE.transformer
-            if current_model is None:
-                raise RuntimeError("Wan2.2 expert switch failed: active transformer is missing")
-
-            latent_model_input = latents.to(transformer_dtype)
-            if PIPE.config.expand_timesteps:
-                temp_ts = (mask[0][0][:, ::2, ::2] * t).flatten()
-                timestep = temp_ts.unsqueeze(0).expand(latents.shape[0], -1)
-            else:
-                timestep = t.expand(latents.shape[0])
-
-            with current_model.cache_context("cond"):
-                noise_pred = current_model(
-                    hidden_states=latent_model_input,
-                    timestep=timestep,
-                    encoder_hidden_states=pe,
-                    attention_kwargs=None,
-                    return_dict=False,
-                )[0]
-
-            if cfg_scale > 1.0:
-                with current_model.cache_context("uncond"):
-                    noise_uncond = current_model(
-                        hidden_states=latent_model_input,
-                        timestep=timestep,
-                        encoder_hidden_states=ne,
-                        attention_kwargs=None,
-                        return_dict=False,
-                    )[0]
-                noise_pred = noise_uncond + cfg_scale * (noise_pred - noise_uncond)
-
-            latents = PIPE.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
-            out = cb(PIPE, i, t, {"latents": latents})
-            latents = out.pop("latents", latents)
-
-    PIPE._current_timestep = None
-    return latents
-
-
 def generate(req):
     import torch
     from diffusers.utils import export_to_video
@@ -964,47 +787,25 @@ def generate(req):
     # the denoise activation set is freed before the VAE decode. The Wan2.2-5B VAE (48
     # latent ch) decode is heavy and was OOMing by ~130 MB when run inline (denoise
     # tensors still resident). We decode separately below with the GPU freed.
-    if image_b64:
-        if DUAL_EXPERT:
-            emit({"error": "Wan2.2 T2V-A14B is text-to-video only — clear the image input or choose an I2V model."})
-            return
-        # ── Image-to-video ──────────────────────────────────────────────────────
-        import io
-        from PIL import Image
-        img = Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB").resize((width, height))
-        # i2v encodes the input image through the VAE inside the pipe call, so the VAE must
-        # be back on the GPU (we parked it before encode for text-encoder headroom).
-        if _vae_to("cuda:0"):
-            emit({"loading_status": "i2v: VAE back on GPU for image conditioning…"})
-        pipe = _i2v_pipe()
-        emit({"loading_status": "i2v: conditioning on your image, denoising…"})
-        latents = pipe(
-            image=img,
-            prompt_embeds=pe, negative_prompt_embeds=ne,
-            height=height, width=width, num_frames=num_frames,
-            num_inference_steps=total, guidance_scale=cfg_scale,
-            generator=generator, callback_on_step_end=cb,
-            output_type="latent",
-        ).frames
-    else:
-        # t2v doesn't use the VAE during denoise. A heavy (5B) VAE was already parked on CPU
-        # before encode; this is a defensive re-park in case it's somehow still resident.
-        # _decode_latents moves it back for decode. (1.3B VAE is tiny — left wherever it is.)
-        if _vae_is_heavy() and _vae_to("cpu"):
-            emit({"loading_status": "headroom: VAE parked on CPU during denoise…"})
-        if not STREAM_TRANSFORMER:
-            emit({"loading_status": "denoising…"})
-        if DUAL_EXPERT:
-            latents = _denoise_dual_expert(
-                pe, ne, total, cfg_scale, height, width, num_frames, generator, cb)
-        else:
-            latents = PIPE(
-                prompt_embeds=pe, negative_prompt_embeds=ne,
-                height=height, width=width, num_frames=num_frames,
-                num_inference_steps=total, guidance_scale=cfg_scale,
-                generator=generator, callback_on_step_end=cb,
-                output_type="latent",
-            ).frames
+    # ── Image-to-video (native Wan2.1-I2V; PIPE already IS the i2v pipeline) ──────
+    if not image_b64:
+        emit({"error": "Wan2.1-I2V is image-to-video — add an image (the 'Add image → animate' button)."})
+        return
+    import io
+    from PIL import Image
+    # LANCZOS = high-quality downscale. A real photo is usually >480p; a cheap resize here
+    # softens the input frame → and i2v carries frame 0's quality through the whole clip.
+    img = Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB").resize((width, height), Image.LANCZOS)
+    emit({"loading_status": "i2v: encoding your image (CLIP + VAE), denoising…"})
+    # PIPE encodes the image via CLIP + VAE internally; transformer(8.5)+CLIP(1.2)+acts ≈ 13.7 GB.
+    latents = PIPE(
+        image=img,
+        prompt_embeds=pe, negative_prompt_embeds=ne,
+        height=height, width=width, num_frames=num_frames,
+        num_inference_steps=total, guidance_scale=cfg_scale,
+        generator=generator, callback_on_step_end=cb,
+        output_type="latent",
+    ).frames
     t_dn_end = time.time()
     if STREAM_TRANSFORMER:
         # Park the bf16 transformer back in RAM so its ~10 GB of VRAM is freed for the VAE

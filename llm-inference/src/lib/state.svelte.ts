@@ -14,6 +14,7 @@ export const ui = $state({
   saientEnabled: localStorage.getItem("saient_enabled") === "true",
   agentWriteMode: localStorage.getItem("agent_write_mode") === "true",
   showShortcuts: false,
+  showSettings: false,
   showSecurity: false,
   showUpdate: false,
 });
@@ -173,15 +174,17 @@ export const ig = $state<IgState>({
   modelPath: "",
   loraPath: "",
   prompt: "",
-  negPrompt: "lowres, bad anatomy, blurry, watermark",
+  negPrompt: "lowres, bad anatomy, blurry, watermark, monochrome, grayscale, black and white, sepia, pencil sketch, line art, duplicate, two characters, multiple views, character sheet, color palette, swatches, text, cropped",
   steps: 20,
   cfg: 7.0,
   seed: 42,
   width: 1024,
   height: 1024,
   device: "auto",
-  scheduler: "dpm++2m_karras",
+  scheduler: "auto",
   faceDetail: true,   // ADetailer-style hi-res face pass (auto-skips when no small face)
+  assetGuard: true,
+  assetKind: "humanoid",
   generating: false,
   progress: 0,
   progressTotal: 20,
@@ -198,6 +201,10 @@ export const video = $state({
   loras: [] as Array<{ path: string; label: string }>,
   loraPath: "",
   loraStrength: 1.0,
+  loraProfile: "single" as "single" | "high_low",
+  loraHighStrength: 2.2,
+  loraLowStrength: 0.8,
+  loraSplitStep: 4,
   qualityMode: false,    // false = fast 4-bit transformer (default); true = bf16 transformer
                          // streamed from RAM (higher fidelity, ~10 GB PCIe round-trip/gen)
   imageB64: "",          // i2v input still (base64, no data: prefix)
@@ -212,6 +219,8 @@ export const video = $state({
   numFrames: 49,
   steps: 30,
   cfg: 6.0,
+  scheduler: "auto" as "auto" | "euler_beta",
+  shift: 5,
   width: 832,
   height: 480,
   fps: 16,

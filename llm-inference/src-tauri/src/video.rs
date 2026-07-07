@@ -5,7 +5,7 @@
 //! The model is heavy (~27 GB) so keeping it resident across clips is essential.
 
 use serde::{Deserialize, Serialize};
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -30,6 +30,12 @@ pub struct VideoPayload {
     pub num_frames: Option<u32>,
     pub steps: Option<u32>,
     pub cfg_scale: Option<f32>,
+    pub scheduler: Option<String>,
+    pub shift: Option<f32>,
+    pub lora_profile: Option<String>,
+    pub lora_strength_high: Option<f32>,
+    pub lora_strength_low: Option<f32>,
+    pub lora_split_step: Option<u32>,
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub fps: Option<u32>,
@@ -77,12 +83,81 @@ pub struct VideoDaemon {
     stdin: BufWriter<ChildStdin>,
     stdout: BufReader<ChildStdout>,
     pub model_path: String,
+    pub lora_path: String,
+    pub lora_strength: f32,
+    pub frames_hint: u32,
+    pub precision: String,
 }
 impl Drop for VideoDaemon {
-    fn drop(&mut self) { let _ = self._child.kill(); }
+    fn drop(&mut self) {
+        // Graceful shutdown: ask the daemon to quit so it tears down its (up to ~10 GB) CUDA
+        // context IN-PROCESS and the driver hands VRAM back cleanly. A SIGKILL of a process
+        // holding that much VRAM makes the driver reclaim the context abruptly, which on a
+        // single GPU that also drives the display spikes + freezes the desktop (the "Clean
+        // VRAM" lock-up). Send a quit line, wait briefly, then SIGKILL only as a fallback.
+        // (The Unload button is disabled mid-generation, so the daemon is idle on stdin here
+        // and reads the quit immediately.)
+        use std::time::{Duration, Instant};
+        let _ = self.stdin.write_all(b"{\"cmd\":\"quit\"}\n");
+        let _ = self.stdin.flush();
+        let deadline = Instant::now() + Duration::from_secs(6);
+        loop {
+            if matches!(self._child.try_wait(), Ok(Some(_))) { return; } // exited cleanly
+            if Instant::now() >= deadline { break; }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let _ = self._child.kill();   // fallback: force it
+        let _ = self._child.wait();
+    }
 }
 pub type VideoHandle = Arc<Mutex<Option<VideoDaemon>>>;
 pub fn new_video_handle() -> VideoHandle { Arc::new(Mutex::new(None)) }
+
+pub(crate) fn loaded_matches(
+    handle: &VideoHandle,
+    model_path: &str,
+    lora_path: &str,
+    lora_strength: f32,
+    frames_hint: u32,
+    precision: &str,
+) -> Result<bool, String> {
+    let guard = handle.lock().map_err(|e| e.to_string())?;
+    Ok(guard.as_ref().is_some_and(|d| {
+        d.model_path == model_path
+            && d.lora_path == lora_path
+            && (d.lora_strength - lora_strength).abs() < f32::EPSILON
+            && d.frames_hint == frames_hint
+            && d.precision == precision
+    }))
+}
+
+pub(crate) fn loaded_model_from_handle(handle: &VideoHandle) -> Result<Option<String>, String> {
+    Ok(handle.lock().map_err(|e| e.to_string())?
+        .as_ref()
+        .map(|d| d.model_path.clone()))
+}
+
+pub(crate) fn load_blocking(
+    handle: VideoHandle,
+    img: crate::imggen::DaemonHandle,
+    window: WebviewWindow,
+    model_path: String,
+    lora_path: Option<String>,
+    lora_strength: Option<f32>,
+    frames: Option<u32>,
+    precision: Option<String>,
+) -> Result<String, String> {
+    if let Ok(mut g) = img.lock() { *g = None; }
+    do_load(handle, window, model_path, lora_path, lora_strength, frames, precision)
+}
+
+pub(crate) fn generate_blocking(
+    handle: VideoHandle,
+    payload: VideoPayload,
+    window: WebviewWindow,
+) -> Result<VideoResult, String> {
+    do_generate(handle, payload, window)
+}
 
 // ── Scan for video models (diffusers dirs with a video pipeline) ──────────────
 
@@ -154,19 +229,27 @@ pub async fn video_load(
 #[derive(Serialize, Clone)]
 pub struct LoraEntry { pub path: String, pub label: String }
 
-/// Scan for LoRA .safetensors — the managed loras dir + any `loras/` folders
-/// alongside the video models.
+/// Scan for Wan/video LoRA .safetensors. Keep this deliberately narrower than the
+/// image LoRA/checkpoint scan: a full SDXL checkpoint is also a .safetensors file,
+/// and offering one here makes the Wan loader try to apply a whole model as an
+/// adapter.
 #[tauri::command]
 pub fn video_scan_loras() -> Vec<LoraEntry> {
     let mut out = Vec::new();
     let mut roots: Vec<PathBuf> = Vec::new();
     if let Ok(home) = std::env::var("HOME") {
         roots.push(PathBuf::from(format!("{home}/.config/saient/loras")));
+        roots.push(PathBuf::from(format!("{home}/Saient/models/video-loras")));
+        roots.push(PathBuf::from(format!("{home}/Saient/models/wan/loras")));
     }
     for d in resolve::model_scan_dirs() {
         roots.push(d.join("loras"));
-        roots.push(d);
+        roots.push(d.join("wan").join("loras"));
+        roots.push(d.join("wan").join("_distill_loras").join("loras"));
+        collect_lora_dirs(d, 4, &mut roots);
     }
+    roots.sort();
+    roots.dedup();
     for root in roots {
         scan_loras(root, 2, &mut out);
     }
@@ -175,13 +258,30 @@ pub fn video_scan_loras() -> Vec<LoraEntry> {
     out
 }
 
+fn collect_lora_dirs(base: PathBuf, depth: usize, roots: &mut Vec<PathBuf>) {
+    let Ok(rd) = std::fs::read_dir(&base) else { return };
+    for entry in rd.flatten() {
+        let path = entry.path();
+        if !path.is_dir() { continue; }
+        let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+        if name.contains("lora") {
+            roots.push(path.clone());
+        }
+        if depth > 0 {
+            collect_lora_dirs(path, depth - 1, roots);
+        }
+    }
+}
+
 fn scan_loras(base: PathBuf, depth: usize, out: &mut Vec<LoraEntry>) {
     let Ok(rd) = std::fs::read_dir(&base) else { return };
     for entry in rd.flatten() {
         let path = entry.path();
         if path.is_dir() {
             if depth > 0 { scan_loras(path, depth - 1, out); }
-        } else if path.extension().and_then(|e| e.to_str()) == Some("safetensors") {
+        } else if path.extension().and_then(|e| e.to_str()) == Some("safetensors")
+            && is_probably_wan_lora(&path)
+        {
             // label = parent-dir name if file is generic (model.safetensors), else file stem
             let stem = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
             let label = if stem == "model" || stem == "pytorch_lora_weights" {
@@ -190,6 +290,29 @@ fn scan_loras(base: PathBuf, depth: usize, out: &mut Vec<LoraEntry>) {
             out.push(LoraEntry { label, path: path.to_string_lossy().to_string() });
         }
     }
+}
+
+fn is_probably_wan_lora(path: &PathBuf) -> bool {
+    let Ok(mut f) = std::fs::File::open(path) else { return false };
+    let mut len_buf = [0_u8; 8];
+    if f.read_exact(&mut len_buf).is_err() { return false; }
+    let header_len = u64::from_le_bytes(len_buf);
+    if header_len == 0 || header_len > 16 * 1024 * 1024 {
+        return false;
+    }
+    let mut header = vec![0_u8; header_len as usize];
+    if f.read_exact(&mut header).is_err() { return false; }
+    let Ok(json) = serde_json::from_slice::<serde_json::Value>(&header) else { return false };
+    let Some(obj) = json.as_object() else { return false };
+
+    obj.keys().filter(|k| k.as_str() != "__metadata__").take(4096).any(|key| {
+        let k = key.to_lowercase();
+        k.contains("lora")
+            && (k.starts_with("blocks.")
+                || k.starts_with("diffusion_model.blocks.")
+                || k.starts_with("transformer.blocks.")
+                || k.starts_with("lora_unet_blocks_"))
+    })
 }
 
 #[tauri::command]
@@ -266,17 +389,6 @@ fn do_load(arc: VideoHandle, window: WebviewWindow, model_path: String,
     let mut guard = arc.lock().map_err(|e| e.to_string())?;
     *guard = None; // kill any existing daemon (frees VRAM)
 
-    // Refuse a dual-expert (A14B) model up front — a `transformer_2` subfolder means two
-    // ~14 GB experts whose bf16 load would swap-freeze a 40 GB box (the "15 min then the PC
-    // died" failure). Bail BEFORE evicting chat or spawning Python so it's instant and the
-    // user's other models are untouched. The 5B does HD on this card; the A14B can't yet.
-    if PathBuf::from(&model_path).join("transformer_2").is_dir() {
-        return Err("This is a dual-expert (A14B) model — not supported on a 16 GB card yet \
-                    (it would need ~28 GB+ of weights and swap-freeze the machine). \
-                    Use Wan2.2-TI2V-5B for stable HD / 720p instead."
-            .into());
-    }
-
     // A 16 GB card holds exactly ONE model at a time. Native 720p denoise peaks at
     // ~13.9 GB (measured on the 5B), so a resident chat server (tinyq4) — or any server we
     // spawned — means an instant CUDA OOM the moment the user hits Generate. That is THE
@@ -308,6 +420,8 @@ fn do_load(arc: VideoHandle, window: WebviewWindow, model_path: String,
         .unwrap_or_default();
     let script_name = if model_index.contains("CogVideo") {
         "generate_cogvideo.py"
+    } else if model_index.contains("ImageToVideo") {
+        "generate_wan_i2v.py"   // Wan2.1-I2V: native image-to-video (CLIP image encoder)
     } else {
         "generate_video.py"
     };
@@ -327,12 +441,17 @@ fn do_load(arc: VideoHandle, window: WebviewWindow, model_path: String,
     let mut stdin = BufWriter::new(child.stdin.take().ok_or("no stdin")?);
     let mut stdout = BufReader::new(child.stdout.take().ok_or("no stdout")?);
 
+    let lora_path_value = lora_path.unwrap_or_default();
+    let lora_strength_value = lora_strength.unwrap_or(1.0_f32);
+    let frames_hint_value = frames.unwrap_or(49);
+    let precision_value = precision.unwrap_or_else(|| "fast".into());
+
     let cfg = serde_json::json!({
         "model_path": model_path, "device": "auto",
-        "lora_path": lora_path.unwrap_or_default(),
-        "lora_strength": lora_strength.unwrap_or(1.0_f32),
-        "frames_hint": frames.unwrap_or(49),
-        "precision": precision.unwrap_or_else(|| "fast".into()),
+        "lora_path": lora_path_value.clone(),
+        "lora_strength": lora_strength_value,
+        "frames_hint": frames_hint_value,
+        "precision": precision_value.clone(),
     });
     writeln!(stdin, "{cfg}").map_err(|e| format!("stdin write: {e}"))?;
     stdin.flush().map_err(|e| format!("stdin flush: {e}"))?;
@@ -354,7 +473,16 @@ fn do_load(arc: VideoHandle, window: WebviewWindow, model_path: String,
         }
     };
 
-    *guard = Some(VideoDaemon { _child: child, stdin, stdout, model_path });
+    *guard = Some(VideoDaemon {
+        _child: child,
+        stdin,
+        stdout,
+        model_path,
+        lora_path: lora_path_value,
+        lora_strength: lora_strength_value,
+        frames_hint: frames_hint_value,
+        precision: precision_value,
+    });
     Ok(device)
 }
 
@@ -368,6 +496,12 @@ fn do_generate(arc: VideoHandle, payload: VideoPayload, window: WebviewWindow) -
         "num_frames": payload.num_frames.unwrap_or(49),
         "steps":      payload.steps.unwrap_or(30),
         "cfg_scale":  payload.cfg_scale.unwrap_or(6.0_f32),
+        "scheduler":  payload.scheduler.unwrap_or_else(|| "auto".into()),
+        "shift":      payload.shift.unwrap_or(5.0_f32),
+        "lora_profile": payload.lora_profile.unwrap_or_else(|| "single".into()),
+        "lora_strength_high": payload.lora_strength_high.unwrap_or(1.0_f32),
+        "lora_strength_low":  payload.lora_strength_low.unwrap_or(1.0_f32),
+        "lora_split_step":    payload.lora_split_step.unwrap_or(4),
         "width":      payload.width.unwrap_or(832),
         "height":     payload.height.unwrap_or(480),
         "fps":        payload.fps.unwrap_or(16),

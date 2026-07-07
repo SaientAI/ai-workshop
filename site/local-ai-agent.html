@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Local AI Agent for Coding, Files and Terminal Work — Saient</title>
+<meta name="description" content="Saient includes a local AI agent that can plan, read files, edit code, run commands and verify work inside a sandboxed workspace on your own machine." />
+<link rel="canonical" href="https://saient.co.uk/local-ai-agent" />
+<meta property="og:type" content="website" />
+<meta property="og:title" content="Local AI Agent for Coding, Files and Terminal Work — Saient" />
+<meta property="og:description" content="Run an AI coding agent locally with a terminal, file tools, write-mode controls and an audit trail." />
+<meta property="og:url" content="https://saient.co.uk/local-ai-agent" />
+<meta name="twitter:card" content="summary" />
+<script type="application/ld+json">
+{
+  "@context":"https://schema.org",
+  "@type":"SoftwareApplication",
+  "name":"Saient Local AI Agent",
+  "applicationCategory":"DeveloperApplication",
+  "operatingSystem":"Linux, Windows",
+  "description":"A local coding agent with planning, file tools, terminal execution, write-mode controls and verification.",
+  "offers":{"@type":"Offer","price":"20.00","priceCurrency":"GBP","url":"https://saient.co.uk/pricing"}
+}
+</script>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230d0d0f'/%3E%3Ctext x='16' y='21' font-family='monospace' font-size='12' fill='%236c8ef5' text-anchor='middle' font-weight='700'%3E%5B%3E_%3C%5D%3C/text%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Martian+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/assets/seo.css" />
+</head>
+<body>
+<nav>
+  <div class="wrap nav-inner">
+    <a class="brand" href="/"><span class="face">[&gt;_&lt;]</span><span>SAIENT</span></a>
+    <div class="nav-links">
+      <a class="link" href="/ai-prompt-maker">Prompt maker</a>
+      <a class="link" href="/ai-image-generator">Image gen</a>
+      <a class="link" href="/ai-video-generator">Video gen</a>
+      <a class="link" href="/pricing">Pricing</a>
+      <a class="btn btn-primary" href="/#download">Download</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <div class="eyebrow"><span class="dot"></span> Local AI agent</div>
+      <h1>An AI agent that can work inside your local project.</h1>
+      <p class="lede">Saient includes a coding agent with a PTY terminal, file tools, planner, verifier and write-mode controls. It can inspect a workspace, make changes and run checks while your code stays on your machine.</p>
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="/#download">Download Saient</a>
+        <a class="btn" href="#tasks">See tasks it can handle</a>
+      </div>
+    </div>
+    <aside class="signal">
+      <div class="label">Agent loop</div>
+      <pre>plan -> read files
+act  -> edit / write / bash
+verify -> run tests
+repair -> fix errors
+finish -> report changes</pre>
+    </aside>
+  </div>
+</header>
+
+<div class="wrap article">
+  <main>
+    <section id="features">
+      <div class="sec-tag">Agent features</div>
+      <h2>Built for real local work</h2>
+      <div class="grid">
+        <div class="card"><span class="k">PTY</span><h3>Terminal access</h3><p>The agent can run commands in a real terminal when write mode allows it.</p></div>
+        <div class="card"><span class="k">FS</span><h3>File tools</h3><p>It can read, write and patch files inside a chosen workspace.</p></div>
+        <div class="card"><span class="k">LOG</span><h3>Audit trail</h3><p>Destructive actions are controlled and logged so you can review what happened.</p></div>
+      </div>
+    </section>
+
+    <section id="tasks">
+      <div class="sec-tag">Tasks</div>
+      <h2>What to ask a local AI agent to do</h2>
+      <ul>
+        <li>Fix a failing test and explain the changed files.</li>
+        <li>Add a small feature while preserving the existing project style.</li>
+        <li>Inspect an unfamiliar repo and summarize the architecture.</li>
+        <li>Create a script, run it, then repair errors until it works.</li>
+        <li>Refactor a narrow module with tests or command-line verification.</li>
+      </ul>
+      <h3>Example agent prompt</h3>
+      <div class="prompt-box">Goal: add a /health endpoint and a test.
+Scope: inspect the server routes and test folder first.
+Constraints: keep the change minimal and preserve existing style.
+Verification: run the project test command.
+Deliverable: summarize changed files and test output.</div>
+    </section>
+
+    <section id="safety">
+      <div class="sec-tag">Safety</div>
+      <h2>Local control matters</h2>
+      <p>Agent prompts often include private source code, file paths, logs, environment details and product plans. Saient keeps the agent local, with write mode off by default and visible control over destructive actions.</p>
+      <div class="note">The agent is powerful, so keep tasks scoped. Ask it to inspect first, plan second, edit third and verify last.</div>
+    </section>
+
+    <section class="cta-band">
+      <h2>Give the agent a goal and let it verify the work.</h2>
+      <p>Saient combines a local AI agent with chat, image generation, video generation, vision, TTS and LoRA tools.</p>
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="/#download">Download Saient</a>
+        <a class="btn" href="/ai-prompt-maker">Write a better agent prompt</a>
+      </div>
+    </section>
+  </main>
+
+  <aside class="toc">
+    <h4>On this page</h4>
+    <a href="#features">Agent features</a>
+    <a href="#tasks">Tasks</a>
+    <a href="#safety">Safety</a>
+    <a href="/ai-prompt-maker">AI prompt maker</a>
+    <a href="/how-to-run-ai-locally">Run AI locally</a>
+  </aside>
+</div>
+
+<footer>
+  <div class="wrap foot-inner">
+    <a class="brand" href="/"><span class="face">[&gt;_&lt;]</span><span>SAIENT</span></a>
+    <div class="foot-links">
+      <a href="/ai-prompt-maker">Prompt maker</a>
+      <a href="/ai-image-generator">Image gen</a>
+      <a href="/ai-video-generator">Video gen</a>
+      <a href="/help">Help</a>
+      <a href="/pricing">Pricing</a>
+    </div>
+    <div>saient.co.uk · Local-first AI</div>
+  </div>
+</footer>
+</body>
+</html>

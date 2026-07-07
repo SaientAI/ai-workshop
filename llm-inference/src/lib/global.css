@@ -75,9 +75,9 @@ body {
 .titlebar { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
 
 /* ── Two-panel screen layout (ImgGen, TTS, LoRA, Merge) ── */
-.ig-layout  { display: flex; flex: 1; overflow: hidden; }
-.ig-sidebar { flex-shrink: 0; overflow-y: auto; background: var(--bg2); border-right: 1px solid var(--border); padding: 16px; }
-.ig-main    { flex: 1; display: flex; flex-direction: column; overflow-y: auto; padding: 16px; gap: 12px; }
+.ig-layout  { display: flex; flex: 1; overflow: hidden; min-width: 0; min-height: 0; }
+.ig-sidebar { width: 300px; min-width: 240px; max-width: 340px; flex-shrink: 0; overflow-y: auto; overflow-x: hidden; background: var(--bg2); border-right: 1px solid var(--border); padding: 16px; }
+.ig-main    { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; padding: 16px; gap: 12px; }
 
 /* ── Chat screen layout ── */
 .chat-area    { flex: 1; display: flex; flex-direction: column; overflow: hidden; }

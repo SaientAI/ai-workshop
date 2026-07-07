@@ -10,6 +10,12 @@
     "tauri": "tauri",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test": "node src/artifact.test.js && node src/contract.test.js",
+    "asset:dry-run": "python3 tools/blender-pipeline/png_to_asset.py --input assets/source-png --output assets/game-assets --dry-run",
+    "asset:build": "python3 tools/blender-pipeline/png_to_asset.py --input assets/source-png --output assets/game-assets",
+    "asset:test": "python3 tools/blender-pipeline/png_to_asset.py --self-test",
+    "local3d:setup": "python3 tools/local-3d/setup_triposr.py",
+    "local3d:dry-run": "python3 tools/local-3d/run_triposr.py --input assets/source-png --output assets/game-assets --dry-run",
+    "local3d:run": "python3 tools/local-3d/run_triposr.py --input assets/source-png --output assets/game-assets",
     "lint": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
     "ci": "npm run check && npm run test && npm run build"
   },
@@ -26,10 +32,12 @@
     "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-fs": "^2",
     "@tauri-apps/plugin-shell": "^2",
+    "@types/qrcode": "^1.5.6",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "highlight.js": "^11.11.1",
     "marked": "^18.0.4",
+    "qrcode": "^1.5.4",
     "xterm-addon-fit": "^0.8.0"
   }
 }

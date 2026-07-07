@@ -284,6 +284,7 @@
     </a>
     <div class="nav-links">
       <a class="link" href="#features">Features</a>
+      <a class="link" href="#guides">Guides</a>
       <a class="link" href="#agent">Agent</a>
       <a class="link" href="/pricing">Pricing</a>
       <a class="link" href="/help">Help</a>
@@ -359,19 +360,19 @@
         <div class="kbd">Ctrl · Shift · K — toggle Saient</div>
       </div>
 
-      <div class="card reveal">
+      <a class="card reveal" href="/ai-image-generator" aria-label="Open the Saient AI image generator page">
         <div class="ic">◐</div>
         <h3>Image Gen</h3>
         <p>SDXL text-to-image with LoRA support, schedulers, live progress, and an optional face-detail pass.</p>
         <div class="tags"><span class="tag">SDXL</span><span class="tag">LoRA</span></div>
-      </div>
+      </a>
 
-      <div class="card reveal">
+      <a class="card reveal" href="/ai-video-generator" aria-label="Open the Saient AI video generator page">
         <div class="ic">▷</div>
         <h3>Video Gen</h3>
         <p>Text-to-video and image-to-video with Wan &amp; CogVideoX — frame control, live progress, and an optional refine &amp; upscale pass.</p>
         <div class="tags"><span class="tag">Wan</span><span class="tag">CogVideoX</span><span class="tag">i2v</span></div>
-      </div>
+      </a>
 
       <div class="card reveal">
         <div class="ic">⊙</div>
@@ -400,6 +401,52 @@
         <p>Powered by <b>tinyq4</b>, a from-scratch GGUF inference engine — no llama.cpp, no Python server you have to babysit.</p>
         <div class="tags"><span class="tag">tinyq4</span><span class="tag">native</span></div>
       </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════ SEARCH / GUIDE PAGES ════════ -->
+<section class="section" id="guides" style="padding-top:24px">
+  <div class="wrap">
+    <div class="sec-tag">Guides and use cases</div>
+    <h2>Practical local AI pages.</h2>
+    <p class="sec-lede">Useful pages for people searching for prompt makers, local AI agents, image generation, video generation, and private AI setup.</p>
+
+    <div class="features">
+      <a class="card reveal" href="/ai-prompt-maker">
+        <div class="ic">Pr</div>
+        <h3>AI prompt maker</h3>
+        <p>Prompt templates for image generation, video generation, chat and agent workflows.</p>
+        <div class="tags"><span class="tag">how to prompt</span><span class="tag">templates</span></div>
+      </a>
+
+      <a class="card reveal" href="/ai-image-generator">
+        <div class="ic">◐</div>
+        <h3>Local AI image generator</h3>
+        <p>SDXL and LoRA image generation on your own machine, with no cloud API keys.</p>
+        <div class="tags"><span class="tag">SDXL</span><span class="tag">LoRA</span></div>
+      </a>
+
+      <a class="card reveal" href="/ai-video-generator">
+        <div class="ic">▷</div>
+        <h3>Local AI video generator</h3>
+        <p>Text-to-video and image-to-video workflows with practical prompt guidance.</p>
+        <div class="tags"><span class="tag">t2v</span><span class="tag">i2v</span></div>
+      </a>
+
+      <a class="card reveal" href="/local-ai-agent">
+        <div class="ic">⌘</div>
+        <h3>Local AI agent</h3>
+        <p>A guide to Saient's coding agent for files, terminal tasks and verified changes.</p>
+        <div class="tags"><span class="tag">coding agent</span><span class="tag">offline</span></div>
+      </a>
+
+      <a class="card wide reveal" href="/how-to-run-ai-locally">
+        <div class="ic">&gt;_</div>
+        <h3>How to run AI locally</h3>
+        <p>Install Saient, choose a GGUF model, load it, and use chat, agent, image and video tools offline.</p>
+        <div class="tags"><span class="tag">GGUF</span><span class="tag">privacy</span><span class="tag">local setup</span></div>
+      </a>
     </div>
   </div>
 </section>
@@ -471,12 +518,15 @@
     <div style="margin-top:14px;font-size:12.5px;color:var(--text3)">v1.0.3 · <a href="/changelog" style="color:var(--text2)">release notes</a></div>
   </div>
 </section>
-
 <footer>
   <div class="wrap foot-inner">
     <a class="brand" href="#top"><span class="face">[&gt;_&lt;]</span><span>SAIENT</span></a>
     <div class="foot-links">
       <a href="#features">Features</a>
+      <a href="/ai-prompt-maker">Prompt maker</a>
+      <a href="/ai-image-generator">Image gen</a>
+      <a href="/ai-video-generator">Video gen</a>
+      <a href="/local-ai-agent">Agent</a>
       <a href="/pricing">Pricing</a>
       <a href="/help">Help</a>
       <a href="/terms">Terms</a>

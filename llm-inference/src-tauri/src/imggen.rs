@@ -30,6 +30,8 @@ pub struct ImgGenPayload {
     pub device:     Option<String>,
     pub scheduler:  Option<String>,
     pub face_detail: Option<bool>,
+    pub asset_guard: Option<bool>,
+    pub asset_kind: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -66,6 +68,46 @@ pub type DaemonHandle = Arc<Mutex<Option<ImgGenDaemon>>>;
 
 pub fn new_daemon_handle() -> DaemonHandle {
     Arc::new(Mutex::new(None))
+}
+
+pub(crate) fn loaded_matches(
+    daemon: &DaemonHandle,
+    model_path: &str,
+    lora_path: &str,
+    device: &str,
+) -> Result<bool, String> {
+    let guard = daemon.lock().map_err(|e| e.to_string())?;
+    Ok(guard.as_ref().is_some_and(|d| {
+        d.model_path == model_path
+            && d.lora_path == lora_path
+            && (device == "auto" || d.device == device)
+    }))
+}
+
+pub(crate) fn loaded_model_from_handle(daemon: &DaemonHandle) -> Result<Option<String>, String> {
+    Ok(daemon.lock().map_err(|e| e.to_string())?
+        .as_ref()
+        .map(|d| d.model_path.clone()))
+}
+
+pub(crate) fn load_blocking(
+    daemon: DaemonHandle,
+    vid: crate::video::VideoHandle,
+    window: WebviewWindow,
+    model_path: String,
+    lora_path: String,
+    device: String,
+) -> Result<String, String> {
+    if let Ok(mut g) = vid.lock() { *g = None; }
+    do_load(daemon, window, model_path, lora_path, device)
+}
+
+pub(crate) fn generate_blocking(
+    daemon: DaemonHandle,
+    payload: ImgGenPayload,
+    window: WebviewWindow,
+) -> Result<ImgGenResult, String> {
+    do_generate(daemon, payload, window)
 }
 
 // ── Commands: scan ────────────────────────────────────────────────────────────
@@ -234,8 +276,11 @@ fn do_generate(
         "seed":       payload.seed.unwrap_or(42),
         "width":      payload.width.unwrap_or(1024),
         "height":     payload.height.unwrap_or(1024),
-        "scheduler":  payload.scheduler.unwrap_or_else(|| "dpm++2m_karras".into()),
+        "scheduler":  payload.scheduler.unwrap_or_else(|| "auto".into()),
         "face_detail": payload.face_detail.unwrap_or(true),
+        "asset_guard": payload.asset_guard.unwrap_or(true),
+        "asset_kind": payload.asset_kind.unwrap_or_else(|| "humanoid".into()),
+        "model_path": daemon.model_path.clone(),
     });
 
     writeln!(daemon.stdin, "{req}").map_err(|e| format!("stdin write: {e}"))?;

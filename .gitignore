@@ -53,3 +53,10 @@ id_rsa*
 **/resources/engine/tinyq4-cpu.exe
 **/resources/engine/libcudart.so.12
 **/resources/engine/cudart64_12.dll
+
+# ── Local python envs / vendored tools / test media (machine-local, not source) ──
+llm-inference/.venvs/
+llm-inference/tools/local-3d/vendor/
+llm-inference/assets/
+llm-inference/src-tauri/*.png
+llm-inference/src-tauri/*.mp4

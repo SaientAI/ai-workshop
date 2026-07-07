@@ -188,6 +188,41 @@ export const clearUserData = (opts: {
 
 export const checkDependencies = () => invoke<DepReport>("check_dependencies");
 
+// ── Game asset builder ───────────────────────────────────────────────────────
+
+export interface AssetFile {
+  name: string;
+  path: string;
+  size: number;
+}
+
+export interface AssetScan {
+  project_dir: string;
+  source_dir: string;
+  output_dir: string;
+  blender_path: string | null;
+  sources: AssetFile[];
+  outputs: AssetFile[];
+}
+
+export interface AssetRunResult {
+  ok: boolean;
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+
+export const assetBuilderScan = () => invoke<AssetScan>("asset_builder_scan");
+
+export const assetBuilderOpenDir = (kind: "source" | "output") =>
+  invoke<void>("asset_builder_open_dir", { kind });
+
+export const assetBuilderRun = (
+  dryRun: boolean,
+  sources: string[] = [],
+  builder: "relief" | "local3d" = "relief"
+) => invoke<AssetRunResult>("asset_builder_run", { dryRun, sources, builder });
+
 // ── Image gen ─────────────────────────────────────────────────────────────────
 
 // ImgGenPayload mirrors src-tauri/src/imggen.rs::ImgGenPayload
@@ -204,6 +239,8 @@ export interface ImgGenPayload {
   device?: string;
   scheduler?: string;
   face_detail?: boolean;
+  asset_guard?: boolean;
+  asset_kind?: string;
 }
 
 // ImgGenResult mirrors src-tauri/src/imggen.rs::ImgGenResult
@@ -239,6 +276,12 @@ export interface VideoPayload {
   num_frames?: number;
   steps?: number;
   cfg_scale?: number;
+  scheduler?: string;
+  shift?: number;
+  lora_profile?: string;
+  lora_strength_high?: number;
+  lora_strength_low?: number;
+  lora_split_step?: number;
   width?: number;
   height?: number;
   fps?: number;
@@ -441,6 +484,22 @@ export interface UpdateInfo {
 
 /** Check the site for a newer version. Best-effort — throws if offline. */
 export const checkUpdate = () => invoke<UpdateInfo>("check_update");
+
+// ── Phone pairing ─────────────────────────────────────────────────────────────
+export interface RemotePairingInfo {
+  name: string;
+  port: number;
+  url: string;
+  local_url: string;
+  payload: {
+    type: string;
+    version: number;
+    url: string;
+  };
+}
+
+export const remotePairingInfo = () =>
+  invoke<RemotePairingInfo>("remote_pairing_info");
 
 /** Plain-text diagnostics (version, OS, GPU, paths) for support. No telemetry. */
 export const diagnostics = () => invoke<string>("diagnostics");
