@@ -207,6 +207,8 @@ export const video = $state({
   loraSplitStep: 4,
   qualityMode: false,    // false = fast 4-bit transformer (default); true = bf16 transformer
                          // streamed from RAM (higher fidelity, ~10 GB PCIe round-trip/gen)
+  lowVramMode: false,
+  blockOffload: false,   // park transformer to RAM, stream per-step → fits native 5s@720p (slow ~17min)
   imageB64: "",          // i2v input still (base64, no data: prefix)
   imageName: "",         // display name of the picked image
   resLocked: false,      // model requires a fixed resolution (e.g. CogVideoX)
@@ -215,7 +217,14 @@ export const video = $state({
   loading: false,
   loadStatus: "",
   prompt: "",
-  negPrompt: "blurry, distorted, low quality, static, watermark",
+  // Base quality + anatomy anti-confusion. Wan/SVI often maps feature placement/lips or
+  // fuses sex organs; keep those negatives resident so every gen gets the guard.
+  negPrompt: "blurry, distorted, low quality, static, watermark, bad anatomy, deformed hands, extra fingers, malformed anatomy, fused body parts, ambiguous anatomy, ambiguous anatomy, misplaced facial features, lips instead of anatomy, oral opening as anatomy, misplaced facial features, face on body, fused anatomy, inverted anatomy, malformed anatomy, anatomically incorrect anatomy",
+  // Storyboard for segmented long videos: separate prompts per ~5s chunk.
+  // If filled, a storyboard generate can chain them with auto-extend/stitch.
+  storyboardPrompts: ["", "", "", ""],
+  // When true (default), explicit prompts get positive anatomy lock + merged neg guards.
+  anatomyLock: true,
   numFrames: 49,
   steps: 30,
   cfg: 6.0,

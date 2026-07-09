@@ -93,6 +93,9 @@ struct VideoGenerateRequest {
     fps: Option<u32>,
     seed: Option<i64>,
     image_b64: Option<String>,
+    previous_video_b64: Option<String>,
+    force_seam_blend: Option<bool>,
+    low_vram: Option<bool>,
     lora_path: Option<String>,
     lora_strength: Option<f32>,
     precision: Option<String>,
@@ -409,6 +412,10 @@ fn api_video_generate(
             fps: req.fps,
             seed: req.seed,
             image_b64: req.image_b64,
+            previous_video_b64: req.previous_video_b64,
+            force_seam_blend: req.force_seam_blend,
+            low_vram: req.low_vram,
+            block_offload: None,  // remote API doesn't expose park-to-RAM (UI toggle only)
         },
         window,
     )
