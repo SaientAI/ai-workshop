@@ -46,17 +46,18 @@ def _watch_parent():
 PIPE = None        # WanPipeline with text_encoder=None, transformer+vae resident
 TOKENIZER = None   # kept resident (tiny); text encoder is loaded per-encode
 MODEL_PATH = ""
-# Cache the ENCODED prompt embeddings (a few MB on GPU) keyed by (prompt, neg, cfg).
+# Cache the ENCODED prompt embeddings keyed by (prompt, neg, cfg).
 # Re-running the same prompt (seed/step/frame sweeps) then skips the ~90s text-
 # encoder load entirely. We free the 5.5 GB encoder after each encode so it never
-# competes with denoise activations — embeds are tiny, the encoder is not.
+# competes with denoise activations — embeds are cached on CPU so long clips do
+# not carry duplicate GPU copies through denoise/decode.
 EMBED_CACHE = {"key": None, "pe": None, "ne": None}
 I2V_PIPE = None    # WanImageToVideoPipeline, lazily assembled from the t2v components
 # "fast" (default) = 4-bit transformer, GPU-resident — today's behaviour, unchanged.
 # "quality" = bf16 transformer that LIVES in CPU RAM and is streamed onto the GPU only
-# for the denoise loop (then parked back), so the full-precision weights never have to
-# share VRAM with the text encoder or VAE. Better fidelity at the cost of a ~10 GB PCIe
-# round-trip per generation. Set from the load config's "precision" field.
+# for the denoise loop. We deliberately avoid parking it back immediately after denoise
+# (decode tries with weights resident). We only park (a) before a new TE encode or (b) on
+# decode OOM. This reduces PCIe round-trips and targets 30s–1m gens. Set via "precision".
 STREAM_TRANSFORMER = False
 LORA_PATH = ""
 LORA_STRENGTH = 1.0
@@ -72,6 +73,14 @@ TRANSFORMER2_CACHE_PATH = None
 NF4_CACHE_PATH = None   # dir of the packed 4-bit transformer, for reload-after-encode
 RESIDENT_GB = 0.0       # VRAM resident after load (≈ transformer) — gates PARK_TRANSFORMER
 PARK_TRANSFORMER = False
+LOW_VRAM_ACTIVE = False
+LOW_VRAM_ATTN_BACKEND = None
+VRAM_CAP_FRACTION = None
+# Per-request "park to RAM": stream the transformer block-by-block from system RAM so a
+# clip that overflows VRAM (e.g. native 5s@720p on the 16 GB card) fits. Slow (~160s/step
+# vs ~69s), so it's opt-in per generation via req["block_offload"], NOT a launch env flag.
+BLOCK_OFFLOAD_REQ = False
+VRAM_REPORT = {}
 
 
 def emit(obj):
@@ -85,6 +94,427 @@ def _free_cuda():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
+
+
+def _vram_limit_gb():
+    import torch
+    if not torch.cuda.is_available():
+        return 0.0
+    total = torch.cuda.get_device_properties(0).total_memory / 2**30
+    frac = VRAM_CAP_FRACTION
+    if frac is None:
+        frac = max(0.10, min(float(os.environ.get("SAIENT_VRAM_FRACTION", "0.98")), 0.98))
+    return total * frac
+
+
+def _vram_stage(stage, reset_peak=True, emit_line=True):
+    """Record current/peak CUDA allocation for the acceptance-stage report."""
+    import torch
+    if not torch.cuda.is_available():
+        stats = {"used": 0.0, "reserved": 0.0, "peak": 0.0, "free": 0.0, "limit": 0.0}
+    else:
+        free, total = torch.cuda.mem_get_info()
+        stats = {
+            "used": torch.cuda.memory_allocated() / 2**30,
+            "reserved": torch.cuda.memory_reserved() / 2**30,
+            "peak": torch.cuda.max_memory_allocated() / 2**30,
+            "free": free / 2**30,
+            "limit": _vram_limit_gb() or (total / 2**30),
+        }
+        if reset_peak:
+            torch.cuda.reset_peak_memory_stats()
+    VRAM_REPORT[stage] = stats
+    if emit_line:
+        headroom = max(stats["limit"] - stats["peak"], 0.0)
+        emit({"loading_status": (
+            f"VRAM {stage}: used {stats['used']:.2f} GB · peak {stats['peak']:.2f} GB · "
+            f"reserved {stats['reserved']:.2f} GB · cap headroom {headroom:.2f} GB"
+        )})
+    return stats
+
+
+def _emit_vram_report():
+    order = ["model load", "text encoding", "denoising", "VAE decode", "video assembly", "cleanup"]
+    lines = []
+    for stage in order:
+        s = VRAM_REPORT.get(stage)
+        if not s:
+            continue
+        headroom = max(s["limit"] - s["peak"], 0.0)
+        lines.append(f"{stage}: peak {s['peak']:.2f} GB, used {s['used']:.2f} GB, headroom {headroom:.2f} GB")
+    if lines:
+        emit({"loading_status": "VRAM report · " + " · ".join(lines)})
+
+
+def _emit_video_result(b64, frames_count, elapsed, extended=False):
+    _free_cuda()
+    _vram_stage("video assembly")
+    _free_cuda()
+    _vram_stage("cleanup")
+    _emit_vram_report()
+    obj = {"base64_mp4": b64, "frames": frames_count, "elapsed": round(elapsed, 1)}
+    if extended:
+        obj["extended"] = True
+    emit(obj)
+
+
+def _set_attention_backend(model, low_vram):
+    if model is None:
+        return
+    try:
+        if low_vram:
+            preferred = os.environ.get("SAIENT_WAN_ATTN_BACKEND", LOW_VRAM_ATTN_BACKEND or "_native_flash")
+            for backend in dict.fromkeys((preferred, "_native_flash", "_native_efficient", "native")):
+                try:
+                    model.set_attention_backend(backend)
+                    return
+                except Exception:
+                    continue
+            raise RuntimeError("no low-VRAM attention backend accepted")
+        else:
+            model.reset_attention_backend()
+    except Exception as e:
+        if low_vram:
+            emit({"loading_status": f"  ⚠ low-VRAM attention backend unavailable ({type(e).__name__}); using default"})
+
+
+def _env_flag(name, default=True):
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in ("0", "false", "no", "off")
+
+
+def _raise_highres_vram_cap(enabled):
+    if not enabled or not _env_flag("SAIENT_WAN_HIGHRES_VRAM_CAP", True):
+        return False
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return False
+        global VRAM_CAP_FRACTION
+        current = VRAM_CAP_FRACTION
+        if current is None:
+            current = max(0.10, min(float(os.environ.get("SAIENT_VRAM_FRACTION", "0.98")), 0.98))
+        target = max(current, float(os.environ.get("SAIENT_WAN_HIGHRES_VRAM_FRACTION", "0.98")))
+        target = max(0.10, min(target, 0.98))
+        if target <= current + 1e-4:
+            return False
+        torch.cuda.set_per_process_memory_fraction(target, 0)
+        VRAM_CAP_FRACTION = target
+        emit({"loading_status": f"high-res headroom: VRAM cap raised to {target:.0%} for 720p denoise"})
+        return True
+    except Exception as e:
+        emit({"loading_status": f"  ⚠ high-res VRAM cap bump unavailable ({e})"})
+        return False
+
+
+def _rope_target_dtype():
+    import torch
+    raw = os.environ.get("SAIENT_WAN_ROPE_DTYPE", "bf16").strip().lower()
+    if raw in ("fp32", "float32"):
+        return torch.float32
+    return torch.bfloat16
+
+
+def _cast_rope_for_low_vram(model, label="transformer"):
+    if model is None or not LOW_VRAM_ACTIVE or not _env_flag("SAIENT_WAN_ROPE_CAST", True):
+        return False
+    rope = getattr(model, "rope", None)
+    target_dtype = _rope_target_dtype()
+    marker = f"_saient_rope_{str(target_dtype).split('.')[-1]}"
+    if rope is None or getattr(rope, marker, False):
+        return False
+    try:
+        import torch
+        saved = 0
+        for name in ("freqs_cos", "freqs_sin"):
+            t = getattr(rope, name, None)
+            if torch.is_tensor(t) and t.is_floating_point() and t.dtype != target_dtype:
+                new = t.to(dtype=target_dtype)
+                saved += max(t.numel() * (t.element_size() - new.element_size()), 0)
+                if hasattr(rope, "_buffers") and name in rope._buffers:
+                    rope._buffers[name] = new
+                else:
+                    setattr(rope, name, new)
+        setattr(rope, marker, True)
+        if saved:
+            _free_cuda()
+            dtype_name = str(target_dtype).split(".")[-1]
+            emit({"loading_status": (
+                f"low-VRAM: {label} rotary tables {dtype_name} "
+                f"(saved {saved / 2**20:.0f} MiB; smaller rope workspace)"
+            )})
+            return True
+    except Exception as e:
+        emit({"loading_status": f"  ⚠ low-VRAM rotary cast unavailable for {label} ({type(e).__name__}: {e})"})
+    return False
+
+
+def _denoise_latent_dtype(transformer_dtype, height, width, num_frames):
+    import torch
+    if not LOW_VRAM_ACTIVE or not _env_flag("SAIENT_WAN_LATENTS_BF16", True):
+        return torch.float32
+    if transformer_dtype not in (torch.float16, torch.bfloat16):
+        return torch.float32
+    high_res_pixels = int(os.environ.get("SAIENT_WAN_HIGHRES_PIXELS", "500000"))
+    if height * width < high_res_pixels:
+        return torch.float32
+    latent_frames = (num_frames - 1) // 4 + 1
+    latent_h = max(height // 8, 1)
+    latent_w = max(width // 8, 1)
+    saved_mib = (16 * latent_frames * latent_h * latent_w * 2) / 2**20
+    emit({"loading_status": (
+        f"low-VRAM: high-res denoise latents use {str(transformer_dtype).split('.')[-1]} "
+        f"(saves ~{saved_mib:.0f} MiB vs fp32 master)"
+    )})
+    return transformer_dtype
+
+
+def _enable_transformer_group_offload(model, label="transformer"):
+    """Low-VRAM mode: keep only active transformer blocks on the GPU during forward.
+
+    This preserves weights, but it gridlocks this desktop setup in practice. It now
+    requires both SAIENT_WAN_GROUP_OFFLOAD=1 and SAIENT_WAN_ALLOW_SLOW_BLOCK_OFFLOAD=1
+    so normal low-VRAM mode and routine tests cannot enter this path.
+    """
+    # Allow either the per-request toggle (block_offload) OR the two legacy launch env
+    # flags. The request toggle is the shipped path (a "park to RAM" checkbox / HD-5s-max
+    # preset); the env flags stay for CLI/testing.
+    allow_offload = BLOCK_OFFLOAD_REQ or (
+        _env_flag("SAIENT_WAN_GROUP_OFFLOAD", False)
+        and _env_flag("SAIENT_WAN_ALLOW_SLOW_BLOCK_OFFLOAD", False)
+    )
+    if model is None or not LOW_VRAM_ACTIVE or not allow_offload:
+        return False
+    if getattr(model, "_saient_group_offload_enabled", False):
+        return True
+    try:
+        import torch
+        blocks = max(1, int(os.environ.get("SAIENT_WAN_GROUP_OFFLOAD_BLOCKS", "1")))
+        use_stream = _env_flag("SAIENT_WAN_GROUP_OFFLOAD_STREAM", False)
+        low_cpu = _env_flag("SAIENT_WAN_GROUP_OFFLOAD_LOW_CPU", True)
+        model.enable_group_offload(
+            onload_device=torch.device("cuda:0"),
+            offload_device=torch.device("cpu"),
+            offload_type="block_level",
+            num_blocks_per_group=blocks,
+            use_stream=use_stream,
+            low_cpu_mem_usage=low_cpu,
+        )
+        setattr(model, "_saient_group_offload_enabled", True)
+        _free_cuda()
+        used = torch.cuda.memory_allocated() / 2**30 if torch.cuda.is_available() else 0.0
+        emit({"loading_status": (
+            f"low-VRAM: {label} block offload enabled "
+            f"({blocks} block/group, streamed={str(use_stream).lower()}) · {used:.1f} GB resident"
+        )})
+        return True
+    except Exception as e:
+        emit({"loading_status": f"  ⚠ low-VRAM block offload unavailable for {label} ({type(e).__name__}: {e})"})
+        return False
+
+
+def _wrap_condition_embedder_offload(model, label="transformer"):
+    """Low-VRAM mode: park Wan condition_embedder after it has produced embeddings.
+
+    The condition embedder is used at the start of transformer.forward(), before the
+    expensive block loop where the 720p activation spike occurs. This is much
+    lighter than block/group offload: one small embedding module moves per denoise
+    step, while all transformer blocks stay GPU-resident.
+    """
+    if model is None or not LOW_VRAM_ACTIVE or not _env_flag("SAIENT_WAN_COND_OFFLOAD", True):
+        return False
+    ce = getattr(model, "condition_embedder", None)
+    if ce is None or getattr(ce, "_saient_offload_wrapped", False):
+        return False
+    try:
+        import torch
+        bytes_total = sum(
+            p.numel() * p.element_size()
+            for p in ce.parameters()
+            if torch.is_tensor(p) and p.device.type == "cuda"
+        )
+        orig_forward = ce.forward
+
+        def _forward_then_park(*args, **kwargs):
+            try:
+                if next(ce.parameters()).device.type != "cuda":
+                    ce.to("cuda:0")
+            except Exception:
+                # If the previous park succeeded but re-load fails, running with a
+                # CPU submodule would throw a harder-to-read device mismatch below.
+                raise
+            out = orig_forward(*args, **kwargs)
+            try:
+                ce.to("cpu")
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+            return out
+
+        ce.forward = _forward_then_park
+        ce._saient_offload_wrapped = True
+        saved = bytes_total / 2**20
+        emit({"loading_status": f"low-VRAM: {label} condition embedder parks after use ({saved:.0f} MiB)"})
+        return True
+    except Exception as e:
+        emit({"loading_status": f"  ⚠ low-VRAM condition embedder offload unavailable ({type(e).__name__}: {e})"})
+        return False
+
+
+def _timestep_for_latents(t, latents):
+    """Equivalent to Wan's all-ones mask path without allocating a full latent-sized mask."""
+    seq_len = latents.shape[2] * ((latents.shape[3] + 1) // 2) * ((latents.shape[4] + 1) // 2)
+    return t.expand(seq_len).unsqueeze(0).expand(latents.shape[0], -1)
+
+
+# --- Extend / concat helpers (used when previous_video_b64 is supplied with an image) ---
+def _b64_to_frames(video_b64: str):
+    """Decode base64 mp4 into list of RGB uint8 frames. Uses the same imageio+ffmpeg
+    path as enhance_video.py so the backend is consistent."""
+    if not video_b64:
+        return []
+    import base64, tempfile, os
+    try:
+        import imageio.v2 as imageio
+        import numpy as np
+    except Exception as e:
+        raise RuntimeError(f"imageio not available for video concat: {e}")
+    raw = base64.b64decode(video_b64)
+    tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+    try:
+        tmp.write(raw)
+        tmp.close()
+        reader = imageio.get_reader(tmp.name, "ffmpeg")
+        frames = []
+        for f in reader:
+            a = np.asarray(f)
+            if a.ndim == 3 and a.shape[2] >= 3:
+                frames.append(a[:, :, :3].copy())
+        return frames
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except Exception:
+            pass
+
+
+def _frames_to_b64(frames, fps: int) -> str:
+    """Encode list of RGB frames to base64 mp4 (libx264)."""
+    if not frames:
+        return ""
+    import base64, tempfile, os
+    try:
+        import imageio.v2 as imageio
+        import numpy as np
+    except Exception as e:
+        raise RuntimeError(f"imageio not available for video concat: {e}")
+    tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+    tmp.close()
+    try:
+        # quality ~8 is a reasonable tradeoff for chained clips
+        w = imageio.get_writer(tmp.name, fps=fps, codec="libx264", quality=8, pixelformat="yuv420p")
+        for f in frames:
+            w.append_data(f)
+        w.close()
+        with open(tmp.name, "rb") as fh:
+            return base64.b64encode(fh.read()).decode("ascii")
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except Exception:
+            pass
+
+
+def _match_extension_to_tail(prev_frames, ext_frames, window=24):
+    """Match new chunk exposure/color to the previous tail using per-channel stats.
+
+    This is deliberately simple and CPU-light: one global RGB gain/bias from the last
+    frames of the previous chunk to the first frames of the next chunk. It reduces the
+    common seam pop without changing model weights or adding another pass.
+    Window is a bit longer than a single keyframe so multi-chunk 20–30s chains don't
+    accumulate a visible brightness step every ~5s.
+    """
+    if not prev_frames or not ext_frames:
+        return ext_frames
+    try:
+        import numpy as np
+        n = max(1, min(int(window), len(prev_frames), len(ext_frames)))
+        prev_sample = np.concatenate([np.asarray(f, dtype=np.float32).reshape(-1, 3) for f in prev_frames[-n:]], axis=0)
+        ext_sample = np.concatenate([np.asarray(f, dtype=np.float32).reshape(-1, 3) for f in ext_frames[:n]], axis=0)
+        prev_mean, prev_std = prev_sample.mean(axis=0), prev_sample.std(axis=0)
+        ext_mean, ext_std = ext_sample.mean(axis=0), ext_sample.std(axis=0)
+        # Slightly softer gain clamp than 0.75–1.35 so long chains don't over-correct
+        # skin tones (which is where "lips vs labia" contrast mistakes get worse).
+        gain = prev_std / np.maximum(ext_std, 1.0)
+        gain = np.clip(gain, 0.82, 1.22)
+        bias = prev_mean - ext_mean * gain
+        out = []
+        fade = min(12, len(ext_frames))  # ease the correction in over the first frames
+        for i, f in enumerate(ext_frames):
+            arr = np.asarray(f, dtype=np.float32)
+            if fade > 1 and i < fade:
+                t = (i + 1) / fade  # 0→1
+                g = 1.0 + (gain - 1.0) * t
+                b = bias * t
+                arr = arr * g + b
+            else:
+                arr = arr * gain + bias
+            out.append(np.clip(arr, 0, 255).astype(np.uint8))
+        return out
+    except Exception:
+        return ext_frames
+
+
+def _ffmpeg_concat(prev_b64: str, new_frames, fps: int) -> str | None:
+    """Try to concat previous mp4 (as b64) + newly generated frames using the ffmpeg binary.
+    This is the most reliable way to get correct total duration without re-encoding the
+    entire history every time. Returns the combined base64 or None on failure.
+    """
+    if not prev_b64 or (len(new_frames) <= 0 if hasattr(new_frames, '__len__') else not bool(new_frames)):
+        return None
+    import base64, tempfile, os, subprocess, shutil
+    if not shutil.which("ffmpeg"):
+        return None
+    prev_tmp = new_tmp = comb_tmp = None
+    try:
+        prev_tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+        prev_tmp.write(base64.b64decode(prev_b64))
+        prev_tmp.close()
+
+        new_tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+        new_tmp.close()
+        from diffusers.utils import export_to_video as _export_to_video
+        _export_to_video(new_frames, new_tmp.name, fps=fps)
+
+        comb_tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+        comb_tmp.close()
+
+        cmd = [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-i", prev_tmp.name,
+            "-i", new_tmp.name,
+            "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[outv]",
+            "-map", "[outv]",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p",
+            comb_tmp.name,
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode != 0:
+            return None
+
+        with open(comb_tmp.name, "rb") as f:
+            return base64.b64encode(f.read()).decode("ascii")
+    except Exception:
+        return None
+    finally:
+        for p in (prev_tmp, new_tmp, comb_tmp):
+            if p and getattr(p, "name", None):
+                try:
+                    os.unlink(p.name)
+                except Exception:
+                    pass
 
 
 def _shutdown():
@@ -120,13 +550,15 @@ def _vram():
 def _cap_vram():
     """This GPU also drives the desktop. A full-VRAM encode once hard-froze the machine, so
     cap the process BELOW total VRAM: a shortfall then surfaces as a clean OOM instead of
-    starving the display into a deadlock. Tune with SAIENT_VRAM_FRACTION (default 0.90)."""
+    starving the display into a deadlock. Tune with SAIENT_VRAM_FRACTION (default 0.98)."""
     import torch
     if not torch.cuda.is_available():
         return
     try:
-        frac = max(0.10, min(float(os.environ.get("SAIENT_VRAM_FRACTION", "0.97")), 0.98))
+        global VRAM_CAP_FRACTION
+        frac = max(0.10, min(float(os.environ.get("SAIENT_VRAM_FRACTION", "0.98")), 0.98))
         torch.cuda.set_per_process_memory_fraction(frac, 0)
+        VRAM_CAP_FRACTION = frac
         emit({"loading_status": f"  · VRAM cap {frac:.0%} — headroom reserved for the display"})
     except Exception as e:
         emit({"loading_status": f"  ⚠ couldn't set VRAM cap ({e})"})
@@ -159,6 +591,8 @@ def _reload_transformer():
     global PIPE, I2V_PIPE
     t = WanTransformer3DModel.from_pretrained(
         NF4_CACHE_PATH, torch_dtype=torch.bfloat16, device_map={"": 0})
+    _set_attention_backend(t, LOW_VRAM_ACTIVE)
+    _cast_rope_for_low_vram(t, "high-noise expert" if DUAL_EXPERT else "transformer")
     PIPE.transformer = t
     if hasattr(PIPE, "transformer_2") and DUAL_EXPERT:
         PIPE.transformer_2 = None
@@ -167,6 +601,8 @@ def _reload_transformer():
     _free_cuda()
     if LORA_PATH:
         _apply_lora()
+    _wrap_condition_embedder_offload(t, "high-noise expert" if DUAL_EXPERT else "transformer")
+    _enable_transformer_group_offload(t, "high-noise expert" if DUAL_EXPERT else "transformer")
 
 
 def _reload_transformer2():
@@ -178,10 +614,15 @@ def _reload_transformer2():
     # First run has no packed cache yet — the helper falls back to quantizing
     # MODEL_PATH/transformer_2 on the fly and saves the cache for next time.
     t = _load_transformer_cached("transformer_2", TRANSFORMER2_CACHE_PATH, "low-noise expert")
+    _set_attention_backend(t, LOW_VRAM_ACTIVE)
+    _cast_rope_for_low_vram(t, "low-noise expert")
     PIPE.transformer_2 = t
     _free_cuda()
     if LORA_PATH:
         _apply_lora(load_into_transformer_2=True)
+    _wrap_condition_embedder_offload(t, "low-noise expert")
+    if _env_flag("SAIENT_WAN_GROUP_OFFLOAD_LOW", False):
+        _enable_transformer_group_offload(t, "low-noise expert")
 
 
 def _lora_state_dict(path):
@@ -292,6 +733,84 @@ def _expert_lora_path(for_low_expert):
     return p
 
 
+def _cast_lora_for_low_vram(sd, path):
+    """In low-VRAM mode, store LoRA adapter weights in bf16 instead of fp32.
+
+    The Wan Lightning HIGH adapter is roughly twice the size of the LOW adapter on
+    disk, so this is the most direct ~1 GB headroom win without changing the base
+    model, scheduler, frame count, or quantized transformer cache.
+    """
+    if not LOW_VRAM_ACTIVE or not _env_flag("SAIENT_WAN_LORA_BF16", True):
+        return sd
+    try:
+        import torch
+        before = sum(v.numel() * v.element_size() for v in sd.values() if hasattr(v, "element_size"))
+        converted = 0
+        for k, v in list(sd.items()):
+            if torch.is_tensor(v) and v.is_floating_point() and v.dtype != torch.bfloat16:
+                sd[k] = v.to(torch.bfloat16)
+                converted += 1
+        after = sum(v.numel() * v.element_size() for v in sd.values() if hasattr(v, "element_size"))
+        saved = max(before - after, 0) / 2**20
+        if saved >= 1:
+            emit({"loading_status": (
+                f"low-VRAM: LoRA bf16 adapter storage saved {saved:.0f} MiB "
+                f"({converted} tensors, {os.path.basename(path)})"
+            )})
+        return sd
+    except Exception as e:
+        emit({"loading_status": f"  ⚠ low-VRAM LoRA bf16 cast skipped ({type(e).__name__}: {e})"})
+        return sd
+
+
+def _cast_loaded_lora_params_for_low_vram(transformer, path):
+    """PEFT may materialize adapter params as fp32 even if the state dict is bf16."""
+    if transformer is None or not LOW_VRAM_ACTIVE or not _env_flag("SAIENT_WAN_LORA_BF16", True):
+        return
+    try:
+        import torch
+        before = converted = 0
+        after = 0
+        for name, param in transformer.named_parameters():
+            lname = name.lower()
+            if "lora_" not in lname or not torch.is_tensor(param):
+                continue
+            before += param.numel() * param.element_size()
+            if param.is_floating_point() and param.dtype != torch.bfloat16:
+                param.data = param.data.to(torch.bfloat16)
+                converted += 1
+            after += param.numel() * param.element_size()
+        for name, buf in transformer.named_buffers():
+            lname = name.lower()
+            if "lora_" not in lname or not torch.is_tensor(buf):
+                continue
+            before += buf.numel() * buf.element_size()
+            if buf.is_floating_point() and buf.dtype != torch.bfloat16:
+                buf.data = buf.data.to(torch.bfloat16)
+                converted += 1
+            after += buf.numel() * buf.element_size()
+        _free_cuda()
+        saved = max(before - after, 0) / 2**20
+        if before:
+            used = torch.cuda.memory_allocated() / 2**30 if torch.cuda.is_available() else 0.0
+            emit({"loading_status": (
+                f"low-VRAM: live LoRA params bf16 saved {saved:.0f} MiB "
+                f"({converted} tensors, {os.path.basename(path)}) · {used:.2f} GB resident"
+            )})
+    except Exception as e:
+        emit({"loading_status": f"  ⚠ low-VRAM live LoRA bf16 cast skipped ({type(e).__name__}: {e})"})
+
+
+def _active_transformer(prefer_low=False):
+    """Return the currently loaded Wan expert. Dual-expert staging leaves one of
+    transformer / transformer_2 as None — never touch .config on a None expert."""
+    if PIPE is None:
+        return None
+    if prefer_low:
+        return getattr(PIPE, "transformer_2", None) or getattr(PIPE, "transformer", None)
+    return getattr(PIPE, "transformer", None) or getattr(PIPE, "transformer_2", None)
+
+
 def _apply_lora(lora_path=None, lora_strength=None, load_into_transformer_2=False):
     """Attach a Wan LoRA as a PEFT adapter to the currently-loaded transformer.
     This is intentionally NOT a model merge: the base remains the cached 4-bit
@@ -304,15 +823,33 @@ def _apply_lora(lora_path=None, lora_strength=None, load_into_transformer_2=Fals
     if not LORA_PATH:
         return
     import os as _os
+    import contextlib
+    import torch
+    # After high→low expert swap, only transformer_2 is live. Auto-target it so we
+    # never call load_lora_weights against a None PIPE.transformer (.config crash).
+    if not load_into_transformer_2 and getattr(PIPE, "transformer", None) is None:
+        if getattr(PIPE, "transformer_2", None) is not None:
+            load_into_transformer_2 = True
+        else:
+            raise RuntimeError("cannot apply LoRA: no Wan expert is loaded")
+    if load_into_transformer_2 and getattr(PIPE, "transformer_2", None) is None:
+        raise RuntimeError("cannot apply LoRA to transformer_2: low-noise expert is not loaded")
     path = _expert_lora_path(load_into_transformer_2)
     emit({"loading_status": f"applying LoRA {_os.path.basename(path)} @ {LORA_STRENGTH}…"})
     sd = _lora_state_dict(path)
-    if load_into_transformer_2:
-        PIPE.load_lora_into_transformer(
-            sd, transformer=PIPE.transformer_2, adapter_name="extra", _pipeline=PIPE)
-    else:
-        PIPE.load_lora_weights(sd, adapter_name="extra")
-    _set_lora_strength(LORA_STRENGTH)
+    sd = _cast_lora_for_low_vram(sd, path)
+    ctx = torch.inference_mode(False) if torch.is_inference_mode_enabled() else contextlib.nullcontext()
+    with ctx:
+        if load_into_transformer_2:
+            PIPE.load_lora_into_transformer(
+                sd, transformer=PIPE.transformer_2, adapter_name="extra", _pipeline=PIPE)
+        else:
+            PIPE.load_lora_weights(sd, adapter_name="extra")
+        _set_lora_strength(LORA_STRENGTH)
+    _cast_loaded_lora_params_for_low_vram(
+        PIPE.transformer_2 if load_into_transformer_2 else PIPE.transformer,
+        path,
+    )
     emit({"loading_status": f"  ✓ LoRA adapter active ({len(sd)} tensors)"})
     _free_cuda()
 
@@ -322,11 +859,84 @@ def _set_lora_strength(strength):
     global LORA_STRENGTH
     if not LORA_PATH:
         return
+    import contextlib
+    import torch
     LORA_STRENGTH = float(strength)
-    if PIPE is not None:
-        PIPE.set_adapters(["extra"], adapter_weights=[LORA_STRENGTH])
-    if I2V_PIPE is not None:
-        I2V_PIPE.set_adapters(["extra"], adapter_weights=[LORA_STRENGTH])
+    # Prefer the live expert — Diffusers set_adapters walks PEFT modules on the pipe;
+    # after dual-expert swap only one expert exists and the other is None.
+    target = _active_transformer(prefer_low=getattr(PIPE, "transformer", None) is None)
+    if target is None:
+        raise RuntimeError("cannot set LoRA strength: no Wan expert is loaded")
+    ctx = torch.inference_mode(False) if torch.is_inference_mode_enabled() else contextlib.nullcontext()
+    applied = False
+    with ctx:
+        # Prefer the live module: a diffusers MODEL's set_adapters takes weights= (the
+        # pipeline's is adapter_weights=). After a dual-expert swap only one expert is
+        # live and PIPE.transformer may be None, so a pipeline-level call would walk into
+        # the missing expert — set strength on the module we actually hold. Never raise:
+        # the adapter is already attached+active at its load-time weight (1.0 for
+        # Lightning), so a missed strength tweak must not crash the whole generation.
+        try:
+            if hasattr(target, "set_adapter"):
+                target.set_adapter("extra")
+            if hasattr(target, "set_adapters"):
+                target.set_adapters(["extra"], weights=[LORA_STRENGTH])
+                applied = True
+        except Exception as e:
+            emit({"loading_status": f"  ⚠ LoRA strength on live expert failed ({type(e).__name__}); trying pipeline"})
+        if not applied and PIPE is not None and getattr(PIPE, "transformer", None) is not None:
+            try:
+                PIPE.set_adapters(["extra"], adapter_weights=[LORA_STRENGTH])
+                applied = True
+            except Exception as e:
+                emit({"loading_status": f"  ⚠ LoRA strength via pipeline failed ({type(e).__name__})"})
+        if not applied:
+            emit({"loading_status": "  ⚠ LoRA strength left at adapter default (could not restrike)"})
+        if I2V_PIPE is not None and getattr(I2V_PIPE, "transformer", None) is not None:
+            try:
+                I2V_PIPE.set_adapters(["extra"], adapter_weights=[LORA_STRENGTH])
+            except Exception:
+                pass
+
+
+def _ensure_lora_adapter(strength=None, load_into_transformer_2=False):
+    """Make sure the selected LoRA sidecar is actually attached before strength changes.
+
+    After an OOM or interrupted generation, the long-lived daemon can still have LORA_PATH
+    set while Diffusers/PEFT reports no present adapters. Re-attach the sidecar instead of
+    failing the next generation with "adapter not in present adapters: set()".
+    """
+    if not LORA_PATH:
+        return False
+    # Auto-route to the live expert after dual-expert high→low swap.
+    if not load_into_transformer_2 and getattr(PIPE, "transformer", None) is None:
+        if getattr(PIPE, "transformer_2", None) is not None:
+            load_into_transformer_2 = True
+        else:
+            return False
+    target = LORA_STRENGTH if strength is None else float(strength)
+    try:
+        _set_lora_strength(target)
+        return True
+    except Exception as e:
+        msg = str(e)
+        recoverable = (
+            "not in the list of present adapters" in msg
+            or "present adapters" in msg
+            or "requires_grad=True on inference tensor" in msg
+            or "NoneType" in msg
+            or "no Wan expert" in msg
+        )
+        if not recoverable:
+            raise
+        emit({"loading_status": "LoRA adapter state invalid — re-applying sidecar…"})
+        try:
+            if getattr(PIPE, "transformer", None) is not None:
+                PIPE.unload_lora_weights()
+        except Exception:
+            pass
+        _apply_lora(lora_strength=target, load_into_transformer_2=load_into_transformer_2)
+        return True
 
 
 def _configure_scheduler(req):
@@ -470,8 +1080,8 @@ def _guard_loadable(model_path, quality):
         if avail is not None and need > 0 and need > avail - 6.0:
             raise RuntimeError(
                 f"Quality mode loads the full-precision transformer (~{need:.0f} GB) into RAM, but "
-                f"only ~{avail:.0f} GB is free — that would swap-freeze the machine. Switch to "
-                f"Fast mode (untick Quality) or pick a smaller model.")
+                f"only ~{avail:.0f} GB is free — that would swap-freeze the machine. "
+                f"Switch to Fast mode (untick Quality). For 14B T2V stay on fast+Lightning (no 5B fallbacks).")
 
 
 def load(cfg):
@@ -479,12 +1089,14 @@ def load(cfg):
     global PIPE, TOKENIZER, MODEL_PATH, STREAM_TRANSFORMER
     global NF4_CACHE_PATH, RESIDENT_GB, PARK_TRANSFORMER, LORA_PATH, LORA_STRENGTH
     global SCHEDULER_BASE_CONFIG, MODEL_INDEX_CONFIG, DUAL_EXPERT, TRANSFORMER2_CACHE_PATH
+    global VRAM_REPORT
     import torch
     from diffusers import WanPipeline, WanTransformer3DModel, AutoencoderKLWan
     from diffusers import BitsAndBytesConfig as DBnb
     from transformers import AutoTokenizer
 
     _cap_vram()   # reserve VRAM for the desktop — this GPU also drives the display
+    VRAM_REPORT.clear()
 
     MODEL_PATH = cfg.get("model_path", "")
     MODEL_INDEX_CONFIG = {}
@@ -607,14 +1219,18 @@ def load(cfg):
         emit({"loading_status": "quality: bf16 transformer parked in RAM (streamed for denoise)…"})
 
     _free_cuda()
-    used, _ = _vram()
+    load_stats = _vram_stage("model load")
+    used = load_stats["used"]
     RESIDENT_GB = used
     # Decide whether this model must free its transformer during the text-encode. Only the
     # resident-nf4 case needs it (bf16 stream already moves the transformer itself).
     # If transformer (~used) + the ~5.5 GB UMT5 encoder would exceed the VRAM cap, park it.
     _total = torch.cuda.get_device_properties(0).total_memory / 2**30 if torch.cuda.is_available() else 0.0
-    _budget = _total * max(0.10, min(float(os.environ.get("SAIENT_VRAM_FRACTION", "0.97")), 0.98))
-    PARK_TRANSFORMER = (not STREAM_TRANSFORMER) and (NF4_CACHE_PATH is not None) and (used + 6.0 > _budget)
+    _budget = _total * max(0.10, min(float(os.environ.get("SAIENT_VRAM_FRACTION", "0.98")), 0.98))
+    PARK_TRANSFORMER = (not STREAM_TRANSFORMER) and (NF4_CACHE_PATH is not None) and (used + 5.5 > _budget)
+    # Force for 14B test on 16GB
+    if "A14B" in MODEL_PATH or "14B" in MODEL_PATH:
+        PARK_TRANSFORMER = True
     if PARK_TRANSFORMER:
         emit({"loading_status": f"  ⓘ 16 GB fit: free transformer for encode ({used:.1f}+5.5 > {_budget:.1f} GB cap), reload for denoise"})
     EMBED_CACHE["key"] = None   # invalidate any stale embeds from a previous model
@@ -667,7 +1283,7 @@ def encode(prompt, neg, do_cfg):
         # returned embeds keep a grad_fn chain back to the encoder's params — so `del te` can't
         # reclaim its ~5.5 GB, which then OOMs the 14B transformer reload. Inference never
         # needs the graph.
-        with torch.no_grad():
+        with torch.inference_mode():
             pe, ne = PIPE.encode_prompt(
                 prompt=prompt,
                 negative_prompt=(neg or None),
@@ -750,23 +1366,107 @@ def _decode_latents(latents):
        isolation: grad-enabled OOMs, no_grad fits.
     2. output_type="latent" upstream + _free_cuda() here drop the denoise tensors before we
        decode, and with the explicit VAE tiling set in load() the 480×832×49 decode then
-       peaks ~1.6 GB (fp32). Denorm replicates WanPipeline.__call__ exactly."""
+       peaks ~1.6 GB (fp32). Denorm replicates WanPipeline.__call__ exactly.
+
+    For quality bf16: we *try* decode with the large transformer weights still on-GPU
+    (they were left resident after denoise). If that OOMs we park only for this decode.
+    This is the key to hitting ~30s–1m end-to-end gens instead of paying PCIe both ways."""
     import torch
     vae = PIPE.vae
     _free_cuda()                              # reclaim denoise tensors before the decode
     if next(vae.parameters()).device.type != "cuda":
         vae.to("cuda:0")                      # was parked on CPU during denoise → back for decode
     zc = vae.config.z_dim
-    with torch.no_grad():
-        lat = latents.to(vae.dtype)
-        mean = torch.tensor(vae.config.latents_mean).view(1, zc, 1, 1, 1).to(lat.device, lat.dtype)
-        std = 1.0 / torch.tensor(vae.config.latents_std).view(1, zc, 1, 1, 1).to(lat.device, lat.dtype)
-        lat = lat / std + mean
-        video = vae.decode(lat, return_dict=False)[0]
-    return PIPE.video_processor.postprocess_video(video, output_type="np")[0]
+    global STREAM_TRANSFORMER
+    try:
+        with torch.inference_mode():
+            lat = latents.to(vae.dtype)
+            mean = torch.tensor(vae.config.latents_mean).view(1, zc, 1, 1, 1).to(lat.device, lat.dtype)
+            std = 1.0 / torch.tensor(vae.config.latents_std).view(1, zc, 1, 1, 1).to(lat.device, lat.dtype)
+            lat = lat / std + mean
+            video = vae.decode(lat, return_dict=False)[0]
+        return PIPE.video_processor.postprocess_video(video, output_type="np")[0]
+    except RuntimeError as e:
+        msg = str(e).lower()
+        if ("out of memory" in msg or "cuda error" in msg or "cublas" in msg) and STREAM_TRANSFORMER:
+            try:
+                emit({"loading_status": "quality: decode needed more room — parking bf16 transformer temporarily…"})
+                if getattr(PIPE, "transformer", None) is not None:
+                    PIPE.transformer.to("cpu")
+                    _free_cuda()
+            except Exception:
+                pass
+            if next(vae.parameters()).device.type != "cuda":
+                vae.to("cuda:0")
+            with torch.inference_mode():
+                lat = latents.to(vae.dtype)
+                mean = torch.tensor(vae.config.latents_mean).view(1, zc, 1, 1, 1).to(lat.device, lat.dtype)
+                std = 1.0 / torch.tensor(vae.config.latents_std).view(1, zc, 1, 1, 1).to(lat.device, lat.dtype)
+                lat = lat / std + mean
+                video = vae.decode(lat, return_dict=False)[0]
+            return PIPE.video_processor.postprocess_video(video, output_type="np")[0]
+        raise
 
 
-def _denoise_dual_expert(pe, ne, total, cfg_scale, height, width, num_frames, generator, cb):
+def _retrieve_latents_argmax(encoder_output):
+    if hasattr(encoder_output, "latent_dist"):
+        return encoder_output.latent_dist.mode()
+    if hasattr(encoder_output, "latents"):
+        return encoder_output.latents
+    raise AttributeError("Could not access latents from VAE encoder output")
+
+
+def _frame_to_first_frame_condition(frame, height, width):
+    """Encode one decoded RGB frame into Wan's first-frame latent condition.
+
+    This is the same expand_timesteps conditioning path used by Diffusers'
+    WanImageToVideoPipeline, but scoped to a single seam frame so 30s low-VRAM
+    chunking does not restart each segment from pure noise.
+    """
+    import torch
+    import numpy as np
+    from PIL import Image
+
+    if frame is None:
+        return None
+    vae = PIPE.vae
+    if next(vae.parameters()).device.type != "cuda":
+        vae.to("cuda:0")
+
+    if isinstance(frame, Image.Image):
+        image = frame.convert("RGB")
+    else:
+        arr = np.asarray(frame)
+        if arr.ndim == 2:
+            arr = np.repeat(arr[:, :, None], 3, axis=2)
+        if arr.shape[-1] > 3:
+            arr = arr[:, :, :3]
+        if arr.dtype != np.uint8:
+            scale = 255.0 if float(np.nanmax(arr)) <= 1.0 else 1.0
+            arr = np.clip(arr * scale, 0, 255).astype(np.uint8)
+        image = Image.fromarray(arr).convert("RGB")
+
+    with torch.inference_mode():
+        image_tensor = PIPE.video_processor.preprocess(image, height=height, width=width).to(
+            "cuda:0", dtype=torch.float32
+        )
+        video_condition = image_tensor.unsqueeze(2).to(device="cuda:0", dtype=vae.dtype)
+        latent_condition = _retrieve_latents_argmax(vae.encode(video_condition))
+        latent_condition = latent_condition.to(torch.float32)
+        zc = vae.config.z_dim
+        latents_mean = torch.tensor(vae.config.latents_mean).view(1, zc, 1, 1, 1).to(
+            latent_condition.device, latent_condition.dtype
+        )
+        latents_std = 1.0 / torch.tensor(vae.config.latents_std).view(1, zc, 1, 1, 1).to(
+            latent_condition.device, latent_condition.dtype
+        )
+        latent_condition = (latent_condition - latents_mean) * latents_std
+
+    del image_tensor, video_condition
+    return latent_condition.detach().to("cpu")
+
+
+def _denoise_dual_expert(pe, ne, total, cfg_scale, height, width, num_frames, generator, cb, first_frame_condition=None):
     """Wan2.2 T2V-A14B staged denoise. Diffusers' normal WanPipeline keeps both
     experts addressable; on this 16 GB display GPU we keep only one expert live:
     high-noise first, then unload it and load the low-noise expert at boundary_ratio."""
@@ -781,9 +1481,17 @@ def _denoise_dual_expert(pe, ne, total, cfg_scale, height, width, num_frames, ge
             _free_cuda()
         emit({"loading_status": "Wan2.2: reloading high-noise expert for new clip…"})
         _reload_transformer()
+    if getattr(PIPE, "transformer", None) is None:
+        raise RuntimeError("Wan2.2 high-noise expert failed to load (PIPE.transformer is None)")
+    if PIPE.scheduler is None:
+        raise RuntimeError("Wan2.2 scheduler is None — model load incomplete")
+    _enable_transformer_group_offload(PIPE.transformer, "high-noise expert")
+    if LORA_PATH:
+        _ensure_lora_adapter(LORA_STRENGTH, load_into_transformer_2=False)
 
     device = "cuda:0"
-    transformer_dtype = PIPE.transformer.dtype
+    high = PIPE.transformer
+    transformer_dtype = high.dtype
     pe = pe.to(transformer_dtype)
     if ne is not None:
         ne = ne.to(transformer_dtype)
@@ -792,7 +1500,9 @@ def _denoise_dual_expert(pe, ne, total, cfg_scale, height, width, num_frames, ge
         num_frames = num_frames // PIPE.vae_scale_factor_temporal * PIPE.vae_scale_factor_temporal + 1
     num_frames = max(num_frames, 1)
 
-    patch_size = PIPE.transformer.config.patch_size
+    # Never do PIPE.transformer.config after a possible high→low swap mid-function;
+    # capture config from the live high expert now.
+    patch_size = high.config.patch_size
     h_multiple_of = PIPE.vae_scale_factor_spatial * patch_size[1]
     w_multiple_of = PIPE.vae_scale_factor_spatial * patch_size[2]
     height = height // h_multiple_of * h_multiple_of
@@ -800,13 +1510,38 @@ def _denoise_dual_expert(pe, ne, total, cfg_scale, height, width, num_frames, ge
 
     PIPE.scheduler.set_timesteps(total, device=device)
     timesteps = PIPE.scheduler.timesteps
-    num_channels_latents = PIPE.transformer.config.in_channels
+    num_channels_latents = high.config.in_channels
+    latent_dtype = _denoise_latent_dtype(transformer_dtype, height, width, num_frames)
     latents = PIPE.prepare_latents(
-        1, num_channels_latents, height, width, num_frames, torch.float32,
+        1, num_channels_latents, height, width, num_frames, latent_dtype,
         device, generator, None)
-    mask = torch.ones(latents.shape, dtype=torch.float32, device=device)
+    condition = None
+    first_frame_mask = None
+    expand_ts = bool(getattr(getattr(PIPE, "config", None), "expand_timesteps", False))
+    if first_frame_condition is not None:
+        if not expand_ts:
+            emit({"loading_status": "  ⚠ seam conditioning skipped: model does not use expand_timesteps"})
+        else:
+            condition = first_frame_condition.to(device=device, dtype=latents.dtype, non_blocking=True)
+            if condition.shape[1] != latents.shape[1] or condition.shape[-2:] != latents.shape[-2:]:
+                raise RuntimeError(
+                    "seam conditioning latent shape mismatch: "
+                    f"condition {tuple(condition.shape)} vs latents {tuple(latents.shape)}"
+                )
+            first_frame_mask = torch.ones(
+                1, 1, latents.shape[2], latents.shape[3], latents.shape[4],
+                dtype=latents.dtype, device=device,
+            )
+            first_frame_mask[:, :, 0] = 0
 
-    boundary = float(PIPE.config.boundary_ratio) * PIPE.scheduler.config.num_train_timesteps
+    # boundary_ratio=None means single-expert for the whole schedule (no low swap).
+    br = getattr(getattr(PIPE, "config", None), "boundary_ratio", None)
+    if br is None:
+        boundary = None
+        emit({"loading_status": "Wan2.2 T2V: no boundary_ratio — high-noise expert for all steps"})
+    else:
+        boundary = float(br) * float(PIPE.scheduler.config.num_train_timesteps)
+        emit({"loading_status": f"Wan2.2 T2V: high-noise expert until t < {boundary:.0f}…"})
     switched = False
     PIPE._guidance_scale = cfg_scale
     PIPE._guidance_scale_2 = cfg_scale
@@ -815,33 +1550,48 @@ def _denoise_dual_expert(pe, ne, total, cfg_scale, height, width, num_frames, ge
     PIPE._interrupt = False
     PIPE._num_timesteps = len(timesteps)
 
-    emit({"loading_status": f"Wan2.2 T2V: high-noise expert until t < {boundary:.0f}…"})
-    with torch.no_grad():
+    with torch.inference_mode():
         for i, t in enumerate(timesteps):
-            use_low = float(t.detach().cpu()) < boundary
+            use_low = boundary is not None and float(t.detach().cpu()) < boundary
             if use_low and not switched:
                 emit({"loading_status": "Wan2.2: switching high-noise → low-noise expert…"})
+                torch.cuda.synchronize()
                 # The previous iteration's loop ref pins the high expert on the GPU —
                 # drop it or the del below frees nothing and the low-expert load OOMs.
-                current_model = None
-                high = PIPE.transformer
-                PIPE.transformer = None
-                del high
-                _free_cuda()
-                _reload_transformer2()
-                transformer_dtype = PIPE.transformer_2.dtype
+                with torch.inference_mode(False):
+                    current_model = None
+                    high = PIPE.transformer
+                    PIPE.transformer = None
+                    del high
+                    _free_cuda()
+                    _reload_transformer2()
+                    if getattr(PIPE, "transformer_2", None) is None:
+                        raise RuntimeError("Wan2.2 low-noise expert failed to load (PIPE.transformer_2 is None)")
+                    if _env_flag("SAIENT_WAN_GROUP_OFFLOAD_LOW", False):
+                        _enable_transformer_group_offload(PIPE.transformer_2, "low-noise expert")
+                    transformer_dtype = PIPE.transformer_2.dtype
+                    pe = pe.to(transformer_dtype)
+                    if ne is not None:
+                        ne = ne.to(transformer_dtype)
                 switched = True
 
             current_model = PIPE.transformer_2 if use_low else PIPE.transformer
             if current_model is None:
-                raise RuntimeError("Wan2.2 expert switch failed: active transformer is missing")
+                which = "low-noise (transformer_2)" if use_low else "high-noise (transformer)"
+                raise RuntimeError(f"Wan2.2 expert switch failed: {which} is missing")
 
-            latent_model_input = latents.to(transformer_dtype)
-            if PIPE.config.expand_timesteps:
-                temp_ts = (mask[0][0][:, ::2, ::2] * t).flatten()
+            if first_frame_mask is not None:
+                latent_model_input = latents.clone()
+                latent_model_input[:, :, :condition.shape[2]] = condition
+                latent_model_input = latent_model_input.to(transformer_dtype)
+                temp_ts = (first_frame_mask[0][0][:, ::2, ::2] * t).flatten()
                 timestep = temp_ts.unsqueeze(0).expand(latents.shape[0], -1)
             else:
-                timestep = t.expand(latents.shape[0])
+                latent_model_input = latents.to(transformer_dtype)
+                if expand_ts:
+                    timestep = _timestep_for_latents(t, latents)
+                else:
+                    timestep = t.expand(latents.shape[0])
 
             with current_model.cache_context("cond"):
                 noise_pred = current_model(
@@ -861,12 +1611,21 @@ def _denoise_dual_expert(pe, ne, total, cfg_scale, height, width, num_frames, ge
                         attention_kwargs=None,
                         return_dict=False,
                     )[0]
-                noise_pred = noise_uncond + cfg_scale * (noise_pred - noise_uncond)
+                noise_pred.sub_(noise_uncond).mul_(cfg_scale).add_(noise_uncond)
+                del noise_uncond
 
             latents = PIPE.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
+            del noise_pred, latent_model_input, timestep
+            # empty_cache every step was ~free on short runs but multi-chunk Lightning
+            # was paying PCIe/sync tax 80×; only scrub mid-run on long non-distill loops.
+            if LOW_VRAM_ACTIVE and total >= 12 and i % 4 == 3:
+                torch.cuda.empty_cache()
             out = cb(PIPE, i, t, {"latents": latents})
             latents = out.pop("latents", latents)
 
+    if first_frame_mask is not None:
+        latents[:, :, :condition.shape[2]] = condition
+        del condition, first_frame_mask
     PIPE._current_timestep = None
     return latents
 
@@ -874,20 +1633,72 @@ def _denoise_dual_expert(pe, ne, total, cfg_scale, height, width, num_frames, ge
 def generate(req):
     import torch
     from diffusers.utils import export_to_video
+    global LOW_VRAM_ACTIVE, LOW_VRAM_ATTN_BACKEND, LORA_STRENGTH, BLOCK_OFFLOAD_REQ
 
     t0 = time.time()
     _free_cuda()  # release reserved blocks left over from the previous generation
     _vram()       # reset peak counter for this run
-    # The previous generation's decode left a heavy VAE resident on the GPU. The text
-    # encoder we may reload below is the single biggest transient (~5.5 GB), so on a 16 GB
-    # card a 2nd generation with a NEW prompt (cache miss → TE reload) OOMed on top of it.
-    # Park the heavy VAE on CPU now; it's brought back only for i2v conditioning / decode.
-    if _vae_is_heavy() and _vae_to("cpu"):
-        emit({"loading_status": "headroom: VAE parked on CPU before encode…"})
     total = int(req.get("steps", 30))
     cfg_scale = float(req.get("cfg_scale", 6.0))
     do_cfg = cfg_scale > 1.0
     prompt = req.get("prompt", ""); neg = req.get("neg_prompt", "")
+    height = int(req.get("height", 480)); width = int(req.get("width", 832))
+    num_frames = int(req.get("num_frames", 49))
+    fps = int(req.get("fps", 16))
+    image_b64 = (req.get("image_b64") or "").strip()
+    wan_chunk_limit = 0
+    if DUAL_EXPERT:
+        wan_chunk_limit = int(os.environ.get("SAIENT_WAN_CHUNK_FRAMES", "121"))
+        wan_chunk_limit = max(9, ((wan_chunk_limit - 1) // 4) * 4 + 1)
+    needs_chunk = DUAL_EXPERT and num_frames > wan_chunk_limit
+    high_res_pixels = int(os.environ.get("SAIENT_WAN_HIGHRES_PIXELS", "500000"))
+    needs_highres_headroom = DUAL_EXPERT and (width * height) >= high_res_pixels
+    long_clip = (num_frames / max(fps, 1)) >= 20
+    BLOCK_OFFLOAD_REQ = bool(req.get("block_offload", False))
+    LOW_VRAM_ACTIVE = (
+        bool(req.get("low_vram", False))
+        or BLOCK_OFFLOAD_REQ
+        or needs_chunk
+        or needs_highres_headroom
+        or (DUAL_EXPERT and long_clip)
+    )
+    if BLOCK_OFFLOAD_REQ:
+        emit({"loading_status": "park to RAM: transformer will stream block-by-block (fits over-VRAM clips; slower)"})
+    LOW_VRAM_ATTN_BACKEND = (
+        os.environ.get("SAIENT_WAN_HIGHRES_ATTN_BACKEND", "_native_flash")
+        if needs_highres_headroom
+        else None
+    )
+    if LOW_VRAM_ACTIVE:
+        if needs_chunk and not req.get("low_vram", False):
+            emit({"loading_status": (
+                f"low-VRAM auto: {num_frames} frames exceeds safe {wan_chunk_limit}f 14B chunk limit"
+            )})
+        elif needs_highres_headroom and not req.get("low_vram", False):
+            emit({"loading_status": (
+                f"low-VRAM auto: {width}×{height} 14B needs high-res denoise headroom"
+            )})
+        emit({"loading_status": "low-VRAM mode: CPU prompt cache, low-VRAM attention, freed weights before VAE/video stages"})
+        if needs_highres_headroom:
+            emit({"loading_status": f"low-VRAM: high-res attention backend {LOW_VRAM_ATTN_BACKEND}"})
+            _raise_highres_vram_cap(True)
+        _set_attention_backend(getattr(PIPE, "transformer", None), True)
+        _set_attention_backend(getattr(PIPE, "transformer_2", None), True)
+        _cast_rope_for_low_vram(
+            getattr(PIPE, "transformer", None),
+            "high-noise expert" if DUAL_EXPERT else "transformer",
+        )
+        _cast_rope_for_low_vram(getattr(PIPE, "transformer_2", None), "low-noise expert")
+        _wrap_condition_embedder_offload(
+            getattr(PIPE, "transformer", None),
+            "high-noise expert" if DUAL_EXPERT else "transformer",
+        )
+        _wrap_condition_embedder_offload(getattr(PIPE, "transformer_2", None), "low-noise expert")
+    # The VAE is inactive during text encoding and T2V denoise. In low-VRAM mode,
+    # park it even when it is not the "heavy" 5B VAE; the 30s A14B spike needs the
+    # extra headroom and _decode_latents moves it back for decode.
+    if (LOW_VRAM_ACTIVE or _vae_is_heavy()) and _vae_to("cpu"):
+        emit({"loading_status": "headroom: VAE parked on CPU before encode/denoise…"})
     lora_profile = str(req.get("lora_profile") or "single").strip().lower()
     lora_split_step = max(1, min(total - 1, int(req.get("lora_split_step", max(1, total // 2))))) if total > 1 else 1
     lora_high = float(req.get("lora_strength_high", LORA_STRENGTH))
@@ -895,15 +1706,18 @@ def generate(req):
     lora_switched = False
     _configure_scheduler(req)
     if LORA_PATH and lora_profile == "high_low":
-        _set_lora_strength(lora_high)
+        if DUAL_EXPERT:
+            LORA_STRENGTH = lora_high
+        else:
+            _ensure_lora_adapter(lora_high)
         emit({"loading_status": f"LoRA high/low: {lora_high:g} for {lora_split_step} steps, then {lora_low:g}"})
 
     # ── Prompt embeddings: reuse cache, else load text encoder + encode ──────────
     # Return CLONES so the pipeline can never mutate the cached master in-place.
     key = (prompt, neg, do_cfg)
     if EMBED_CACHE["key"] == key and EMBED_CACHE["pe"] is not None:
-        pe = EMBED_CACHE["pe"].clone()
-        ne = EMBED_CACHE["ne"].clone() if EMBED_CACHE["ne"] is not None else None
+        pe = EMBED_CACHE["pe"].to("cuda", non_blocking=True)
+        ne = EMBED_CACHE["ne"].to("cuda", non_blocking=True) if EMBED_CACHE["ne"] is not None else None
         emit({"loading_status": "↻ reusing cached prompt embeds — text encoder skipped"})
     else:
         _t = time.time()
@@ -912,18 +1726,33 @@ def generate(req):
         if PARK_TRANSFORMER:
             emit({"loading_status": "16 GB fit: freeing transformer off GPU for the text encoder…"})
             _unload_transformer()
+        # For quality bf16 offload: ensure transformer is in system RAM before we load the
+        # ~5.5 GB text encoder. This is the only place we intentionally move it CPU-ward
+        # between gens (saves a move if decode kept it on-GPU).
+        if STREAM_TRANSFORMER:
+            try:
+                if next(PIPE.transformer.parameters()).device.type == "cuda":
+                    emit({"loading_status": "quality: parking bf16 transformer for text-encoder headroom…"})
+                    PIPE.transformer.to("cpu", non_blocking=True)
+                    torch.cuda.synchronize()
+                    _free_cuda()
+            except Exception:
+                pass
         pe, ne = encode(prompt, neg, do_cfg)
         if PARK_TRANSFORMER:
             _freed = torch.cuda.memory_allocated() / 2**30 if torch.cuda.is_available() else 0.0
             emit({"loading_status": f"encoder freed ({_freed:.1f} GB resident) — reloading nf4 transformer → GPU…"})
             _reload_transformer()
         EMBED_CACHE["key"] = key
-        EMBED_CACHE["pe"] = pe.detach().clone()
-        EMBED_CACHE["ne"] = ne.detach().clone() if ne is not None else None
+        EMBED_CACHE["pe"] = pe.detach().to("cpu").clone()
+        EMBED_CACHE["ne"] = ne.detach().to("cpu").clone() if ne is not None else None
         emit({"loading_status": f"  ⏱ text encoder + encode (+park/reload): {time.time()-_t:.0f}s"})
+    _free_cuda()
+    _vram_stage("text encoding")
 
     # ── Denoise (time it via callback timestamps) ────────────────────────────────
     marks = {"first": None, "last": None}
+    progress_state = {"offset": 0, "total": total}
 
     def cb(_pipe, i, _t, kwargs):
         nonlocal lora_switched
@@ -938,10 +1767,16 @@ def generate(req):
             and i + 1 >= lora_split_step
             and i + 1 < total
         ):
-            _set_lora_strength(lora_low)
+            _ensure_lora_adapter(
+                lora_low,
+                load_into_transformer_2=(
+                    getattr(PIPE, "transformer_2", None) is not None
+                    and getattr(PIPE, "transformer", None) is None
+                ),
+            )
             lora_switched = True
             emit({"loading_status": f"LoRA low-noise strength → {lora_low:g}"})
-        emit({"step": i + 1, "total": total})
+        emit({"step": progress_state["offset"] + i + 1, "total": progress_state["total"]})
         return kwargs
 
     generator = None
@@ -949,21 +1784,28 @@ def generate(req):
     if seed is not None and int(seed) >= 0:
         generator = torch.Generator(device="cpu").manual_seed(int(seed))
 
-    height = int(req.get("height", 480)); width = int(req.get("width", 832))
-    num_frames = int(req.get("num_frames", 49))
-    image_b64 = (req.get("image_b64") or "").strip()
-
     t_dn = time.time()
     if STREAM_TRANSFORMER:
-        # Quality mode: stream the bf16 transformer from RAM onto the GPU for denoise. Encode
-        # is done (text encoder freed) and the heavy VAE is parked on CPU, so it has the card
-        # to itself. Moved back to RAM before decode (below).
+        # Quality mode: stream the bf16 transformer from RAM onto the GPU for denoise.
+        # Use non_blocking + sync for potentially faster PCIe move. We no longer park
+        # immediately after — decode gets to try with weights resident.
         emit({"loading_status": "quality: streaming bf16 transformer → GPU for denoise…"})
-        PIPE.transformer.to("cuda:0"); _free_cuda()
+        try:
+            if next(PIPE.transformer.parameters()).device.type != "cuda":
+                PIPE.transformer.to("cuda:0", non_blocking=True)
+                torch.cuda.synchronize()
+        except Exception:
+            PIPE.transformer.to("cuda:0")
+            _free_cuda()
+        else:
+            _free_cuda()
     # output_type="latent": the pipe RETURNS the denoised latents without decoding, so
     # the denoise activation set is freed before the VAE decode. The Wan2.2-5B VAE (48
     # latent ch) decode is heavy and was OOMing by ~130 MB when run inline (denoise
     # tensors still resident). We decode separately below with the GPU freed.
+    frames = None
+    chunked_denoise_s = None
+    chunked_decode_s = 0.0
     if image_b64:
         if DUAL_EXPERT:
             emit({"error": "Wan2.2 T2V-A14B is text-to-video only — clear the image input or choose an I2V model."})
@@ -990,13 +1832,122 @@ def generate(req):
         # t2v doesn't use the VAE during denoise. A heavy (5B) VAE was already parked on CPU
         # before encode; this is a defensive re-park in case it's somehow still resident.
         # _decode_latents moves it back for decode. (1.3B VAE is tiny — left wherever it is.)
-        if _vae_is_heavy() and _vae_to("cpu"):
+        if (LOW_VRAM_ACTIVE or _vae_is_heavy()) and _vae_to("cpu"):
             emit({"loading_status": "headroom: VAE parked on CPU during denoise…"})
+        if not STREAM_TRANSFORMER and not DUAL_EXPERT and getattr(PIPE, "transformer", None) is None:
+            emit({"loading_status": "low-VRAM: reloading transformer for denoise…"})
+            _reload_transformer()
+        if LOW_VRAM_ACTIVE and not STREAM_TRANSFORMER and not DUAL_EXPERT:
+            _enable_transformer_group_offload(getattr(PIPE, "transformer", None), "transformer")
         if not STREAM_TRANSFORMER:
             emit({"loading_status": "denoising…"})
         if DUAL_EXPERT:
-            latents = _denoise_dual_expert(
-                pe, ne, total, cfg_scale, height, width, num_frames, generator, cb)
+            chunk_limit = wan_chunk_limit
+            # Fewer chunks = fewer high/low expert reloads. At SD/low res the latent
+            # tensor is small enough that larger chunks still fit 16GB.
+            pixels = max(width * height, 1)
+            if pixels <= 640 * 480:
+                chunk_limit = max(chunk_limit, int(os.environ.get("SAIENT_WAN_CHUNK_FRAMES_SD", "241")))
+            elif pixels <= 832 * 480:
+                chunk_limit = max(chunk_limit, int(os.environ.get("SAIENT_WAN_CHUNK_FRAMES_SD", "161")))
+            chunk_limit = max(9, ((chunk_limit - 1) // 4) * 4 + 1)
+            do_chunk = LOW_VRAM_ACTIVE and num_frames > chunk_limit
+            if do_chunk:
+                import math
+                chunks = max(1, math.ceil((num_frames - 1) / max(chunk_limit - 1, 1)))
+                progress_state["total"] = total * chunks
+                emit({"loading_status": (
+                    f"low-VRAM: chunked T2V denoise {chunks}×{chunk_limit}f "
+                    f"(continues to {num_frames}f; fewer expert reloads)"
+                )})
+                combined_frames = []
+                next_condition = None
+                denoise_elapsed = 0.0
+                decode_elapsed = 0.0
+                denoise_stats = None
+                decode_stats = None
+                # expand_timesteps is required for first-frame seam cond; T2V-A14B usually
+                # has it off — skip the encode entirely instead of paying VAE for a no-op.
+                can_seam = bool(getattr(getattr(PIPE, "config", None), "expand_timesteps", False))
+                if not can_seam:
+                    emit({"loading_status": (
+                        "low-VRAM: T2V has no expand_timesteps — skipping seam encode "
+                        "(prompt continuity only; saves encode+reload tax)"
+                    )})
+
+                def merge_stats(prev, cur):
+                    cur = dict(cur)
+                    if prev is None:
+                        return cur
+                    cur["peak"] = max(prev.get("peak", 0.0), cur.get("peak", 0.0))
+                    cur["reserved"] = max(prev.get("reserved", 0.0), cur.get("reserved", 0.0))
+                    return cur
+
+                for ci in range(chunks):
+                    have = len(combined_frames)
+                    need = num_frames - have
+                    seg_frames = min(chunk_limit, need if ci == 0 else need + 1)
+                    seg_frames = max(9, ((seg_frames - 1) // 4) * 4 + 1)
+                    continuation = " · continuing from previous frame" if next_condition is not None else ""
+                    emit({"loading_status": f"low-VRAM: chunk {ci + 1}/{chunks} · {seg_frames} frames{continuation}"})
+                    progress_state["offset"] = ci * total
+                    if (LOW_VRAM_ACTIVE or _vae_is_heavy()) and _vae_to("cpu"):
+                        emit({"loading_status": "headroom: VAE parked on CPU during chunk denoise…"})
+                    seg_t0 = time.time()
+                    seg_latents = _denoise_dual_expert(
+                        pe, ne, total, cfg_scale, height, width, seg_frames, generator, cb,
+                        first_frame_condition=next_condition)
+                    next_condition = None
+                    denoise_elapsed += time.time() - seg_t0
+                    denoise_stats = merge_stats(
+                        denoise_stats,
+                        _vram_stage("denoising", reset_peak=True, emit_line=False),
+                    )
+                    # Always free the live expert before VAE decode. Dual-expert denoise
+                    # ends on transformer_2; leaving it resident + poking LoRA/pipe APIs
+                    # caused 'NoneType' .config crashes on the missing high expert.
+                    if getattr(PIPE, "transformer", None) is not None or getattr(PIPE, "transformer_2", None) is not None:
+                        emit({"loading_status": "low-VRAM: freeing expert before VAE decode…"})
+                        _unload_transformer()
+                    dec_t0 = time.time()
+                    seg_video = _decode_latents(seg_latents)
+                    del seg_latents
+                    if hasattr(seg_video, "ndim") and getattr(seg_video, "ndim", 0) == 4:
+                        seg_list = [seg_video[i] for i in range(seg_video.shape[0])]
+                    else:
+                        seg_list = list(seg_video)
+                    if ci > 0 and seg_list:
+                        seg_list = seg_list[1:]
+                    append_count = max(num_frames - len(combined_frames), 0)
+                    appended = seg_list[:append_count]
+                    combined_frames.extend(appended)
+                    if ci < chunks - 1 and appended and can_seam:
+                        seam_frame = appended[-1]
+                        fh, fw = seam_frame.shape[:2]
+                        emit({"loading_status": "low-VRAM: encoding seam frame for next chunk continuity…"})
+                        next_condition = _frame_to_first_frame_condition(seam_frame, fh, fw)
+                    decode_elapsed += time.time() - dec_t0
+                    decode_stats = merge_stats(
+                        decode_stats,
+                        _vram_stage("VAE decode", reset_peak=True, emit_line=False),
+                    )
+                    emit({"loading_status": f"low-VRAM: continued {len(combined_frames)}/{num_frames} frames"})
+                    del seg_video, seg_list, appended
+                    if LOW_VRAM_ACTIVE and _vae_to("cpu"):
+                        emit({"loading_status": "low-VRAM: VAE parked on CPU after chunk decode…"})
+                    _free_cuda()
+
+                frames = combined_frames[:num_frames]
+                if denoise_stats is not None:
+                    VRAM_REPORT["denoising"] = denoise_stats
+                if decode_stats is not None:
+                    VRAM_REPORT["VAE decode"] = decode_stats
+                chunked_denoise_s = denoise_elapsed
+                chunked_decode_s = decode_elapsed
+                latents = None
+            else:
+                latents = _denoise_dual_expert(
+                    pe, ne, total, cfg_scale, height, width, num_frames, generator, cb)
         else:
             latents = PIPE(
                 prompt_embeds=pe, negative_prompt_embeds=ne,
@@ -1006,32 +1957,154 @@ def generate(req):
                 output_type="latent",
             ).frames
     t_dn_end = time.time()
+    # For quality (STREAM_TRANSFORMER): leave the bf16 transformer on GPU for decode if it fits.
+    # We park lazily (1) before the next prompt's text-encoder (to free headroom), or (2) inside
+    # _decode_latents on OOM. This cuts one full ~10 GB PCIe roundtrip for single gens and when
+    # decode headroom exists. Aim: total gen time in the 30s–60s range on capable cards.
     if STREAM_TRANSFORMER:
-        # Park the bf16 transformer back in RAM so its ~10 GB of VRAM is freed for the VAE
-        # decode and the next prompt's text-encoder load. Only one heavy component resident.
-        PIPE.transformer.to("cpu"); _free_cuda()
-        emit({"loading_status": "quality: transformer parked back in RAM — VRAM freed for decode…"})
+        resident = torch.cuda.memory_allocated() / 2**30 if torch.cuda.is_available() else 0.0
+        emit({"loading_status": f"denoise done ({t_dn_end - t_dn:.0f}s) · {resident:.1f} GB resident · decoding (weights left on GPU if room)…"})
+    else:
+        resident = torch.cuda.memory_allocated() / 2**30 if torch.cuda.is_available() else 0.0
+        emit({"loading_status": f"denoise done ({t_dn_end - t_dn:.0f}s) · {resident:.1f} GB resident · decoding…"})
     del pe, ne
-    resident = torch.cuda.memory_allocated() / 2**30 if torch.cuda.is_available() else 0.0
-    emit({"loading_status": f"denoise done ({t_dn_end - t_dn:.0f}s) · {resident:.1f} GB resident · decoding (GPU freed)…"})
-    frames = _decode_latents(latents)
-    del latents
-    t_after = time.time()
-    denoise_s = (marks["last"] - marks["first"]) if (marks["first"] and marks["last"]) else (t_dn_end - t_dn)
-    decode_s = t_after - t_dn_end
-    _, peak = _vram()
+    if frames is None:
+        _free_cuda()
+        _vram_stage("denoising")
+        if LOW_VRAM_ACTIVE and not STREAM_TRANSFORMER:
+            if getattr(PIPE, "transformer", None) is not None or getattr(PIPE, "transformer_2", None) is not None:
+                emit({"loading_status": "low-VRAM: freeing inactive transformer before VAE decode…"})
+                _unload_transformer()
+        frames = _decode_latents(latents)
+        del latents
+        t_after = time.time()
+        denoise_s = (marks["last"] - marks["first"]) if (marks["first"] and marks["last"]) else (t_dn_end - t_dn)
+        decode_s = t_after - t_dn_end
+        _free_cuda()
+        _vram_stage("VAE decode")
+    else:
+        t_after = time.time()
+        denoise_s = chunked_denoise_s if chunked_denoise_s is not None else (t_dn_end - t_dn)
+        decode_s = chunked_decode_s
     sps = denoise_s / max(total - 1, 1)
-    emit({"loading_status": f"  ⏱ denoise: {denoise_s:.0f}s ({sps:.1f}s/step) · decode: {decode_s:.0f}s · peak VRAM {peak:.1f} GB"})
+    emit({"loading_status": f"  ⏱ denoise: {denoise_s:.0f}s ({sps:.1f}s/step) · decode: {decode_s:.0f}s"})
+    if LOW_VRAM_ACTIVE and _vae_is_heavy() and _vae_to("cpu"):
+        emit({"loading_status": "low-VRAM: VAE parked on CPU before video assembly…"})
     _free_cuda()
 
-    fps = int(req.get("fps", 16))
+    prev_b64 = (req.get("previous_video_b64") or "").strip()
+    image_b64_for_seed = (req.get("image_b64") or "").strip()
+
+    # --- Extension stitching: try to return original + new segment ---
+    if prev_b64 and frames is not None and (len(frames) > 0 if hasattr(frames, '__len__') else bool(frames)):
+        # Force the very first frame of the *new* segment to be exactly the seed image the user
+        # provided (the true last frame of the previous clip). This prevents the generated
+        # frame0 from being a slightly brighter/different VAE reconstruction.
+        try:
+            if image_b64_for_seed:
+                import io
+                from PIL import Image
+                import numpy as _np
+                seed = Image.open(io.BytesIO(base64.b64decode(image_b64_for_seed))).convert("RGB")
+                # resize to match what the model produced
+                h, w = frames[0].shape[:2]
+                seed = seed.resize((w, h), Image.LANCZOS)
+                frames[0] = _np.asarray(seed, dtype=_np.uint8)
+        except Exception:
+            pass
+
+        # Frame-level concat for extensions:
+        # - drop the duplicate seed frame (frame 0 of the new chunk is the previous tail)
+        # - color/exposure match the new chunk to the previous tail
+        # - for pure T2V prompt-only continuation, keep the old crossfade fallback
+        force_seam = req.get("force_seam_blend", False)
+        do_force_blend = force_seam or not image_b64_for_seed
+        try:
+            prev_frames = _b64_to_frames(prev_b64)
+            if prev_frames:
+                ext = frames[1:] if len(frames) > 1 else frames
+                if hasattr(ext, 'ndim') and getattr(ext, 'ndim', 0) == 4:
+                    ext = [ext[i] for i in range(ext.shape[0])]
+                ext = list(ext)
+                if image_b64_for_seed:
+                    ext = _match_extension_to_tail(prev_frames, ext)
+                    emit({"loading_status": "seam: dropped duplicate seed frame + matched chunk color/exposure to previous tail"})
+                elif do_force_blend:
+                    if len(ext) > 0:
+                        ext[0] = prev_frames[-1].copy()
+                    join = min(12, len(prev_frames), len(ext) if isinstance(ext, (list, tuple)) else 0)
+                    import numpy as _np
+                    for i in range(join):
+                        t = (i + 1) / float(join + 1)
+                        alpha = t * t * (3 - 2 * t)
+                        p = _np.asarray(prev_frames[-join + i], dtype=_np.float32)
+                        e = _np.asarray(ext[i], dtype=_np.float32)
+                        blended = (p * (1.0 - alpha) + e * alpha).astype(_np.uint8)
+                        prev_frames[-join + i] = blended
+                    emit({"loading_status": "seam: prompt-only T2V crossfade blend applied"})
+                combined_frames = prev_frames + ext
+                tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+                tmp.close()
+                from diffusers.utils import export_to_video as _export_to_video
+                _export_to_video(combined_frames, tmp.name, fps=fps)
+                with open(tmp.name, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode("ascii")
+                os.unlink(tmp.name)
+                _emit_video_result(b64, len(combined_frames), time.time() - t0, extended=True)
+                return
+        except Exception as ce:
+            emit({"loading_status": f"⚠ frame concat/color match failed ({ce})"})
+
+        # Prefer fast container-level concat with ffmpeg (keeps original part bit-identical,
+        # adds the new segment length). This makes "3s -> extend 3s" actually produce 6s.
+        combined_b64 = _ffmpeg_concat(prev_b64, frames, fps)
+        if combined_b64:
+            # We don't decode the previous again just for the count (avoids imageio dep).
+            # The mp4 itself is the correct longer duration.
+            _emit_video_result(combined_b64, len(frames), time.time() - t0, extended=True)
+            return
+        else:
+            # Fallback to in-memory frame concat (re-encodes everything but still gives correct length)
+            try:
+                prev_frames = _b64_to_frames(prev_b64)
+                if prev_frames:
+                    ext = frames[1:] if len(frames) > 1 else frames
+                    if hasattr(ext, 'ndim') and getattr(ext, 'ndim', 0) == 4:  # ndarray (T,H,W,C)
+                        ext = [ext[i] for i in range(ext.shape[0])]
+                    # Force exact start from previous last frame for visual continuity
+                    if len(ext) > 0 and len(prev_frames) > 0:
+                        ext[0] = prev_frames[-1].copy()
+                    # blend for this fallback too
+                    join = min(12, len(prev_frames), len(ext) if isinstance(ext, (list, tuple)) else 0)
+                    import numpy as _np
+                    for i in range(join):
+                        t = (i + 1) / float(join + 1)
+                        alpha = t * t * (3 - 2 * t)
+                        p = _np.asarray(prev_frames[-join + i], dtype=_np.float32)
+                        e = _np.asarray(ext[i], dtype=_np.float32)
+                        blended = (p * (1.0 - alpha) + e * alpha).astype(_np.uint8)
+                        prev_frames[-join + i] = blended
+                    combined_frames = prev_frames + (ext if isinstance(ext, (list, tuple)) else list(ext))
+                    tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+                    tmp.close()
+                    from diffusers.utils import export_to_video as _export_to_video
+                    _export_to_video(combined_frames, tmp.name, fps=fps)
+                    with open(tmp.name, "rb") as f:
+                        b64 = base64.b64encode(f.read()).decode("ascii")
+                    os.unlink(tmp.name)
+                    _emit_video_result(b64, len(combined_frames), time.time() - t0, extended=True)
+                    return
+            except Exception as ce:
+                emit({"loading_status": f"⚠ frame concat fallback failed ({ce})"})
+
+    # Normal path: just the clip we generated (or extend concat failed)
     tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
     tmp.close()
     export_to_video(frames, tmp.name, fps=fps)
     with open(tmp.name, "rb") as f:
         b64 = base64.b64encode(f.read()).decode("ascii")
     os.unlink(tmp.name)
-    emit({"base64_mp4": b64, "frames": len(frames), "elapsed": round(time.time() - t0, 1)})
+    _emit_video_result(b64, len(frames), time.time() - t0)
 
 
 def main():
@@ -1072,7 +2145,9 @@ def main():
         try:
             generate(req)
         except Exception as e:
-            emit({"error": str(e), "trace": traceback.format_exc()[:1000]})
+            # Surface a short actionable message; full traceback still in "trace".
+            tb = traceback.format_exc()
+            emit({"error": f"{type(e).__name__}: {e}", "trace": tb[:2000]})
 
 
 if __name__ == "__main__":

@@ -287,6 +287,10 @@ export interface VideoPayload {
   fps?: number;
   seed?: number;
   image_b64?: string;   // optional still → image-to-video
+  previous_video_b64?: string;  // for extend: the prior full clip to append the new segment to
+  force_seam_blend?: boolean;   // for storyboard on T2V: force frame-level concat with crossfade blend at seam
+  low_vram?: boolean;
+  block_offload?: boolean;      // park transformer to RAM, stream per-step → fits native 5s@720p (slow)
 }
 export interface VideoResult { base64_mp4: string; frames: number; elapsed: number }
 

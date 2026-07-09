@@ -41,6 +41,10 @@ pub struct VideoPayload {
     pub fps: Option<u32>,
     pub seed: Option<i64>,
     pub image_b64: Option<String>,   // optional still → image-to-video
+    pub previous_video_b64: Option<String>,  // when extending: concat this + newly generated extension
+    pub force_seam_blend: Option<bool>,
+    pub low_vram: Option<bool>,
+    pub block_offload: Option<bool>,  // park transformer to RAM, stream per-step (fits 5s@720p)
 }
 
 #[derive(Serialize, Clone)]
@@ -507,6 +511,10 @@ fn do_generate(arc: VideoHandle, payload: VideoPayload, window: WebviewWindow) -
         "fps":        payload.fps.unwrap_or(16),
         "seed":       payload.seed.unwrap_or(-1),
         "image_b64":  payload.image_b64.unwrap_or_default(),
+        "previous_video_b64": payload.previous_video_b64.unwrap_or_default(),
+        "force_seam_blend": payload.force_seam_blend.unwrap_or(false),
+        "low_vram": payload.low_vram.unwrap_or(false),
+        "block_offload": payload.block_offload.unwrap_or(false),
     });
     writeln!(daemon.stdin, "{req}").map_err(|e| format!("stdin write: {e}"))?;
     daemon.stdin.flush().map_err(|e| format!("stdin flush: {e}"))?;
