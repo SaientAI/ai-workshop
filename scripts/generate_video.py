@@ -271,6 +271,52 @@ def _denoise_latent_dtype(transformer_dtype, height, width, num_frames):
     return transformer_dtype
 
 
+def _model_resident_bytes(model):
+    """Sum of parameter + buffer bytes = how much RAM this model occupies when parked."""
+    total = 0
+    try:
+        for p in model.parameters():
+            total += p.numel() * p.element_size()
+        for b in model.buffers():
+            total += b.numel() * b.element_size()
+    except Exception:
+        return 0
+    return total
+
+
+def _mem_available_bytes():
+    """Physical RAM currently available (MemAvailable), EXCLUDING swap. 0 if unknown."""
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024
+    except Exception:
+        pass
+    return 0
+
+
+def _ram_can_park(model):
+    """Guard against the swap-thrash freeze: parking a model bigger than physical RAM
+    forces the OS into swap and locks the whole box solid (the fp32 14B → 54 GB in a
+    39 GB box was a 3-hour hard-freeze). Returns (ok, model_gb, avail_gb, msg).
+
+    We require the parked weights PLUS a 15% offload overhead PLUS 3 GB OS headroom to
+    fit inside MemAvailable (physical RAM only — swap does NOT count as fittable)."""
+    model_b = _model_resident_bytes(model)
+    avail_b = _mem_available_bytes()
+    gb = 2**30
+    if model_b <= 0 or avail_b <= 0:
+        # Can't measure — refuse rather than risk the freeze.
+        return (False, model_b / gb, avail_b / gb,
+                "cannot measure RAM/model size; refusing to park (would risk a swap freeze)")
+    needed_b = model_b * 1.15 + 3 * gb
+    ok = needed_b <= avail_b
+    return (ok, model_b / gb, avail_b / gb,
+            f"parked model ≈{model_b/gb:.1f} GB + overhead needs ≈{needed_b/gb:.1f} GB, "
+            f"but only {avail_b/gb:.1f} GB physical RAM is free")
+
+
 def _enable_transformer_group_offload(model, label="transformer"):
     """Low-VRAM mode: keep only active transformer blocks on the GPU during forward.
 
@@ -289,10 +335,26 @@ def _enable_transformer_group_offload(model, label="transformer"):
         return False
     if getattr(model, "_saient_group_offload_enabled", False):
         return True
+    # HARD SAFETY GUARD: never park a model that won't fit in physical RAM. Parking into
+    # swap thrashes the disk and freezes the whole machine (the fp32 14B freeze). Refuse
+    # loudly instead — generate() turns this into a clean, actionable error.
+    ok, model_gb, avail_gb, why = _ram_can_park(model)
+    if not ok:
+        emit({"loading_status": (
+            f"  ✗ block offload REFUSED for {label}: {why}. "
+            f"Use 480p + upscale for 5s@720p instead of parking."
+        )})
+        raise RuntimeError(
+            f"block offload would freeze the PC: {why}. "
+            f"This box can't park a {model_gb:.0f} GB model in {avail_gb:.0f} GB free RAM — "
+            f"generate at 480p and upscale to 720p instead."
+        )
     try:
         import torch
         blocks = max(1, int(os.environ.get("SAIENT_WAN_GROUP_OFFLOAD_BLOCKS", "1")))
-        use_stream = _env_flag("SAIENT_WAN_GROUP_OFFLOAD_STREAM", False)
+        # Force sync offload: async streaming pins host memory (non-swappable) and makes
+        # the freeze worse. The env flag is intentionally ignored for the shipped toggle.
+        use_stream = False
         low_cpu = _env_flag("SAIENT_WAN_GROUP_OFFLOAD_LOW_CPU", True)
         model.enable_group_offload(
             onload_device=torch.device("cuda:0"),

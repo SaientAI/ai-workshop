@@ -449,12 +449,15 @@
           video.height = 704;
           video.numFrames = HD_MAX_FRAMES; // native 720p ceiling on the 16 GB card (5s/81f OOMs)
         } else if (id === "t2v_hd_5s_max") {
-          // Native 5s@720p only fits by parking the transformer to RAM (block-offload).
-          // Verified sharp; ~17 min/clip. That's the trade for a true single-shot HD 5s.
-          video.width = 1280;
-          video.height = 704;
+          // SAFE 5s@720p: native 5s@480p (fits VRAM cleanly) then the 2× ESRGAN upscale
+          // pass lifts it to ~1664×960 HD. Parking fp32 (54 GB) into 39 GB RAM froze the
+          // whole PC — never again. This route is freeze-proof and still HD-class.
+          video.width = 832;
+          video.height = 480;
           video.numFrames = framesFor(5);
-          video.blockOffload = true;
+          video.blockOffload = false;
+          video.doUpscale = true;   // pre-arm the Enhance → 2× upscale to reach HD
+          video.doRefine = true;
         } else {
           video.width = 832;
           video.height = 480;
@@ -462,9 +465,9 @@
         }
         const secs = clipSecondsFromFrames(video.numFrames, 16);
         const label = id === "t2v_hd_3s" ? `HD ${secs}s T2V`
-          : id === "t2v_hd_5s_max" ? "HD 5s T2V (max, parked)" : "5s T2V";
+          : id === "t2v_hd_5s_max" ? "5s T2V (480p → Enhance ×2 to HD)" : "5s T2V";
         logln(`preset: ${label} · ${fast.label} · FastWan 4-step (fp32) · ${video.width}×${video.height} · ${video.numFrames}f`
-          + (video.blockOffload ? " · park-to-RAM ON (~17 min)" : ""));
+          + (id === "t2v_hd_5s_max" ? " · then click Enhance for 2× HD upscale (no PC-freezing RAM park)" : ""));
         logln(loaded && video.loadedPath === fast.path
           ? "✓ model already loaded — paste prompt → Generate"
           : "→ hit Load Model, then paste prompt → Generate");
@@ -1328,8 +1331,8 @@
         </button>
         <button class="vsize-btn" class:on={activeSimplePreset === "t2v_hd_5s_max"}
           onclick={() => applySimplePreset("t2v_hd_5s_max")}
-          title="FastWan-14B · 1280×704 · 81f (~5s) · parks the transformer to RAM and streams it so 5s fits the 16 GB card. Verified sharp but SLOW (~17 min/clip). Load → Generate.">
-          HD 5s (max)
+          title="Freeze-proof HD 5s: FastWan-14B renders native 5s@480p (fits the 16 GB card), then click Enhance for the 2× ESRGAN upscale to ~960p HD. Avoids the RAM-parking route that froze the PC. Load → Generate → Enhance.">
+          HD 5s (safe)
         </button>
         <button class="vsize-btn" class:on={activeSimplePreset === "i2v_svi_5s"}
           onclick={() => applySimplePreset("i2v_svi_5s")}
@@ -1442,8 +1445,9 @@
       <span>Low VRAM</span>
       <input type="checkbox" bind:checked={video.lowVramMode} disabled={video.loading} />
     </label>
-    <label class="vrow" style="cursor:pointer">
-      <span>Park to RAM <span style="font-size:0.85em;color:var(--accent2,#e0a060)">· fits 5s@720p, slow</span></span>
+    <label class="vrow" style="cursor:pointer"
+      title="Streams the transformer from system RAM to fit bigger clips. SAFE-GUARDED: refused with a clear error if the model won't fit physical RAM (fp32 14B = 54 GB won't; it froze the PC before). Only works for models that fit RAM (e.g. 4-bit A14B). Slow.">
+      <span>Park to RAM <span style="font-size:0.85em;color:var(--accent2,#e0a060)">· only if model fits RAM · slow</span></span>
       <input type="checkbox" bind:checked={video.blockOffload} disabled={video.loading} />
     </label>
     <div class="vhint">
