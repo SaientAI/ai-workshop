@@ -1,0 +1,9 @@
+[Desktop Entry]
+Categories=Development;Utility;
+Comment=Local LLM inference, image & video generation — GPU accelerated
+Exec=__SAIENT_BIN__
+StartupWMClass=llm-inference
+Icon=saient
+Name=Saient
+Terminal=false
+Type=Application
