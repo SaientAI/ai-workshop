@@ -14,16 +14,31 @@ import type { Plan } from "./types.js";
 import type { SessionState, CheckpointKind, CheckpointMeta } from "./tauri.js";
 import type { TurnState } from "./turnState.js";
 
-/** When to checkpoint without being asked. */
-export type AutoSavePolicy = "off" | "turn" | "task";
+/**
+ * When to checkpoint.
+ *
+ * "ask" is the default and the only one that interrupts: it offers the choice at
+ * the end of a turn. The others are set once by someone who has decided, so they
+ * must never prompt — an auto-save that still asks is just a slower prompt.
+ */
+export type AutoSavePolicy = "ask" | "off" | "turn" | "task";
 
-export const AUTO_SAVE_POLICIES: readonly AutoSavePolicy[] = ["off", "turn", "task"];
+export const AUTO_SAVE_POLICIES: readonly AutoSavePolicy[] = ["ask", "off", "turn", "task"];
 
 export const AUTO_SAVE_LABELS: Record<AutoSavePolicy, string> = {
+  ask: "Ask each time",
   off: "Off",
   turn: "Every turn",
   task: "Every completed task",
 };
+
+/** Terminal states — the only moments a save decision is due. */
+const SETTLED = ["COMPLETED", "FAILED", "INTERRUPTED"];
+
+/** Whether to put the save prompt up. Only ever under the "ask" policy. */
+export function shouldPrompt(policy: AutoSavePolicy, state: TurnState): boolean {
+  return policy === "ask" && SETTLED.includes(state);
+}
 
 /**
  * Whether a turn reaching `state` should trigger an automatic checkpoint.
@@ -35,10 +50,11 @@ export const AUTO_SAVE_LABELS: Record<AutoSavePolicy, string> = {
  */
 export function shouldAutoSave(policy: AutoSavePolicy, state: TurnState): boolean {
   switch (policy) {
+    case "ask":
     case "off":
       return false;
     case "turn":
-      return state === "COMPLETED" || state === "FAILED" || state === "INTERRUPTED";
+      return SETTLED.includes(state);
     case "task":
       return state === "COMPLETED" || state === "FAILED";
   }
