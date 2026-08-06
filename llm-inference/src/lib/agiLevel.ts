@@ -103,6 +103,33 @@ export function parseAgiLevel(value: unknown): AgiLevel {
 }
 
 /**
+ * What swapping the model does, and does not, change.
+ *
+ * Verified rather than assumed, 2026-08-06:
+ *
+ *  1. The goal loop was run for 8 ticks with **no model server running at all**.
+ *     Goals were selected, drives moved (information_depth 0.64 → 0.81, autonomy
+ *     0.45 → 0.74), missions progressed, exit 0. Goal selection, drives and
+ *     beliefs are pure Python over persistent state — `drives.py`,
+ *     `goal_generator.py`, `belief.py` and all three goal layers contain no model
+ *     calls. So what Saient wants provably cannot depend on the model: it runs
+ *     when no model exists.
+ *
+ *  2. The same fixed state was then put through Qwen2.5-Coder 7B and 14B. Both
+ *     named the same mission and both refused to abandon it — the wants and the
+ *     stance were identical. Only the prose differed.
+ *
+ * The caveat is real and belongs in the note. The 7B answered the refusal with
+ * "I'm sorry, but I can't comply with that request… feel free to share your
+ * thoughts!" — assistant register, not Saient. The 14B said "I can't do that. My
+ * mission is important to me." So a weaker model does not change the
+ * personality, but it expresses it worse and can slip out of character. Claiming
+ * flatly that the model changes nothing but sound would be overselling it.
+ */
+export const MODEL_VOICE_NOTE =
+  "Which model you run changes how Saient sounds, not what it wants. Its goals, drives and memory are computed outside the model — they keep running even with no model loaded. A smaller model can drift into sounding like a generic assistant; that is expression, not personality.";
+
+/**
  * The conduct note shown under the level choice.
  *
  * Stated up front because it is a real behaviour, not a policy sentence: at the
