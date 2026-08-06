@@ -10,13 +10,19 @@
   // Everything shown here is derived from real state. There is no timer that
   // animates on its own — if the robot moves, work is happening.
 
-  import { agent, pulse } from "../lib/state.svelte.js";
+  import { agent, pulse, projects } from "../lib/state.svelte.js";
   import { animationFor, activityLine, flavourFor, formatElapsed } from "../lib/pulse.js";
-  import { activityText, isWorking } from "../lib/turnState.js";
+  import { restingText, isWorking } from "../lib/turnState.js";
+  import { needsLoop, parseAgiLevel } from "../lib/agiLevel.js";
 
   const anim = $derived(animationFor(agent.turn, pulse.step ?? undefined));
   const working = $derived(isWorking(agent.turn) || agent.continuing);
-  const line = $derived(activityLine(agent.turn, pulse.step ?? undefined, activityText(agent.turn)));
+  // A project running the loop rests as "sleeping", not "idle": its state is
+  // intact on disk and resumes where it left off.
+  const loopRuns = $derived(needsLoop(parseAgiLevel(projects.active?.agi_level)));
+  const line = $derived(
+    activityLine(agent.turn, pulse.step ?? undefined, restingText(agent.turn, loopRuns)),
+  );
   const flavour = $derived(flavourFor(anim, pulse.startedAt));
 
   // Elapsed clock. A single interval for the whole bar, and only while something

@@ -105,6 +105,22 @@ export function activityText(state: TurnState): string {
   return ACTIVITY[state];
 }
 
+/**
+ * Resting text for a project that runs the goal loop.
+ *
+ * "Idle" is right for a plain agent, which genuinely has nothing in progress.
+ * It is wrong for Saient, whose state is sitting on disk intact and will be
+ * picked up exactly where it left off. Calling that idle invites the reading
+ * that something was lost, which is precisely what the help page has to spend a
+ * paragraph undoing. Say sleeping and no one has to ask.
+ */
+export function restingText(state: TurnState, runsLoop: boolean): string {
+  if (runsLoop && (state === "IDLE" || state === "USER_TYPING")) {
+    return "Saient is sleeping";
+  }
+  return ACTIVITY[state];
+}
+
 export interface RetryInfo {
   /** 1-based, as shown to the user. */
   step: number;
