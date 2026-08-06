@@ -2,19 +2,21 @@
   import { onMount, onDestroy } from "svelte";
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
   import { setupEvents } from "./lib/events.js";
-  import { ui, model, agent, license, update, toast } from "./lib/state.svelte.js";
+  import { ui, model, agent, update, toast, projects } from "./lib/state.svelte.js";
   import { handleKey } from "./lib/shortcuts.js";
   import * as T from "./lib/tauri.js";
   import TitleBar from "./components/TitleBar.svelte";
   import ShortcutsHelp from "./components/ShortcutsHelp.svelte";
   import SetupWizard from "./components/SetupWizard.svelte";
-  import Paywall from "./components/Paywall.svelte";
   import LockScreen from "./components/LockScreen.svelte";
   import SettingsModal from "./components/SettingsModal.svelte";
   import SecuritySettings from "./components/SecuritySettings.svelte";
   import UpdateBox from "./components/UpdateBox.svelte";
   import Toasts from "./components/Toasts.svelte";
   import IconRail from "./components/IconRail.svelte";
+  import SaientPulse from "./components/SaientPulse.svelte";
+  import CheckpointBar from "./components/CheckpointBar.svelte";
+  import ProjectPicker from "./components/ProjectPicker.svelte";
   import ChatScreen from "./components/screens/ChatScreen.svelte";
   import AgentScreen from "./components/screens/AgentScreen.svelte";
   import ImageGenScreen from "./components/screens/ImageGenScreen.svelte";
@@ -55,15 +57,6 @@
     const sys = await T.detectSystem().catch(() => null);
     if (sys && !sys.setup_done) showSetup = true;
 
-    // Licensing — trial countdown / paywall on expiry.
-    const lic = await T.licenseStatus().catch(() => null);
-    if (lic) {
-      license.status = lic.status;
-      license.daysLeft = lic.days_left;
-      license.trialDays = lic.trial_days;
-      license.tier = lic.tier;
-    }
-
     // Update check — best-effort, silent on failure (offline is fine).
     T.checkUpdate().then((u) => {
       update.checked = true;
@@ -91,8 +84,15 @@
       model.path = model.models[0].gguf_path;
     }
 
-    // Sandbox root
-    agent.sandboxRoot = await T.getSandboxRoot().catch(() => "");
+    // Active project. When one is remembered, point the agent at it; otherwise
+    // the picker asks before any work lands in a shared heap.
+    projects.active = await T.projectActive().catch(() => null);
+    if (projects.active) {
+      await T.projectOpen(projects.active.name).catch(() => {});
+      agent.sandboxRoot = projects.active.path;
+    } else {
+      agent.sandboxRoot = await T.getSandboxRoot().catch(() => "");
+    }
 
     // GPU poll
     setInterval(async () => {
@@ -133,8 +133,23 @@
   {/if}
 </div>
 
+<!-- Always mounted, showing "Idle" at rest, so the bar never appears or vanishes
+     under the screen it sits beneath. -->
+<SaientPulse />
+
+<!-- Ctrl+S and the end-of-turn save prompt. App level so the shortcut works
+     everywhere and a prompt cannot be dismissed by navigating away. -->
+<CheckpointBar />
+
 {#if ui.showShortcuts}
   <ShortcutsHelp />
+{/if}
+
+<!-- Ask only when the agent is opened. Chat writes nothing to disk, so blocking
+     it behind a project choice is a dialog for no reason. Suppressed during
+     first-run setup and while locked so dialogs cannot stack. -->
+{#if ui.screen === "agent" && !projects.active && !showSetup && !locked}
+  <ProjectPicker />
 {/if}
 
 {#if showSetup}
@@ -145,20 +160,6 @@
     model.models = await T.scanModelsDir().catch(() => model.models);
     model.depReport = await T.checkDependencies().catch(() => model.depReport);
   }} />
-{/if}
-
-<!-- Trial countdown strip (non-blocking); click to unlock early -->
-{#if license.status === "trial" && !showSetup}
-  <button class="trial-strip" onclick={() => (license.showUnlock = true)}>
-    Trial · {license.daysLeft} {license.daysLeft === 1 ? "day" : "days"} left — Unlock full version
-  </button>
-{/if}
-
-<!-- Paywall: blocking when the trial has expired, dismissible when opened manually -->
-{#if license.status === "expired"}
-  <Paywall blocking />
-{:else if license.showUnlock}
-  <Paywall onClose={() => (license.showUnlock = false)} />
 {/if}
 
 <!-- Launch password gate (covers everything via z-index) -->
@@ -215,13 +216,6 @@
     flex-shrink: 0; background: none; border: 0; color: #8a93a3; cursor: pointer; font-size: 12px; padding: 2px 4px;
   }
   .update-bar .ub-x:hover { color: #cdd6f5; }
-  .trial-strip {
-    position: fixed; bottom: 0; left: 0; right: 0; z-index: 90;
-    border: 0; cursor: pointer; padding: 6px 12px;
-    background: rgba(108, 142, 245, 0.12); color: #aab6e8;
-    font-size: 11px; text-align: center; border-top: 1px solid rgba(108,142,245,0.25);
-  }
-  .trial-strip:hover { background: rgba(108, 142, 245, 0.2); color: #cdd6f5; }
   :global(*) { box-sizing: border-box; margin: 0; padding: 0; }
   :global(body) {
     background: var(--bg);
@@ -251,7 +245,9 @@
   }
   .layout {
     display: flex;
-    height: calc(100vh - 36px);
+    /* 36px title bar + 32px Saient Pulse. The Pulse is always mounted, so this
+       reservation is unconditional and the screens never shift under it. */
+    height: calc(100vh - 36px - 32px);
     overflow: hidden;
   }
 

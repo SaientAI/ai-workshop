@@ -18,14 +18,7 @@
   "name": "Saient",
   "applicationCategory": "DeveloperApplication",
   "operatingSystem": "Linux, Windows",
-  "description": "Local AI desktop app: chat, a coding agent, image and video generation, a vision analyzer, text-to-speech and LoRA training — all running on your own machine.",
-  "offers": {
-    "@type": "Offer",
-    "price": "20.00",
-    "priceCurrency": "GBP",
-    "url": "https://saient.co.uk/pricing"
-  }
-}
+  "description": "Local AI desktop app: chat, a coding agent, image and video generation, a vision analyzer, text-to-speech and LoRA training — all running on your own machine."}
 </script>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230d0d0f'/%3E%3Ctext x='16' y='21' font-family='monospace' font-size='12' fill='%236c8ef5' text-anchor='middle' font-weight='700'%3E%5B%3E_%3C%5D%3C/text%3E%3C/svg%3E" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -286,7 +279,6 @@
       <a class="link" href="#features">Features</a>
       <a class="link" href="#guides">Guides</a>
       <a class="link" href="#agent">Agent</a>
-      <a class="link" href="/pricing">Pricing</a>
       <a class="link" href="/help">Help</a>
       <a class="btn btn-primary" href="#download">Download</a>
     </div>
@@ -395,12 +387,12 @@
         <div class="tags"><span class="tag">train</span><span class="tag">merge</span></div>
       </div>
 
-      <div class="card reveal">
+      <a class="card reveal" href="/quartz-engine">
         <div class="ic">⚡</div>
         <h3>One engine</h3>
-        <p>Powered by <b>tinyq4</b>, a from-scratch GGUF inference engine — no llama.cpp, no Python server you have to babysit.</p>
-        <div class="tags"><span class="tag">tinyq4</span><span class="tag">native</span></div>
-      </div>
+        <p>Powered by <b>Quartz</b>, Saient's native inference runtime — local model execution with no ONNX Runtime or cloud inference.</p>
+        <div class="tags"><span class="tag">Quartz</span><span class="tag">native</span><span class="tag">Vulkan</span></div>
+      </a>
     </div>
   </div>
 </section>
@@ -441,7 +433,14 @@
         <div class="tags"><span class="tag">coding agent</span><span class="tag">offline</span></div>
       </a>
 
-      <a class="card wide reveal" href="/how-to-run-ai-locally">
+      <a class="card reveal" href="/quartz-engine">
+        <div class="ic">Qz</div>
+        <h3>Quartz inference engine</h3>
+        <p>How Saient runs supported language and image models locally without cloud inference or ONNX Runtime.</p>
+        <div class="tags"><span class="tag">Vulkan</span><span class="tag">on-device</span></div>
+      </a>
+
+      <a class="card reveal" href="/how-to-run-ai-locally">
         <div class="ic">&gt;_</div>
         <h3>How to run AI locally</h3>
         <p>Install Saient, choose a GGUF model, load it, and use chat, agent, image and video tools offline.</p>
@@ -527,7 +526,7 @@
       <a href="/ai-image-generator">Image gen</a>
       <a href="/ai-video-generator">Video gen</a>
       <a href="/local-ai-agent">Agent</a>
-      <a href="/pricing">Pricing</a>
+      <a href="/quartz-engine">Quartz</a>
       <a href="/help">Help</a>
       <a href="/terms">Terms</a>
       <a href="/privacy">Privacy</a>

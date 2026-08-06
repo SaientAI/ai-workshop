@@ -209,7 +209,7 @@
         <ul class="wz-tips">
           <li><b>👁 Vision</b>, <b>🎬 Video</b> and image generation live in the left rail.</li>
           <li><b>🔒</b> in the title bar sets a launch password for shared machines.</li>
-          <li><b>⬆</b> checks for updates. You're on a <b>30-day free trial</b> — everything unlocked.</li>
+          <li><b>⬆</b> checks for updates.</li>
         </ul>
         <button class="wz-btn wz-btn-primary" onclick={onDone}>Get started →</button>
       </div>

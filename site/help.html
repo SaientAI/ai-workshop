@@ -4,10 +4,10 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Help &amp; Setup — Saient</title>
-<meta name="description" content="Saient help centre — install on Linux or Windows, load a model, activate your licence, use the agent and image studios, and fix common issues." />
+<meta name="description" content="Saient help centre — install on Linux or Windows, load a model, use the agent and image studios, and fix common issues." />
 <link rel="canonical" href="https://saient.co.uk/help" />
 <meta property="og:title" content="Saient — Help &amp; Setup" />
-<meta property="og:description" content="Install, load a model, activate your licence, and get the most out of Saient." />
+<meta property="og:description" content="Install, load a model, and get the most out of Saient." />
 <meta property="og:url" content="https://saient.co.uk/help" />
 <!-- FAQ structured data -->
 <script type="application/ld+json">
@@ -15,7 +15,6 @@
   "@context":"https://schema.org",
   "@type":"FAQPage",
   "mainEntity":[
-    {"@type":"Question","name":"How do I activate my licence key?","acceptedAnswer":{"@type":"Answer","text":"After purchase you receive a licence key by email. Open Saient, click the unlock prompt or the trial strip, paste your key into the box, and press Activate. Verification is offline."}},
     {"@type":"Question","name":"Saient says my GPU isn't being used.","acceptedAnswer":{"@type":"Answer","text":"Saient ships a CUDA engine for NVIDIA GPUs and falls back to CPU if no GPU is detected. Make sure your NVIDIA driver is installed and nvidia-smi works. The title bar shows live GPU stats when a model is loaded."}},
     {"@type":"Question","name":"Where do I put model files?","acceptedAnswer":{"@type":"Answer","text":"Saient scans its models folder for GGUF files. Drop your .gguf models there (or use the in-app picker) and they appear in the model list."}}
   ]
@@ -50,6 +49,9 @@
   .sec-tag { font-family:var(--mono); font-size:12px; color:var(--accent); letter-spacing:0.12em; text-transform:uppercase; margin-bottom:14px; }
   h1 { font-family:var(--display); font-size:clamp(28px,4.4vw,44px); letter-spacing:-0.03em; margin-bottom:14px; }
   .head p { color:var(--text2); font-size:17px; max-width:34em; margin:0 auto; }
+  .head-actions { display:flex; justify-content:center; margin-top:22px; }
+  .btn-quartz { display:inline-flex; align-items:center; gap:8px; border:1px solid var(--accent-dim); background:rgba(108,142,245,0.08); color:var(--text); font-family:var(--mono); font-size:13px; font-weight:700; padding:10px 16px; border-radius:var(--radius-sm); }
+  .btn-quartz:hover { background:rgba(108,142,245,0.16); border-color:var(--accent); text-decoration:none; }
 
   .layout { display:grid; grid-template-columns:220px 1fr; gap:40px; max-width:1080px; margin:46px auto 80px; padding:0 28px; }
   @media (max-width:860px){ .layout { grid-template-columns:1fr; } .toc { position:static !important; } }
@@ -87,7 +89,6 @@
     <a class="brand" href="/"><span class="face">[&gt;_&lt;]</span><span>SAIENT</span></a>
     <div class="nav-links">
       <a class="link" href="/#features">Features</a>
-      <a class="link" href="/pricing">Pricing</a>
       <a class="link" href="/help">Help</a>
       <a class="btn-primary" href="/#download">Download</a>
     </div>
@@ -98,7 +99,10 @@
   <div class="wrap">
     <div class="sec-tag">Help centre</div>
     <h1>Get up and running</h1>
-    <p>Everything you need to install Saient, load a model, activate your licence, and make the most of every studio.</p>
+    <p>Everything you need to install Saient, load a model, and make the most of every studio.</p>
+    <div class="head-actions">
+      <a class="btn-quartz" href="/quartz-engine">Quartz engine guide <span aria-hidden="true">→</span></a>
+    </div>
   </div>
 </header>
 
@@ -110,7 +114,6 @@
     <a href="#models">Loading models</a>
     <a href="#gpu">GPU &amp; CUDA</a>
     <a href="#studios">The studios</a>
-    <a href="#licence">Trial &amp; licence</a>
     <a href="#security">Launch password</a>
     <a href="#trouble">Troubleshooting</a>
     <a href="#faq">FAQ</a>
@@ -167,17 +170,6 @@
       <p>Press <span class="kbd">?</span> any time for the full keyboard-shortcut list.</p>
     </section>
 
-    <section class="block" id="licence">
-      <h2>Trial &amp; licence</h2>
-      <p>Saient is free for <b>30 days</b> with every feature unlocked. A small strip shows how many days are left.</p>
-      <h3>Activating after purchase</h3>
-      <ol>
-        <li>Buy the <a href="/pricing">£20 unlock</a> — checkout is handled securely by Stripe.</li>
-        <li>We email your <b>licence key</b> to the address you paid with.</li>
-        <li>In Saient, click the unlock prompt (or the trial strip), paste your key, and press <b>Activate</b>.</li>
-      </ol>
-      <div class="note">Keys are verified <b>offline</b> — your machine never has to phone home. Keep your key somewhere safe; you can paste it again to activate on another of your machines.</div>
-    </section>
 
     <section class="block" id="security">
       <h2>Launch password</h2>
@@ -193,15 +185,13 @@
       <p>These need the optional Python tools. Re-run <b>Full setup</b> to install them.</p>
       <h3>The GPU isn’t being used</h3>
       <p>Confirm your NVIDIA driver works (<code>nvidia-smi</code> on the command line). Without a usable GPU, Saient runs on CPU, which is slower.</p>
-      <h3>I lost my licence key</h3>
-      <p>Email <a href="mailto:chrishall@staticplay.co.uk">chrishall@staticplay.co.uk</a> from the address you bought with and we’ll re-send it.</p>
     </section>
 
     <section class="block faq" id="faq">
       <h2>FAQ</h2>
-      <details><summary>Is it really a one-time payment?</summary><p>Yes — £20 once, yours forever. No subscription. See the <a href="/pricing">pricing page</a>.</p></details>
-      <details><summary>Does Saient send my data anywhere?</summary><p>No. Inference, the agent and licence checks all run on your machine. The only time data leaves is when you choose to download a model, or pay (handled by Stripe). See our <a href="/privacy">privacy policy</a>.</p></details>
-      <details><summary>Can I use it offline?</summary><p>Yes — after downloading the app and your models, Saient works fully offline, including licence activation.</p></details>
+      <details><summary>How much does it cost?</summary><p>Nothing. Saient is free — no subscription, no unlock, no account.</p></details>
+      <details><summary>Does Saient send my data anywhere?</summary><p>No. Inference and the agent both run on your machine. The only time data leaves is when you choose to download a model. See our <a href="/privacy">privacy policy</a>.</p></details>
+      <details><summary>Can I use it offline?</summary><p>Yes — after downloading the app and your models, Saient works fully offline.</p></details>
       <details><summary>Which operating systems are supported?</summary><p>Linux and Windows. An NVIDIA GPU is recommended but not required.</p></details>
       <details><summary>How do I get a refund?</summary><p>Because there’s a 30-day free trial, the unlock is generally non-refundable once a key is issued, but your statutory rights are unaffected and we’ll always sort out faulty software. See the <a href="/terms">terms</a>.</p></details>
     </section>
@@ -214,7 +204,6 @@
   <div class="wrap foot-inner">
     <a class="brand" href="/"><span class="face">[&gt;_&lt;]</span><span>SAIENT</span></a>
     <div class="foot-links">
-      <a href="/pricing">Pricing</a>
       <a href="/help">Help</a>
       <a href="/terms">Terms</a>
       <a href="/privacy">Privacy</a>
