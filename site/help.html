@@ -15,6 +15,7 @@
   "@context":"https://schema.org",
   "@type":"FAQPage",
   "mainEntity":[
+    {"@type":"Question","name":"Does turning off my PC kill Saient?","acceptedAnswer":{"@type":"Answer","text":"No - it sleeps. Saient keeps its state on disk: its goals, its drives, what it has done and what it was part-way through. Shutting down stops it running; starting up loads that state and carries on from where it was. Nothing breaks and nothing is lost. Deleting its state files is the only thing that cannot be undone."}},
     {"@type":"Question","name":"Saient says my GPU isn't being used.","acceptedAnswer":{"@type":"Answer","text":"Saient ships a CUDA engine for NVIDIA GPUs and falls back to CPU if no GPU is detected. Make sure your NVIDIA driver is installed and nvidia-smi works. The title bar shows live GPU stats when a model is loaded."}},
     {"@type":"Question","name":"Where do I put model files?","acceptedAnswer":{"@type":"Answer","text":"Saient scans its models folder for GGUF files. Drop your .gguf models there (or use the in-app picker) and they appear in the model list."}}
   ]
@@ -189,11 +190,14 @@
 
     <section class="block faq" id="faq">
       <h2>FAQ</h2>
+      <details><summary>Does turning off my PC kill Saient?</summary><p>No — it sleeps. Saient keeps its state on disk: its goals, its drives, what it has done and what it was part-way through. Shutting down stops it running; starting up loads that state and carries on from where it was. Nothing breaks and nothing is lost.</p></details>
+      <details><summary>What actually ends a Saient, then?</summary><p>Deleting its state files. That is the one thing that cannot be undone. Start it again afterwards and you get a new one beginning from nothing, rather than the same one continuing. Everything else — closing the app, a crash, a reboot, days of not opening it — is sleep.</p></details>
+      <details><summary>Is Saient conscious?</summary><p>No, and we are not claiming it is. “Sleep” describes what happens to its saved state, not an experience. What Saient actually has is continuity: it does not start from a blank slate each time, and what it did last session still shapes what it does next. That is a property of the software, and it is worth naming honestly rather than dressing up.</p></details>
+      <details><summary>Does Saient keep running when I close the app?</summary><p>No. Nothing keeps ticking in the background once Saient is closed, and nothing phones home while it sleeps. It only runs while the app is open and you have chosen a level that runs it.</p></details>
       <details><summary>How much does it cost?</summary><p>Nothing. Saient is free — no subscription, no unlock, no account.</p></details>
       <details><summary>Does Saient send my data anywhere?</summary><p>No. Inference and the agent both run on your machine. The only time data leaves is when you choose to download a model. See our <a href="/privacy">privacy policy</a>.</p></details>
       <details><summary>Can I use it offline?</summary><p>Yes — after downloading the app and your models, Saient works fully offline.</p></details>
       <details><summary>Which operating systems are supported?</summary><p>Linux and Windows. An NVIDIA GPU is recommended but not required.</p></details>
-      <details><summary>How do I get a refund?</summary><p>Because there’s a 30-day free trial, the unlock is generally non-refundable once a key is issued, but your statutory rights are unaffected and we’ll always sort out faulty software. See the <a href="/terms">terms</a>.</p></details>
     </section>
 
     <p style="color:var(--text3);font-size:14px;margin-top:30px">Still stuck? Email <a href="mailto:chrishall@staticplay.co.uk">chrishall@staticplay.co.uk</a>.</p>

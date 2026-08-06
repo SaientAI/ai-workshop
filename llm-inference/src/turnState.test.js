@@ -14,6 +14,7 @@ import {
   ownsInput,
   inputLabel,
   activityText,
+  restingText,
   isWorking,
   isTerminal,
   canTransition,
@@ -119,6 +120,26 @@ test("staying in the same state is always allowed", () => {
 test("retry text names the step and the reason", () => {
   const msg = retryMessage({ step: 2, total: 3, reason: "command returned exit code 1" });
   assert.equal(msg, "Retrying step 2 of 3\nReason: command returned exit code 1");
+});
+
+// ── Sleep, not idle ─────────────────────────────────────────────────────────
+
+test("a project running the loop rests as sleeping, not idle", () => {
+  // Its state is on disk and resumes where it left off. "Idle" invites the
+  // reading that something was lost, which the help page then has to undo.
+  assert.equal(restingText("IDLE", true), "Saient is sleeping");
+  assert.equal(restingText("USER_TYPING", true), "Saient is sleeping");
+});
+
+test("a plain agent is still idle", () => {
+  assert.equal(restingText("IDLE", false), "Idle");
+});
+
+test("sleeping never masks real work or a real outcome", () => {
+  for (const s of ["SAIENT_THINKING", "WAITING_FOR_TOOL", "VERIFYING", "RETRYING", "FAILED", "COMPLETED"]) {
+    assert.notEqual(restingText(s, true), "Saient is sleeping", `${s} must not read as asleep`);
+    assert.equal(restingText(s, true), activityText(s));
+  }
 });
 
 console.log(`turnState.test.js — ${passed} passed`);
