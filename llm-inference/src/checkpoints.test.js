@@ -6,6 +6,7 @@
 import assert from "node:assert/strict";
 import {
   shouldAutoSave,
+  shouldPrompt,
   outstandingFrom,
   currentStep,
   buildSessionState,
@@ -145,6 +146,30 @@ test("size reads at a glance", () => {
   assert.equal(describeSize({ file_count: 1, total_bytes: 2048 }), "1 file · 2 KiB");
   assert.equal(describeSize({ file_count: 3, total_bytes: 12 * 1024 }), "3 files · 12 KiB");
   assert.ok(describeSize({ file_count: 9, total_bytes: 5 * 1024 * 1024 }).endsWith("5.0 MiB"));
+});
+
+// ── Ask policy ──────────────────────────────────────────────────────────────
+
+test("ask prompts only once the turn has settled", () => {
+  for (const s of ["COMPLETED", "FAILED", "INTERRUPTED"]) {
+    assert.equal(shouldPrompt("ask", s), true, `${s} should prompt`);
+  }
+  for (const s of ["SAIENT_THINKING", "VERIFYING", "RETRYING", "IDLE"]) {
+    assert.equal(shouldPrompt("ask", s), false, `${s} must not prompt`);
+  }
+});
+
+test("a decided policy never prompts", () => {
+  // An auto-save that still asks is just a slower prompt.
+  for (const policy of ["off", "turn", "task"]) {
+    for (const s of TURN_STATES) {
+      assert.equal(shouldPrompt(policy, s), false, `${policy} prompted at ${s}`);
+    }
+  }
+});
+
+test("ask never saves silently", () => {
+  for (const s of TURN_STATES) assert.equal(shouldAutoSave("ask", s), false);
 });
 
 console.log(`checkpoints.test.js — ${passed} passed`);
