@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, TryLockError};
 use tauri::{Emitter, State, WebviewWindow};
 use crate::resolve;
 use crate::resolve::NoConsole;
@@ -58,13 +58,21 @@ pub struct ImgGenDaemon {
     pub device:     String,
 }
 
+impl ImgGenDaemon {
+    fn is_running(&mut self) -> bool {
+        matches!(self._child.try_wait(), Ok(None))
+    }
+}
+
 impl Drop for ImgGenDaemon {
     fn drop(&mut self) {
         let _ = self._child.kill();
+        let _ = self._child.wait();
     }
 }
 
 pub type DaemonHandle = Arc<Mutex<Option<ImgGenDaemon>>>;
+pub(crate) type LoadProgress = Arc<dyn Fn(String) + Send + Sync>;
 
 pub fn new_daemon_handle() -> DaemonHandle {
     Arc::new(Mutex::new(None))
@@ -76,18 +84,37 @@ pub(crate) fn loaded_matches(
     lora_path: &str,
     device: &str,
 ) -> Result<bool, String> {
-    let guard = daemon.lock().map_err(|e| e.to_string())?;
-    Ok(guard.as_ref().is_some_and(|d| {
-        d.model_path == model_path
+    let mut guard = daemon.lock().map_err(|e| e.to_string())?;
+    Ok(guard.as_mut().is_some_and(|d| {
+        d.is_running()
+            && d.model_path == model_path
             && d.lora_path == lora_path
             && (device == "auto" || d.device == device)
     }))
 }
 
 pub(crate) fn loaded_model_from_handle(daemon: &DaemonHandle) -> Result<Option<String>, String> {
-    Ok(daemon.lock().map_err(|e| e.to_string())?
-        .as_ref()
-        .map(|d| d.model_path.clone()))
+    let mut guard = daemon.lock().map_err(|e| e.to_string())?;
+    if guard.as_mut().is_some_and(|d| !d.is_running()) {
+        *guard = None;
+    }
+    Ok(guard.as_ref().map(|d| d.model_path.clone()))
+}
+
+/// Returns `Ok(None)` when generation currently owns the daemon mutex.
+pub(crate) fn try_loaded_model_from_handle(
+    daemon: &DaemonHandle,
+) -> Result<Option<Option<String>>, String> {
+    match daemon.try_lock() {
+        Ok(mut guard) => {
+            if guard.as_mut().is_some_and(|d| !d.is_running()) {
+                *guard = None;
+            }
+            Ok(Some(guard.as_ref().map(|d| d.model_path.clone())))
+        }
+        Err(TryLockError::WouldBlock) => Ok(None),
+        Err(TryLockError::Poisoned(error)) => Err(error.to_string()),
+    }
 }
 
 pub(crate) fn load_blocking(
@@ -99,7 +126,20 @@ pub(crate) fn load_blocking(
     device: String,
 ) -> Result<String, String> {
     if let Ok(mut g) = vid.lock() { *g = None; }
-    do_load(daemon, window, model_path, lora_path, device)
+    do_load(daemon, window, model_path, lora_path, device, None)
+}
+
+pub(crate) fn load_blocking_with_progress(
+    daemon: DaemonHandle,
+    vid: crate::video::VideoHandle,
+    window: WebviewWindow,
+    model_path: String,
+    lora_path: String,
+    device: String,
+    progress: LoadProgress,
+) -> Result<String, String> {
+    if let Ok(mut g) = vid.lock() { *g = None; }
+    do_load(daemon, window, model_path, lora_path, device, Some(progress))
 }
 
 pub(crate) fn generate_blocking(
@@ -116,7 +156,7 @@ pub(crate) fn generate_blocking(
 pub fn imggen_scan_models() -> Vec<ModelEntry> {
     let mut entries = Vec::new();
     for dir in resolve::model_scan_dirs() {
-        scan_diffusers_dir(dir, 2, &mut entries);
+        scan_diffusers_dir(dir, 4, &mut entries);
     }
     entries
 }
@@ -147,7 +187,7 @@ pub async fn imggen_load(
     // card (mirrors video_load freeing the image daemon).
     if let Ok(mut g) = vid.lock() { *g = None; }
     let arc = daemon.inner().clone();
-    tokio::task::spawn_blocking(move || do_load(arc, window, model_path, lora_path, device))
+    tokio::task::spawn_blocking(move || do_load(arc, window, model_path, lora_path, device, None))
         .await
         .map_err(|e| format!("task join: {e}"))?
 }
@@ -189,16 +229,34 @@ fn do_load(
     model_path: String,
     lora_path: String,
     device: String,
+    progress: Option<LoadProgress>,
 ) -> Result<String, String> {
     let mut guard = arc.lock().map_err(|e| e.to_string())?;
+    let already_loaded = guard.as_mut().and_then(|daemon| {
+        (daemon.is_running()
+            && daemon.model_path == model_path
+            && daemon.lora_path == lora_path
+            && (device == "auto" || daemon.device == device))
+            .then(|| daemon.device.clone())
+    });
+    if let Some(actual_device) = already_loaded {
+        emit_igload_progress(
+            &window,
+            format!("Already loaded on {actual_device}"),
+            progress.as_ref(),
+        );
+        return Ok(actual_device);
+    }
     *guard = None; // kill any existing daemon
 
     let python = resolve::find_python().map_err(|e: anyhow::Error| e.to_string())?;
     let script = resolve::find_script("generate_sdxl.py").map_err(|e: anyhow::Error| e.to_string())?;
 
-    let _ = window.emit("igload-progress", "Starting Python…");
+    emit_igload_progress(&window, "Starting Python…", progress.as_ref());
 
-    let mut child = Command::new(python)
+    let mut cmd = Command::new(python);
+    crate::paths::apply_child_env(&mut cmd);
+    let mut child = cmd
         .arg(script)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -222,6 +280,7 @@ fn do_load(
     stdin.flush().map_err(|e| format!("stdin flush: {e}"))?;
 
     // Read lines until {"ready": true} — intermediate {"loading_status": "..."} lines are forwarded
+    let mut loaded_arch: Option<serde_json::Value> = None;
     let actual_device = loop {
         let mut line = String::new();
         let n = stdout.read_line(&mut line).map_err(|e| format!("read ready: {e}"))?;
@@ -238,10 +297,11 @@ fn do_load(
             return Err(err.to_string());
         }
         if v["ready"].as_bool() == Some(true) {
+            loaded_arch = v.get("arch").cloned();
             break v["device"].as_str().unwrap_or("unknown").to_string();
         }
         if let Some(status) = v["loading_status"].as_str() {
-            let _ = window.emit("igload-progress", status);
+            emit_igload_progress(&window, status, progress.as_ref());
         }
     };
 
@@ -254,7 +314,22 @@ fn do_load(
         device: actual_device.clone(),
     });
 
+    // Let the UI reset CFG/steps/etc to what this specific model actually wants (e.g.
+    // SD3.5 wants cfg≈4.5, not the SDXL-era 7.0 default) instead of carrying over
+    // whatever was set for the previously loaded model.
+    if let Some(arch) = loaded_arch {
+        let _ = window.emit("igload-arch", arch);
+    }
+
     Ok(actual_device)
+}
+
+fn emit_igload_progress(window: &WebviewWindow, message: impl Into<String>, progress: Option<&LoadProgress>) {
+    let message = message.into();
+    if let Some(progress) = progress {
+        progress(message.clone());
+    }
+    let _ = window.emit("igload-progress", message);
 }
 
 // ── Internal: generate ────────────────────────────────────────────────────────
@@ -324,10 +399,24 @@ fn do_generate(
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/// Fast, local, best-effort family label for the model picker/scanner ONLY. This is a
+/// coarse display classifier, not the authoritative architecture detector — it never
+/// reaches generation (ImgGenPayload carries no `kind` field), so it's safe for this to
+/// under-classify as "unknown" but it must never drive generation behavior. The real,
+/// authoritative descriptor (family, default CFG/steps, scheduler mode, text-encoder
+/// limits, Turbo/v-prediction detection via scheduler config) is computed once in Python
+/// at load time — see architecture_of() in generate_sdxl.py — and read from there for
+/// anything that actually affects how a model is run. Don't add generation-affecting
+/// logic here; extend the Python descriptor instead.
 fn detect_kind(path: &Path) -> String {
     if let Ok(s) = std::fs::read_to_string(path.join("model_index.json")) {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
             let cls = v["_class_name"].as_str().unwrap_or("");
+            // SD3/3.5 must be checked before the generic "StableDiffusion" contains-check
+            // below — "StableDiffusion3Pipeline" contains that substring too and would
+            // otherwise be misdetected as plain sd15 (generate_sdxl.py's own loader gets
+            // this right already via the same "StableDiffusion3" prefix check).
+            if cls.contains("StableDiffusion3") { return "sd3".into(); }
             if cls.contains("XL") { return "sdxl".into(); }
             if cls.contains("StableDiffusion") { return "sd15".into(); }
         }
@@ -345,8 +434,8 @@ fn scan_diffusers_dir(base: PathBuf, depth: usize, out: &mut Vec<ModelEntry>) {
             // Only surface loadable image pipelines. Video models (CogVideoX, Wan,
             // …) also carry a model_index.json but have a transformer, not a unet —
             // loading them as a StableDiffusionPipeline blows up ("no unet"). They
-            // have their own scanner in video.rs, so skip anything not sd15/sdxl.
-            if kind == "sd15" || kind == "sdxl" {
+            // have their own scanner in video.rs, so skip anything not sd15/sdxl/sd3.
+            if kind == "sd15" || kind == "sdxl" || kind == "sd3" {
                 out.push(ModelEntry {
                     label: path.file_name().unwrap_or_default().to_string_lossy().to_string(),
                     path:  path.to_string_lossy().to_string(),
@@ -376,4 +465,30 @@ fn scan_safetensors_dirs(dirs: &[PathBuf], kind: &str) -> Vec<ModelEntry> {
         }
     }
     entries
+}
+
+#[cfg(test)]
+mod tests {
+    use super::detect_kind;
+    use std::fs;
+
+    // Regression test: "StableDiffusion3Pipeline" contains the substring "StableDiffusion",
+    // so a naive contains-check misdetects SD3/3.5 as plain sd15 — which then makes it
+    // invisible to the image-tab scanner (which only allowlists sd15/sdxl/sd3).
+    #[test]
+    fn detect_kind_distinguishes_sd3_from_sd15() {
+        let dir = std::env::temp_dir().join(format!("saient_detect_kind_test_{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(dir.join("model_index.json"), r#"{"_class_name": "StableDiffusion3Pipeline"}"#).unwrap();
+        assert_eq!(detect_kind(&dir), "sd3");
+
+        fs::write(dir.join("model_index.json"), r#"{"_class_name": "StableDiffusionPipeline"}"#).unwrap();
+        assert_eq!(detect_kind(&dir), "sd15");
+
+        fs::write(dir.join("model_index.json"), r#"{"_class_name": "StableDiffusionXLPipeline"}"#).unwrap();
+        assert_eq!(detect_kind(&dir), "sdxl");
+
+        fs::remove_dir_all(&dir).ok();
+    }
 }

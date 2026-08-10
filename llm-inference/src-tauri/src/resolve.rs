@@ -1,7 +1,6 @@
 //! resolve.rs — runtime path discovery for Python, scripts, and tinyq4.
 //!
-//! All hardcoded /home/tiny paths live here as fallbacks only.
-//! Callers should prefer env-var overrides and PATH lookups.
+//! Callers should prefer env-var overrides and project-local paths.
 
 use std::path::{Path, PathBuf};
 
@@ -27,7 +26,7 @@ impl NoConsole for std::process::Command {
 ///
 /// Resolution order:
 ///   1. `PYTHON_PATH` env var
-///   2. `~/.venvs/ltx/bin/python` (legacy location)
+///   2. project-local managed venv
 ///   3. `python3` on PATH
 ///   4. `/usr/bin/python3`
 pub fn find_python() -> anyhow::Result<PathBuf> {
@@ -41,12 +40,6 @@ pub fn find_python() -> anyhow::Result<PathBuf> {
     // 2. The setup wizard's managed venv (has the CUDA-matched torch + creative stack)
     let managed = crate::setup::venv_python();
     if managed.exists() { return Ok(managed); }
-
-    // 3. Legacy venv relative to $HOME
-    if let Some(home) = home_dir() {
-        let venv = home.join(".venvs/ltx/bin/python");
-        if venv.exists() { return Ok(venv); }
-    }
 
     // 3. python3 on PATH
     if let Ok(out) = std::process::Command::new("which").arg("python3").output() {
@@ -62,7 +55,7 @@ pub fn find_python() -> anyhow::Result<PathBuf> {
 
     anyhow::bail!(
         "Python not found. Set PYTHON_PATH env var or install python3. \
-         Alternatively create ~/.venvs/ltx with the required packages."
+         Alternatively run Saient setup to create the managed venv."
     )
 }
 
@@ -101,68 +94,54 @@ pub fn find_script(name: &str) -> anyhow::Result<PathBuf> {
     )
 }
 
-/// Return candidate directories for diffusers/SDXL model scanning.
+/// Return candidate directories for diffusers/video model scanning.
+///
+/// Only Saient-owned category folders are scanned — the app never reaches into
+/// arbitrary locations elsewhere on the machine. Image and video each have their
+/// own folder; the callers filter results by pipeline class.
 pub fn model_scan_dirs() -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-    if let Some(home) = home_dir() {
-        dirs.push(home.join("models"));
-        dirs.push(home.join("projects/models"));
-        dirs.push(home.join("llm-runtime/models"));
-    }
-    dirs
+    vec![
+        crate::paths::image_models_dir(),
+        crate::paths::video_models_dir(),
+    ]
 }
 
 /// Saient's managed folder where in-app downloads land (and are scanned first).
 pub fn checkpoints_download_dir() -> PathBuf {
-    let d = home_dir().unwrap_or_else(|| std::env::temp_dir()).join("Saient/models/checkpoints");
+    let d = crate::paths::checkpoints_dir();
     std::fs::create_dir_all(&d).ok();
     d
 }
 pub fn loras_download_dir() -> PathBuf {
-    let d = home_dir().unwrap_or_else(|| std::env::temp_dir()).join("Saient/models/lora");
+    let d = crate::paths::loras_dir();
     std::fs::create_dir_all(&d).ok();
     d
 }
 pub fn models_download_dir() -> PathBuf {
-    let d = home_dir().unwrap_or_else(|| std::env::temp_dir()).join("Saient/models");
+    let d = crate::paths::models_dir();
     std::fs::create_dir_all(&d).ok();
     d
 }
 
 /// Return candidate directories for .safetensors checkpoint scanning.
 pub fn checkpoint_scan_dirs() -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-    if let Some(home) = home_dir() {
-        dirs.push(home.join("Saient/models/checkpoints"));   // managed download target
-        dirs.push(home.join("projects/models/checkpoints"));
-        dirs.push(home.join("models/checkpoints"));
-        dirs.push(home.join("models"));
-    }
-    dirs
+    vec![
+        crate::paths::checkpoints_dir(),
+        crate::paths::image_models_dir(),
+    ]
 }
 
 /// Return candidate directories for LoRA .safetensors scanning.
 pub fn lora_scan_dirs() -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-    if let Some(home) = home_dir() {
-        dirs.push(home.join("Saient/models/lora"));          // managed download target
-        dirs.push(home.join("projects/models/lora"));
-        dirs.push(home.join("models/lora"));
-    }
-    dirs
+    vec![
+        crate::paths::loras_dir(),
+        crate::paths::image_models_dir().join("lora"),
+    ]
 }
 
 /// Return default LoRA output directory.
 pub fn default_lora_dir() -> PathBuf {
-    home_dir()
-        .map(|h| h.join("models/lora"))
-        .unwrap_or_else(|| std::env::temp_dir().join("lora"))
-}
-
-fn home_dir() -> Option<PathBuf> {
-    std::env::var("HOME").ok()
-        .or_else(|| std::env::var("USERPROFILE").ok())   // Windows
-        .map(PathBuf::from)
+    crate::paths::loras_dir()
 }
 
 // ── Dependency checker ────────────────────────────────────────────────────────

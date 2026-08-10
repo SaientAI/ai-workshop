@@ -1,0 +1,43 @@
+=== IMPROVED NSFW SVI Test Prompts (brighter, vibrant lighting) ===
+For testing SVI on 14B. Use with I2V model + SVI recipe when possible.
+Settings suggestion: 640x480 or 832x480, 81 frames per segment, storyboard mode.
+
+NEGATIVE (copy to neg prompt box):
+blurry, low contrast, dull, flat lighting, dim, underexposed, overexposed, washed out, deformed hands, extra fingers, bad anatomy, low quality, watermark, text, cartoon, static, jerky motion
+
+=== MASTER SINGLE PROMPT (bright vibrant version) ===
+Cinematic high-quality video of a beautiful young redhead woman, long voluminous wavy auburn-red hair, fair freckled skin glowing in bright sunlight, striking green eyes, full lips, small perky breasts with pink nipples, slim toned body, wide hips, perfectly detailed realistic human anatomy, five fingers on every hand, natural skin details, realistic pussy. She is nude on luxurious white sheets on an outdoor bed by a bright blue lake, green trees and majestic mountains in the background on a sunny golden hour day. Strong vibrant natural sunlight, bright highlights on skin and hair, clear but soft shadows, rich saturated colors, high dynamic range, beautifully lit scene with excellent exposure. Two athletic men join her. Passionate kissing, sensual touching, oral, active sex in multiple positions with natural rhythmic motion, bouncing breasts, gripping with accurate hands, arching back, expressions of intense pleasure, sweat, detailed anatomy and fluids. Bright sunlit environment, cinematic lighting with strong key light and beautiful rim lighting, 85mm lens, shallow depth of field, vibrant filmic color, sharp details, 16fps coherent motion.
+
+=== STORYBOARD SEGMENTS - BRIGHT LIGHTING EDITION ===
+Use these in the four storyboard boxes. Each has built-in continuity language.
+
+Seg 1:
+A beautiful young redhead woman with long wavy auburn hair, fair glowing freckled skin, detailed expressive face, green eyes, full lips, small perky breasts, slim athletic body with accurate realistic anatomy and five-fingered hands. She lies nude on crisp white silk sheets on an outdoor bed beside a bright blue lake with green trees and mountains, bathed in strong vibrant golden hour sunlight with beautiful highlights on her skin and hair. Two fit muscular men approach. She smiles seductively and kisses one passionately while the other caresses her body. Bright natural daylight, rich colors, excellent exposure, sensual slow foreplay, natural movement and breathing.
+
+Seg 2:
+Seamless continuation, exact same redhead woman, same two men, same bright sunlit lakeside white-sheet bed and mountain background with strong vibrant lighting. The redhead is on her back, legs open, one man giving detailed oral sex to her realistic wet pussy while she strokes the other man's cock with her perfectly detailed hand. Her skin glows in the bright sunlight, back arches, breasts heave, toes curl, intense pleasure on her face with mouth open, accurate anatomy, natural fluids, high contrast sunny lighting with clear details.
+
+Seg 3:
+Direct seamless continuation of the identical redhead and men in the exact same bright outdoor lakeside setting. She is on all fours on the white sheets being fucked from behind while sucking the other man. Bright sunlight illuminating skin, hair, and bodies with strong highlights and natural shadows. Realistic detailed penetration, breasts swinging, hands gripping, rhythmic motion, pure ecstasy expression, accurate full human anatomy, vibrant well-lit scene.
+
+Seg 4:
+Perfect seamless continuation with the same characters and bright sunlit lakeside background. The redhead reaches intense orgasm as one man cums inside her (visible creampie) and the other finishes on her breasts and face. Her expression shows overwhelming pleasure, body trembling. Then tender afterglow: all three relaxing together on the rumpled white sheets, her head on one chest, satisfied smiles, skin beautifully lit by warm bright sunlight, calm lake and mountains visible, rich colors and excellent lighting throughout.
+
+=== NOTES ===
+- Stronger "bright", "vibrant", "strong sunlight", "highlights on skin", "rich saturated colors", "excellent exposure", "high contrast" language added to combat dull results.
+- SVI + low step counts can sometimes mute lighting — try the Refine pass (bf16) afterward if needed.
+- Full anatomy + explicit motion kept.
+- For even brighter results you can add "high key lighting, sunny day, clear blue sky" etc. to prompts.
+
+=== LIGHTING BOOSTER (append to any prompt, even Civitai ones) ===
+, brightly lit sunny outdoor scene, strong vibrant natural sunlight, beautiful skin highlights and rim lighting, high contrast, rich saturated colors, excellent exposure, sharp details, cinematic key lighting, well illuminated, high dynamic range, vibrant and lively lighting
+
+=== RECOMMENDED SETTINGS FOR LESS DULL RESULTS WITH SVI ===
+- Click the SVI v2 PRO button (now defaults to 20 steps, CFG 2.5, shift 8, auto scheduler)
+- Or manually: Steps 20-30, CFG 2.0-3.5, Shift 6-10, Scheduler "auto" or "euler"
+- Always run the Refine (bf16) quality pass after the base gen — it dramatically improves lighting, contrast and detail.
+- Use an actual I2V 14B model (not T2V) when using SVI LoRAs.
+- For even more pop: follow one of the Lightning combo suggestions from the SVI card and save as a custom recipe (e.g. load a lightx2v high-noise lora at weight ~3 alongside SVI).
+- Add the LIGHTING BOOSTER text above to the end of your prompt.
+
+SVI is optimized for coherence over flashy lighting. The above usually fixes "dull" output.

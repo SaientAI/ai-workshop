@@ -1,0 +1,190 @@
+{
+  "schema_version": 1,
+  "source_repository": "../agi",
+  "source_commit": "6b702dfd044547fcdf50d6285b3b4730e187e734",
+  "captured_at": "2026-08-09",
+  "runtime_file_count": 44,
+  "purpose": "Minimal complete Python dependency closure for run_saient.py and the desktop terminal bridge, bundled with Saient Desktop.",
+  "intentional_bundle_changes": [
+    "Mutable state, conscience identity, audit logs, Choice Lab input, and v3 self-memory resolve through SAIENT_STATE_DIR.",
+    "Loaded conscience profiles always save back to the path actually loaded, not a stale absolute memory_path."
+  ],
+  "files": {
+    "arc_gremlin/__init__.py": {
+      "source_sha256": "e1722e63bfcd32a9d5213f28aeb9fb02b288f82049327ce89619c043e204fa23",
+      "bundled_sha256": "e1722e63bfcd32a9d5213f28aeb9fb02b288f82049327ce89619c043e204fa23"
+    },
+    "arc_gremlin/analysis.py": {
+      "source_sha256": "5beab09a9edac4b6d075aa7c43e3f0fc109cfcef43ff1def3e2eac598ee4fddf",
+      "bundled_sha256": "5beab09a9edac4b6d075aa7c43e3f0fc109cfcef43ff1def3e2eac598ee4fddf"
+    },
+    "arc_gremlin/config.py": {
+      "source_sha256": "5c9cfe9d405928fbe5ef262752fb37576e539ce156f153207a67b961d50e18d2",
+      "bundled_sha256": "5c9cfe9d405928fbe5ef262752fb37576e539ce156f153207a67b961d50e18d2"
+    },
+    "arc_gremlin/dsl.py": {
+      "source_sha256": "ce5548def61a85a20a20602a17febe4e8443f240a373fb086610df035f8ae34b",
+      "bundled_sha256": "ce5548def61a85a20a20602a17febe4e8443f240a373fb086610df035f8ae34b"
+    },
+    "arc_gremlin/executor.py": {
+      "source_sha256": "d058822943563b91627db0ee4c1a41a55fe2ed387001e38921941dce10cd958f",
+      "bundled_sha256": "d058822943563b91627db0ee4c1a41a55fe2ed387001e38921941dce10cd958f"
+    },
+    "arc_gremlin/induction.py": {
+      "source_sha256": "18443bb893a8196c36ba18be9d260ca4caca5d30105d6def0c36304a283fc11c",
+      "bundled_sha256": "18443bb893a8196c36ba18be9d260ca4caca5d30105d6def0c36304a283fc11c"
+    },
+    "arc_gremlin/legacy.py": {
+      "source_sha256": "060f5c91baab3e825492f0b8dc108da075eeb9406ae8aaf965eaf1f41c76deb2",
+      "bundled_sha256": "060f5c91baab3e825492f0b8dc108da075eeb9406ae8aaf965eaf1f41c76deb2"
+    },
+    "arc_gremlin/main.py": {
+      "source_sha256": "d08f7a753ed825f33f95f369a188672d1fb1e8b08c4469239bf74c3479a7e508",
+      "bundled_sha256": "d08f7a753ed825f33f95f369a188672d1fb1e8b08c4469239bf74c3479a7e508"
+    },
+    "arc_gremlin/ops.py": {
+      "source_sha256": "cb3eed8ed743513e776d22a1eccfe5a27a7c3feb1beec9a1c9b3642e8dd031a6",
+      "bundled_sha256": "cb3eed8ed743513e776d22a1eccfe5a27a7c3feb1beec9a1c9b3642e8dd031a6"
+    },
+    "arc_gremlin/persistence.py": {
+      "source_sha256": "4a393cd998a2718cff525105c5d6b984cc892879546600b8b76b8afdc6e5e0b8",
+      "bundled_sha256": "4a393cd998a2718cff525105c5d6b984cc892879546600b8b76b8afdc6e5e0b8"
+    },
+    "arc_gremlin/saient_solver.py": {
+      "source_sha256": "63b02e86d13e1bdcce9b9474e3afd34c06191aece166fede60c5838513339776",
+      "bundled_sha256": "63b02e86d13e1bdcce9b9474e3afd34c06191aece166fede60c5838513339776"
+    },
+    "arc_gremlin/scoring.py": {
+      "source_sha256": "17ed35682fc622cdc2359002310670196b7f5912a63b071bb10125e33760edfb",
+      "bundled_sha256": "17ed35682fc622cdc2359002310670196b7f5912a63b071bb10125e33760edfb"
+    },
+    "arc_gremlin/selection.py": {
+      "source_sha256": "f5dfbd1d21b446715f2112917a35508cef24e2c3f7875158979890aa2dd23d1f",
+      "bundled_sha256": "f5dfbd1d21b446715f2112917a35508cef24e2c3f7875158979890aa2dd23d1f"
+    },
+    "arc_gremlin/state.py": {
+      "source_sha256": "936d09245abcefd5ef780bee0f13ceac4e9f21ae4052747196967a7e0bc7c16d",
+      "bundled_sha256": "936d09245abcefd5ef780bee0f13ceac4e9f21ae4052747196967a7e0bc7c16d"
+    },
+    "belief.py": {
+      "source_sha256": "4a6f23cfdf04abbf4c8a3510ab2a0552a40804b03e7aabffac706fa89328912f",
+      "bundled_sha256": "4a6f23cfdf04abbf4c8a3510ab2a0552a40804b03e7aabffac706fa89328912f"
+    },
+    "bridge.py": {
+      "source_sha256": "341e2691a7d32adbf632e77c5772ffe4af1bee2a699fa504af5688362ec0e063",
+      "bundled_sha256": "341e2691a7d32adbf632e77c5772ffe4af1bee2a699fa504af5688362ec0e063"
+    },
+    "conscience.py": {
+      "source_sha256": "e506005a45d4fa002d5d24193f5cfb975760502672620f6992b5b6bd26fa9c62",
+      "bundled_sha256": "33e3352b013816d6eba49d9c057e6e635d3f8fbeb797890b20e76552bd7c4d0c"
+    },
+    "controller.py": {
+      "source_sha256": "04c43720675e6b705dcbccde47ec59cf741f82f764a071a01b115484ed69369c",
+      "bundled_sha256": "04c43720675e6b705dcbccde47ec59cf741f82f764a071a01b115484ed69369c"
+    },
+    "desktop_bridge.py": {
+      "source_sha256": "69dc281543e3ea2c7b8162d8062a33ba9950a0b4cb94e5e4f5248b1806bcb16d",
+      "bundled_sha256": "69dc281543e3ea2c7b8162d8062a33ba9950a0b4cb94e5e4f5248b1806bcb16d"
+    },
+    "drives.py": {
+      "source_sha256": "00d6370ad625516b4ff33cd1e8eca28d103ea6bc10a1d247fc635eab4241ffb9",
+      "bundled_sha256": "00d6370ad625516b4ff33cd1e8eca28d103ea6bc10a1d247fc635eab4241ffb9"
+    },
+    "expression.py": {
+      "source_sha256": "7bd63fec9a7fc96b08d4dc0adb62f907ca717b8e5afb8c615f82c05970644ada",
+      "bundled_sha256": "7bd63fec9a7fc96b08d4dc0adb62f907ca717b8e5afb8c615f82c05970644ada"
+    },
+    "gate.py": {
+      "source_sha256": "6a03e6adf4ab19e2c47ba7a759db16060562480b85dd1e947cb3452a18de6637",
+      "bundled_sha256": "6a03e6adf4ab19e2c47ba7a759db16060562480b85dd1e947cb3452a18de6637"
+    },
+    "goal_generator.py": {
+      "source_sha256": "2f9ac00644f8836c266be3e9209592e4077d6cc501a18a15cd2dda2b4c92ef4a",
+      "bundled_sha256": "2f9ac00644f8836c266be3e9209592e4077d6cc501a18a15cd2dda2b4c92ef4a"
+    },
+    "hami.py": {
+      "source_sha256": "c117c925c3dfcbea768510c323c517cc07a2449e08fb73f49bf5c238d84ea34e",
+      "bundled_sha256": "c117c925c3dfcbea768510c323c517cc07a2449e08fb73f49bf5c238d84ea34e"
+    },
+    "integrity.py": {
+      "source_sha256": "8effb8f465cb0eeb9b1a21b621f8094fcc9cb0d0aa6c3ab8c364ffc2527f7422",
+      "bundled_sha256": "8effb8f465cb0eeb9b1a21b621f8094fcc9cb0d0aa6c3ab8c364ffc2527f7422"
+    },
+    "loop.py": {
+      "source_sha256": "454dd96891fd7b5ce591e575841e745593221c7875ee83d4a9609950828d6602",
+      "bundled_sha256": "454dd96891fd7b5ce591e575841e745593221c7875ee83d4a9609950828d6602"
+    },
+    "main.py": {
+      "source_sha256": "f55ced59c379afba3f101ac0318886c196958ef941dc1b633eac505cc619535f",
+      "bundled_sha256": "27b13a5dc8119db9443989dbc0eb86f41c28a4dd68736246d61ba394d5c471f4"
+    },
+    "mission.py": {
+      "source_sha256": "34d3b303cb8585c96a0d699440abca2efbb0faddac63c19d5bd17e71e9bc4dd6",
+      "bundled_sha256": "34d3b303cb8585c96a0d699440abca2efbb0faddac63c19d5bd17e71e9bc4dd6"
+    },
+    "objectives.py": {
+      "source_sha256": "65b277adaf11b4f42e0b136cb4a30beee011f7827383ce1b3440257b65015d19",
+      "bundled_sha256": "65b277adaf11b4f42e0b136cb4a30beee011f7827383ce1b3440257b65015d19"
+    },
+    "orchestrator.py": {
+      "source_sha256": "ef5d48127a2a8963482efe538b7c65efb25ff8f20b5d23d774196bd8677f40e4",
+      "bundled_sha256": "ef5d48127a2a8963482efe538b7c65efb25ff8f20b5d23d774196bd8677f40e4"
+    },
+    "proposer.py": {
+      "source_sha256": "5b22066d357e3910b55e54663715d0224e00f3bb128608c50798e2f0cf288e68",
+      "bundled_sha256": "5b22066d357e3910b55e54663715d0224e00f3bb128608c50798e2f0cf288e68"
+    },
+    "real_actions.py": {
+      "source_sha256": "b148add753c51e8a3d462c6ab3e755b8775a0aa83e05f60dc82ebe8a1bc5b446",
+      "bundled_sha256": "b148add753c51e8a3d462c6ab3e755b8775a0aa83e05f60dc82ebe8a1bc5b446"
+    },
+    "reflection.py": {
+      "source_sha256": "690e553711ec452e7db462687a5cff53b27c522d097bcae7d52100eee1503824",
+      "bundled_sha256": "690e553711ec452e7db462687a5cff53b27c522d097bcae7d52100eee1503824"
+    },
+    "run_saient.py": {
+      "source_sha256": "4ab9315e269f870f60b9dcc3bebd8f61bad6e1479647f048baab91b042864a67",
+      "bundled_sha256": "4ab9315e269f870f60b9dcc3bebd8f61bad6e1479647f048baab91b042864a67"
+    },
+    "saient_v3_exogenous_goal_layer/__init__.py": {
+      "source_sha256": "0bb6f68e99c8e83f9893e28df1d27cb7bbb6213ab06c556eb27333bd010246da",
+      "bundled_sha256": "0bb6f68e99c8e83f9893e28df1d27cb7bbb6213ab06c556eb27333bd010246da"
+    },
+    "saient_v3_exogenous_goal_layer/critic.py": {
+      "source_sha256": "9c1cad76aa03b2f58b66b8f9f0e5399931f4a670bb17f9f8917e209e1612c419",
+      "bundled_sha256": "9c1cad76aa03b2f58b66b8f9f0e5399931f4a670bb17f9f8917e209e1612c419"
+    },
+    "saient_v3_exogenous_goal_layer/layer.py": {
+      "source_sha256": "a7eac283679d5301767e2e6f603b7d88595c8945e53c219228334480eeb936fd",
+      "bundled_sha256": "a7eac283679d5301767e2e6f603b7d88595c8945e53c219228334480eeb936fd"
+    },
+    "saient_v3_exogenous_goal_layer/memory.py": {
+      "source_sha256": "b96ac250525367f72c4fa6942d5f11d430b77f792d9917772882cba9c938652d",
+      "bundled_sha256": "b96ac250525367f72c4fa6942d5f11d430b77f792d9917772882cba9c938652d"
+    },
+    "saient_v3_exogenous_goal_layer/novelty.py": {
+      "source_sha256": "9089eda8c4a8983ec26b2993cbe6db209855fd1f5dd34270e5dd0e9273229cc9",
+      "bundled_sha256": "9089eda8c4a8983ec26b2993cbe6db209855fd1f5dd34270e5dd0e9273229cc9"
+    },
+    "saient_v3_exogenous_goal_layer/proposer.py": {
+      "source_sha256": "345361d4de302bdc5c0e759cd6bd139e9bd9990e3ab56fd4ae67aed08429363e",
+      "bundled_sha256": "345361d4de302bdc5c0e759cd6bd139e9bd9990e3ab56fd4ae67aed08429363e"
+    },
+    "saient_v3_exogenous_goal_layer/schema.py": {
+      "source_sha256": "e8a880daa92dc1f235339e5eb5e2624664852034c2c687a63ba366f80fe6d6c5",
+      "bundled_sha256": "e8a880daa92dc1f235339e5eb5e2624664852034c2c687a63ba366f80fe6d6c5"
+    },
+    "state.py": {
+      "source_sha256": "2b5f578db226587c2bc06839c72733f271c29462d94264b9bf289cd7cc34bd16",
+      "bundled_sha256": "bcc0fa3e0529044105efc64e07d87da863426cc9aa23d5a6ac177b7b89d9db04"
+    },
+    "strategy.py": {
+      "source_sha256": "7abe7923d602c1001f829204cf86a1b58da28d755fd3a197312d9a0834437f68",
+      "bundled_sha256": "7abe7923d602c1001f829204cf86a1b58da28d755fd3a197312d9a0834437f68"
+    },
+    "trend.py": {
+      "source_sha256": "a04adce8935cb1e8387d6b66c506bd0757da6514381e78e435028c78bb2880a1",
+      "bundled_sha256": "a04adce8935cb1e8387d6b66c506bd0757da6514381e78e435028c78bb2880a1"
+    }
+  }
+}

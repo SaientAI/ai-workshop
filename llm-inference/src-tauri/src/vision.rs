@@ -66,7 +66,9 @@ fn ensure_loaded(guard: &mut Option<VisionDaemon>) -> Result<(), String> {
     let python = resolve::find_python().map_err(|e: anyhow::Error| e.to_string())?;
     let script = resolve::find_script("vision.py").map_err(|e: anyhow::Error| e.to_string())?;
 
-    let mut child = Command::new(python)
+    let mut cmd = Command::new(python);
+    crate::paths::apply_child_env(&mut cmd);
+    let mut child = cmd
         .arg(script)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

@@ -1,0 +1,52 @@
+=== PURE T2V NSFW TEST — single prompt, anatomy lock + 30s chunk path ===
+Model: Wan2.2 T2V-A14B (NOT I2V / not SVI)
+Settings: SD 480p (832×480 or 640×480), 16 FPS, 30s button (~481f)
+Steps: 16–20 (if Lightning auto-set 4-step, long-clip guard should bump it)
+CFG: ~2–3.5 · shift 5–8 · Anatomy lock ON
+After gen: Quality Pass → Refine (strength ~0.4–0.45, 24+ steps)
+
+Goal of this prompt:
+1) Force clear female genitals (anti mouth/lips / fused penis-vagina)
+2) Hold identity + lighting across backend T2V seam chunks
+3) Enough motion that 30s doesn't freeze into a still
+
+---------------------------------------------------------------------
+NEGATIVE (paste into Neg box — or rely on default + Anatomy lock)
+---------------------------------------------------------------------
+blurry, distorted, low quality, static, watermark, dull lighting, flat lighting, underexposed, overexposed, washed out, bad anatomy, deformed hands, extra fingers, missing fingers, fused fingers, deformed genitals, fused genitals, ambiguous genitals, hermaphrodite, futanari, mouth between legs, lips instead of vagina, labia as lips, oral opening as genitals, teeth on crotch, face on genitals, penis growing from vagina, vagina and penis fused, dick-vagina hybrid, inverted genitals, missing genitals, malformed labia, anatomically incorrect genitals, cartoon, 3d render, plastic skin, text, logo
+
+---------------------------------------------------------------------
+MASTER PROMPT — 30s pure T2V (copy into main prompt)
+---------------------------------------------------------------------
+Cinematic photorealistic video of one adult woman, mid-20s, long dark wavy hair, green eyes, full lips, tanned glowing skin, large natural breasts with visible nipples, slim waist, wide hips, completely nude. She is alone on a rumpled white bed in a sunlit bedroom, large window with soft golden daylight, warm realistic indoor lighting, rich skin highlights, high dynamic range, excellent exposure, sharp detail, 85mm look, shallow depth of field.
+
+She lies on her back, knees bent and apart, looking at the camera with a confident seductive expression. Her hands have exactly five fingers each with natural nails. Camera holds a stable medium-close framing of her torso and hips so the genitals stay clearly visible and correctly shaped for the full clip.
+
+Anatomically correct female genitals only: a clear detailed vulva with distinct labia majora, labia minora, and clitoris, natural vaginal opening between the labia — not a mouth, not lips, no teeth, no tongue, no face on the crotch, no penis, no balls, no fused sex organs, no hermaphrodite anatomy. Realistic intimate anatomy, natural pink labia, soft wet sheen, correct placement between the thighs.
+
+Action over ~30 seconds, smooth continuous motion, no jump cuts, no scene change, same woman same room same lighting the whole time: she slowly spreads her thighs wider, caresses her breasts with both hands, then slides one hand down her stomach to gently touch and open her labia with two fingers, rubbing her clitoris in slow circles while the other hand squeezes a breast; breathing deepens, back arches slightly, hips roll in a natural rhythm, hair shifts on the pillow, eyes stay locked on camera; she becomes more aroused, fingers working more deliberately, thighs trembling, mouth open in pleasure — genitals remain clearly a vulva the entire time with no mouth-like features. Ends in a lingering afterglow pose, hand resting on her lower belly, soft smile, still anatomically correct.
+
+Stable identity, consistent face and body proportions, no quality drop, no blur creep, seamless motion continuity, photoreal skin texture, natural breast physics, accurate hands.
+
+---------------------------------------------------------------------
+SHORT 5s SMOKE (same identity, less action — verify anatomy before 30s)
+---------------------------------------------------------------------
+Photorealistic nude adult woman, long dark wavy hair, green eyes, tanned skin, large natural breasts, on a white bed in a bright sunlit bedroom. Medium-close shot of hips and torso, knees apart. Anatomically correct vulva with distinct labia majora, labia minora, and clitoris, natural vaginal opening — not a mouth, not lips, no teeth, no penis, no fused genitals. She slowly spreads her legs and gently opens her labia with two fingers, looking at the camera, soft golden daylight, sharp detail, five-fingered hands, stable framing, smooth motion.
+
+---------------------------------------------------------------------
+LIGHTING BOOSTER (append if result looks dull)
+---------------------------------------------------------------------
+, brightly lit sunlit bedroom, strong soft key light from the window, beautiful skin highlights and rim light, high contrast without crushing blacks, rich saturated but natural colors, excellent exposure, high dynamic range, sharp details, cinematic well-illuminated scene
+
+---------------------------------------------------------------------
+AFTER 30s GEN
+---------------------------------------------------------------------
+1. Watch for: mouth-shaped crotch, lips-as-labia, penis stub / fused mess, face melt, seam brightness jumps every ~7–8s
+2. Run Refine with the SAME master prompt still in the box (Anatomy lock re-injects on refine)
+3. Optional Face restore if face softens
+4. Save MP4 only if you're happy — nothing auto-saves
+
+Expected log lines:
+  pure T2V long: … backend will chunk denoise
+  low-VRAM T2V chunking: … seam-frame continuity
+  anatomy lock: positive vulva descriptors injected

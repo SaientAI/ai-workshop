@@ -2,9 +2,14 @@
   import { onMount } from "svelte";
   import { open } from "@tauri-apps/plugin-dialog";
   import { listen } from "@tauri-apps/api/event";
-  import { agent, model, ui } from "../../lib/state.svelte.js";
+  import { agent, model, ui, chat, checkpoints, projects, setCheckpointPolicy, toast } from "../../lib/state.svelte.js";
   import * as T from "../../lib/tauri.js";
   import type { TreeEntry } from "../../lib/types.js";
+  import { ownsInput, inputLabel, activityText } from "../../lib/turnState.js";
+  import {
+    buildSessionState, suggestName, groupByDay, describeSize,
+    AUTO_SAVE_POLICIES, AUTO_SAVE_LABELS,
+  } from "../../lib/checkpoints.js";
 
   // ── File tree ──────────────────────────────────────────────────────────────
 
@@ -42,9 +47,26 @@
   async function browseSandboxRoot() {
     const p = await open({ directory: true }).catch(() => null);
     if (p) {
-      agent.sandboxRoot = p as string;
-      await T.setSandboxRoot(p as string);
+      await changeSandboxRoot(p as string);
+    }
+  }
+
+  async function changeSandboxRoot(path: string) {
+    const previous = await T.getSandboxRoot().catch(() => agent.sandboxRoot);
+    try {
+      await T.setSandboxRoot(path);
+      agent.sandboxRoot = path;
+      projects.active = null;
+      await T.saientSetEnabled(false).catch(() => {});
+      agent.workspaceEpoch += 1;
+      agent.tree = [];
+      agent.selPath = null;
+      agent.content = "";
       await loadFileTree();
+      toast(`Workspace changed to ${path}`, "success");
+    } catch (e) {
+      agent.sandboxRoot = previous;
+      toast(`Could not open workspace: ${String(e)}`, "error");
     }
   }
 
@@ -58,6 +80,30 @@
   let xtermEl: HTMLDivElement | undefined = $state();
   let term: Terminal | null = null;
   let fit: FitAddon | null = null;
+  let ptyWorkspace = "";
+
+  async function spawnWorkspaceTerminal(path: string, announce: boolean) {
+    if (!term) return;
+    const cwd = path || ".";
+    if (announce) {
+      term.write(`\r\n\x1b[38;2;108;142;245mworkspace\x1b[0m → ${cwd}\r\n`);
+    }
+    await T.ptySpawn(cwd, term.cols, term.rows, model.activeServerPort);
+    ptyWorkspace = cwd;
+  }
+
+  // ProjectPicker and the folder field both update the backend's file tools.
+  // Rebind the terminal as part of the same accepted change so the `saient`
+  // CLI, its safe-path boundary and the file tree can never show different
+  // workspaces again.
+  $effect(() => {
+    const epoch = agent.workspaceEpoch;
+    const cwd = agent.sandboxRoot || ".";
+    if (epoch === 0 || !term || cwd === ptyWorkspace) return;
+    void spawnWorkspaceTerminal(cwd, true).catch((e) => {
+      term?.write(`\x1b[31mFailed to switch workspace: ${String(e)}\x1b[0m\r\n`);
+    });
+  });
 
   // Re-fit whenever the terminal tab becomes visible (display:block re-enables measurement).
   $effect(() => {
@@ -89,8 +135,44 @@
 
   function stopAuto() {
     agent.autoMode = false;
+    agent.continuing = false;
+    agent.turn = "INTERRUPTED";
+    agent.retry = null;
     agent.autoStatus = "Stopped by user";
     T.stopGenerate().catch(() => {});
+  }
+
+  // ── Turn ownership ─────────────────────────────────────────────────────────
+  // Derived, never stored: a second copy of "is Saient busy" is how the old code
+  // came to disagree with itself.
+  const turnOwner = $derived(ownsInput(agent.turn, agent.continuing));
+  const turnLabel = $derived(inputLabel(agent.turn, agent.continuing));
+
+  /** Queue a mid-task instruction for the next iteration. */
+  function addInstruction() {
+    const text = agent.planGoal.trim();
+    if (!text) return;
+    agent.pendingInstructions.push(text);
+    agent.planGoal = "";
+  }
+
+  /** Stop now: kill the in-flight inference and end the loop. */
+  function interrupt() {
+    agent.autoMode = false;
+    agent.continuing = false;
+    agent.paused = false;
+    agent.turn = "INTERRUPTED";
+    agent.retry = null;
+    agent.autoStatus = "Interrupted by user";
+    T.stopGenerate().catch(() => {});
+  }
+
+  /** Stop cleanly at the next boundary rather than mid-step. */
+  function togglePause() {
+    agent.paused = !agent.paused;
+    agent.autoStatus = agent.paused
+      ? "Pause requested — will stop after the current step"
+      : "Pause cancelled";
   }
 
   async function executePlan() {
@@ -129,6 +211,88 @@
     agent.memFacts = agent.memFacts.filter(f => (f as { id: string }).id !== id);
   }
 
+  // ── Checkpoints ────────────────────────────────────────────────────────────
+
+  /** The live state a checkpoint captures. Assembled fresh at save time. */
+  function session() {
+    return buildSessionState({
+      goal: agent.planGoal,
+      turn: agent.turn,
+      terminalCwd: agent.termCwd || agent.sandboxRoot,
+      plan: agent.plan,
+      conversation: chat.messages,
+      terminal: agent.termLines.map((l) => l.text),
+    });
+  }
+
+  async function refreshCheckpoints() {
+    checkpoints.list = await T.checkpointList().catch(() => []);
+  }
+
+  async function saveCheckpoint() {
+    checkpoints.busy = true;
+    checkpoints.error = "";
+    try {
+      const meta = await T.checkpointSave(
+        checkpoints.draftName || suggestName(agent.planGoal, "manual"),
+        "manual",
+        checkpoints.lastSaved?.id ?? null,
+        session(),
+      );
+      checkpoints.lastSaved = meta;
+      checkpoints.draftName = "";
+      await refreshCheckpoints();
+      toast(`Saved “${meta.name}”`, "success");
+    } catch (e) {
+      checkpoints.error = String(e);
+    } finally {
+      checkpoints.busy = false;
+    }
+  }
+
+  async function restoreCheckpoint(id: string) {
+    if (!confirm(
+      "Restore this checkpoint?\n\nWorkspace files will be overwritten with the saved versions. " +
+      "A safety checkpoint of the current state is taken first, so this can be undone."
+    )) return;
+    checkpoints.busy = true;
+    try {
+      checkpoints.lastRestore = await T.checkpointRestore(id, session());
+      await refreshCheckpoints();
+      await loadFileTree();
+      toast(`Restored ${checkpoints.lastRestore.restored.length} file(s)`, "success");
+    } catch (e) {
+      checkpoints.error = String(e);
+    } finally {
+      checkpoints.busy = false;
+    }
+  }
+
+  async function exportCheckpoint(id: string, format: "markdown" | "json") {
+    try {
+      const text = await T.checkpointExport(id, format);
+      await navigator.clipboard.writeText(text);
+      toast(`${format === "json" ? "JSON" : "Markdown"} copied to clipboard`, "success");
+    } catch (e) {
+      checkpoints.error = String(e);
+    }
+  }
+
+  async function deleteCheckpoint(id: string) {
+    if (!confirm("Delete this checkpoint? The saved file contents stay on disk if other checkpoints share them.")) return;
+    await T.checkpointDelete(id).catch((e) => (checkpoints.error = String(e)));
+    if (checkpoints.lastSaved?.id === id) checkpoints.lastSaved = null;
+    await refreshCheckpoints();
+  }
+
+  // Load the list when the tab is first opened, not at boot — no point paying
+  // for a directory walk the user may never look at.
+  $effect(() => {
+    if (agent.tab === "checkpoints" && checkpoints.list.length === 0) {
+      void refreshCheckpoints();
+    }
+  });
+
   // ── Boot ───────────────────────────────────────────────────────────────────
 
   onMount(() => {
@@ -152,6 +316,12 @@
 
     async function boot(): Promise<(() => void) | void> {
       loadFileTree();
+
+      // Prefill the constant half of the planning prompt while the user is still
+      // reading the screen. Everything above the goal is identical on every run,
+      // so warming it here turns the first plan from ~14s into ~2s. Fire and
+      // forget: it is an optimisation, and a failure must not block boot.
+      void T.warmAgentCache().catch(() => {});
 
       // Dynamically import xterm so it doesn't bloat the initial bundle parse.
       const [{ Terminal }, { FitAddon }] = await Promise.all([
@@ -221,7 +391,7 @@
     });
 
       // Spawn the shell at the workspace root; hand the agent CLI the model port.
-      await T.ptySpawn(agent.sandboxRoot || ".", term.cols, term.rows, model.activeServerPort).catch(err => {
+      await spawnWorkspaceTerminal(agent.sandboxRoot || ".", false).catch(err => {
         term?.write(`\x1b[31mFailed to start shell: ${String(err)}\x1b[0m\r\n`);
       });
 
@@ -243,10 +413,14 @@
   <div class="sidebar-section" style="flex-shrink:0;">
     <div class="section-label">Workspace</div>
     <div style="display:flex;gap:6px;align-items:center;">
-      <input type="text" bind:value={agent.sandboxRoot} placeholder="~/agent-workspace"
+      <input type="text" bind:value={agent.sandboxRoot} placeholder="data/agent-workspace"
         style="flex:1;font-size:11px;"
-        onchange={() => T.setSandboxRoot(agent.sandboxRoot)} />
-      <button class="tab-action" onclick={browseSandboxRoot}>…</button>
+        aria-label="Workspace folder. Agent access is limited to this folder."
+        onchange={() => changeSandboxRoot(agent.sandboxRoot)} />
+      <button class="tab-action" onclick={browseSandboxRoot} title="Choose the folder Saient may access">…</button>
+    </div>
+    <div style="margin-top:5px;font-size:10px;line-height:1.35;color:var(--text3);">
+      Saient can read and act only inside this folder. Changing it restarts the terminal in that folder.
     </div>
   </div>
 
@@ -265,7 +439,7 @@
 <div class="agent-main">
   <!-- Tab bar -->
   <div class="tabbar">
-    {#each ["files","terminal","planner","memory"] as t}
+    {#each ["files","terminal","planner","memory","checkpoints"] as t}
       <button class="tab" class:active={agent.tab === t}
         onclick={() => (agent.tab = t as typeof agent.tab)}>
         {t.charAt(0).toUpperCase() + t.slice(1)}
@@ -305,10 +479,39 @@
   <!-- Planner tab -->
   {:else if agent.tab === "planner"}
     <div class="planner-panel">
+      <!-- Whose turn it is. Never says "User" while Saient is still working,
+           including the gap between autonomous iterations. -->
+      <div class="turn-row" class:turn-saient={turnOwner === "saient"}>
+        <span class="turn-label">{turnLabel}</span>
+        <span class="turn-activity">{activityText(agent.turn)}</span>
+      </div>
+
+      {#if agent.retry}
+        <div class="retry-note">
+          <strong>Retrying step {agent.retry.step} of {agent.retry.total}</strong>
+          <span>Reason: {agent.retry.reason}</span>
+        </div>
+      {/if}
+
       <div class="plan-goal-row">
-        <input type="text" bind:value={agent.planGoal} placeholder="Goal for the agent…"
-          oninput={() => localStorage.setItem("saient_goal", agent.planGoal)}
-          class="plan-goal" />
+        <input
+          type="text"
+          bind:value={agent.planGoal}
+          placeholder={turnOwner === "saient" ? "Add an instruction for the next step…" : "Goal for the agent…"}
+          class="plan-goal"
+        />
+        {#if turnOwner === "saient"}
+          <!-- The keyboard has not come back. Offer what is actually possible
+               mid-task rather than a Run button that cannot fire. -->
+          <button class="tab-action" onclick={addInstruction}
+            disabled={!agent.planGoal.trim()}
+            title="Queue this for the next iteration">+ Add instruction</button>
+          <button class="tab-action" onclick={interrupt}>■ Interrupt</button>
+          <button class="tab-action" onclick={togglePause} class:auto-on={agent.paused}
+            title="Finish the current step, then stop before the next one">
+            {agent.paused ? "Pausing…" : "❚❚ Pause"}
+          </button>
+        {:else}
         <button class="tab-action run-btn" onclick={agentRun}
           disabled={agent.planRunning || !model.loaded || !ui.saientEnabled || agent.autoMode}>
           {agent.planRunning && !agent.autoMode ? "Running…" : "▶ Run"}
@@ -322,7 +525,17 @@
         >
           {agent.autoMode ? "■ Stop auto" : "⟳ Auto"}
         </button>
+        {/if}
       </div>
+
+      {#if agent.pendingInstructions.length}
+        <div class="queued-note">
+          Queued for the next iteration:
+          <ul>
+            {#each agent.pendingInstructions as instruction}<li>{instruction}</li>{/each}
+          </ul>
+        </div>
+      {/if}
 
       {#if agent.autoMode || agent.autoStatus}
         <div class="auto-bar" class:auto-done={agent.autoGoalDone} class:auto-active={agent.autoMode}>
@@ -354,14 +567,45 @@
         <div class="saient-off">Saient is disabled — toggle it in the title bar to enable autonomous runs.</div>
       {/if}
 
+      {#if agent.planPrefill}
+        <div class="plan-prefill">
+          <span class="plan-prefill-label">Reading the prompt…</span>
+          <progress
+            class="plan-prefill-bar"
+            value={agent.planPrefill.done + 1}
+            max={agent.planPrefill.total}
+          ></progress>
+          <span class="plan-prefill-count">
+            {agent.planPrefill.done + 1} / {agent.planPrefill.total} tokens
+          </span>
+        </div>
+      {/if}
+
+      {#if agent.planReasoning}
+        <details class="plan-thoughts" open>
+          <summary>Thinking</summary>
+          <pre>{agent.planReasoning}</pre>
+        </details>
+      {/if}
+
       <div class="plan-json-label">Plan JSON</div>
       <textarea
         class="plan-json"
         bind:value={agent.planJson}
         placeholder="Paste or generate a plan JSON…"
-        oninput={() => localStorage.setItem("saient_plan_json", agent.planJson)}
         spellcheck="false"
       ></textarea>
+
+      {#if agent.planAbandoned.length}
+        <div class="plan-abandoned">
+          {agent.planAbandoned.length} step(s) never ran because a prerequisite failed:
+          <ul>
+            {#each agent.planAbandoned as description}
+              <li>{description}</li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
 
       <div style="display:flex;gap:8px;">
         <button class="tab-action" onclick={executePlan} disabled={!agent.planJson.trim()}>Execute plan</button>
@@ -413,6 +657,82 @@
         {/each}
         {#if agent.memFacts.length === 0}
           <div class="mem-empty">No facts yet. Run the agent to build memory.</div>
+        {/if}
+      </div>
+    </div>
+
+  <!-- Checkpoints tab -->
+  {:else if agent.tab === "checkpoints"}
+    <div class="cp-panel">
+      <div class="cp-toolbar">
+        <input
+          class="cp-name-input"
+          bind:value={checkpoints.draftName}
+          placeholder="Name this checkpoint…"
+          onkeydown={(e) => e.key === "Enter" && saveCheckpoint()}
+        />
+        <button class="tab-action" onclick={saveCheckpoint} disabled={checkpoints.busy}>
+          {checkpoints.busy ? "Saving…" : "Save checkpoint"}
+        </button>
+        <label class="cp-auto">
+          Auto-save
+          <select
+            value={checkpoints.policy}
+            onchange={(e) => setCheckpointPolicy(e.currentTarget.value as typeof checkpoints.policy)}
+          >
+            {#each AUTO_SAVE_POLICIES as p}<option value={p}>{AUTO_SAVE_LABELS[p]}</option>{/each}
+          </select>
+        </label>
+      </div>
+
+      {#if checkpoints.error}<div class="cp-error">{checkpoints.error}</div>{/if}
+
+      {#if checkpoints.lastRestore}
+        {@const r = checkpoints.lastRestore}
+        <div class="cp-restore-report">
+          Restored {r.restored.length} file(s), {r.unchanged.length} already matched.
+          {#if r.left_in_place.length}
+            {r.left_in_place.length} newer file(s) were left untouched.
+          {/if}
+          <button class="cp-inline-btn" onclick={() => restoreCheckpoint(r.undo_checkpoint)}>
+            Undo this restore
+          </button>
+        </div>
+      {/if}
+
+      <div class="cp-list">
+        {#each groupByDay(checkpoints.list) as group}
+          <div class="cp-day">{group.day}</div>
+          {#each group.items as cp}
+            <div class="cp-item" class:cp-current={cp.id === checkpoints.lastSaved?.id}>
+              <div class="cp-item-head">
+                <span class="cp-item-name">{cp.name}</span>
+                <span class="cp-item-kind">{cp.kind.replace("_", " ")}</span>
+              </div>
+              <div class="cp-item-meta">
+                <span>{new Date(cp.created_at * 1000).toLocaleTimeString()}</span>
+                <span>· {describeSize(cp)}</span>
+                {#if cp.step_index !== null && cp.step_total !== null}
+                  <span>· step {cp.step_index}/{cp.step_total}</span>
+                {/if}
+                {#if cp.outstanding.length}
+                  <span class="cp-outstanding">· {cp.outstanding.length} outstanding</span>
+                {/if}
+              </div>
+              {#if cp.goal}<div class="cp-item-goal">{cp.goal}</div>{/if}
+              <div class="cp-item-actions">
+                <button class="cp-inline-btn" onclick={() => restoreCheckpoint(cp.id)}>Restore</button>
+                <button class="cp-inline-btn" onclick={() => exportCheckpoint(cp.id, "markdown")}>Export MD</button>
+                <button class="cp-inline-btn" onclick={() => exportCheckpoint(cp.id, "json")}>Export JSON</button>
+                <button class="cp-inline-btn danger" onclick={() => deleteCheckpoint(cp.id)}>Delete</button>
+              </div>
+            </div>
+          {/each}
+        {/each}
+        {#if checkpoints.list.length === 0}
+          <div class="mem-empty">
+            No checkpoints yet. Ctrl+S saves the conversation and project state together.
+          </div>
         {/if}
       </div>
     </div>
@@ -529,4 +849,62 @@
   .tree-entry:hover { color: var(--text); background: var(--bg3); }
   .tree-entry.sel { color: var(--accent); background: rgba(108,142,245,0.08); }
   .tree-entry.dir { color: var(--text3); font-weight: 600; cursor: default; }
+
+  /* Checkpoints */
+  .cp-panel { display: flex; flex-direction: column; gap: 8px; height: 100%; overflow: hidden; padding: 10px; }
+  .cp-toolbar { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+  .cp-name-input { flex: 1; background: var(--bg); border: 1px solid var(--border);
+                   border-radius: var(--radius-sm); color: var(--text); padding: 5px 8px; font-size: 12px; }
+  .cp-auto { font-size: 11px; color: var(--text3); display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+  .cp-auto select { background: var(--bg); border: 1px solid var(--border); color: var(--text2);
+                    border-radius: var(--radius-sm); font-size: 11px; padding: 3px 6px; }
+  .cp-error { font-size: 11px; color: #d0553a; border-left: 2px solid #d0553a; padding-left: 8px; }
+  .cp-restore-report { font-size: 11px; color: var(--text2); background: var(--bg3);
+                       border-radius: var(--radius-sm); padding: 6px 8px; display: flex;
+                       flex-wrap: wrap; gap: 8px; align-items: center; }
+  .cp-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+  .cp-day { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em;
+            color: var(--text3); margin-top: 6px; }
+  .cp-item { border: 1px solid var(--border); border-radius: var(--radius-sm);
+             background: var(--bg2); padding: 7px 9px; display: flex; flex-direction: column; gap: 3px; }
+  .cp-item.cp-current { border-color: var(--accent); }
+  .cp-item-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+  .cp-item-name { font-size: 12px; color: var(--text); font-weight: 600; }
+  .cp-item-kind { font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.05em; }
+  .cp-item-meta { font-size: 10px; color: var(--text3); display: flex; gap: 5px; flex-wrap: wrap; }
+  .cp-outstanding { color: #d08a3a; }
+  .cp-item-goal { font-size: 11px; color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cp-item-actions { display: flex; gap: 6px; margin-top: 3px; flex-wrap: wrap; }
+  .cp-inline-btn { background: transparent; border: 1px solid var(--border); color: var(--text2);
+                   border-radius: var(--radius-sm); font-size: 10px; padding: 2px 7px; cursor: pointer; }
+  .cp-inline-btn:hover { color: var(--text); border-color: var(--text3); }
+  .cp-inline-btn.danger:hover { color: #d0553a; border-color: #d0553a; }
+
+
+  /* Planning feedback. Internal children of the screen, so a component-scoped
+     block is safe here — see the note at the top of global.css. */
+  .plan-prefill { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text2); }
+  .plan-prefill-label { white-space: nowrap; }
+  .plan-prefill-bar { flex: 1; height: 4px; accent-color: var(--accent); }
+  .plan-prefill-count { color: var(--text3); font-family: var(--mono); white-space: nowrap; }
+
+  .plan-thoughts { border: 1px solid var(--border); border-radius: 4px; background: var(--bg2); padding: 6px 8px; }
+  .plan-thoughts summary { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text3); cursor: pointer; }
+  .plan-thoughts pre { margin: 6px 0 0; font-family: var(--mono); font-size: 11px; line-height: 1.5; color: var(--text2); white-space: pre-wrap; max-height: 180px; overflow-y: auto; }
+
+  .plan-abandoned { font-size: 11px; color: var(--text2); border-left: 2px solid #d08a3a; padding-left: 8px; }
+  .plan-abandoned ul { margin: 4px 0 0; padding-left: 16px; }
+
+  /* Turn ownership */
+  .turn-row { display: flex; align-items: baseline; gap: 10px; padding: 4px 0; }
+  .turn-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text3); }
+  .turn-row.turn-saient .turn-label { color: var(--accent); }
+  .turn-activity { font-size: 11px; color: var(--text2); }
+
+  .retry-note { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--text2);
+                border-left: 2px solid #d08a3a; padding: 4px 8px; background: var(--bg2); border-radius: 3px; }
+  .retry-note strong { color: var(--text); font-weight: 600; }
+
+  .queued-note { font-size: 11px; color: var(--text2); border-left: 2px solid var(--accent); padding-left: 8px; }
+  .queued-note ul { margin: 2px 0 0; padding-left: 16px; }
 </style>

@@ -50,7 +50,7 @@
 
   async function generate() {
     if (!ig.modelPath || ig.generating) return;
-    ig.generating = true; ig.error = ""; ig.resultB64 = ""; ig.progress = 0;
+    ig.generating = true; ig.error = ""; ig.resultB64 = ""; ig.progress = 0; ig.progressTotal = ig.steps;
     try {
       const r = await T.runImggen({
         model_path: ig.modelPath, lora_path: ig.loraPath || undefined,
@@ -87,6 +87,9 @@
   let loadError = $state("");
 
   let unlistenProgress: (() => void) | null = null;
+  let unlistenArch: (() => void) | null = null;
+  let unlistenGenProgress: (() => void) | null = null;
+  let loadedFamily = $state("");
 
   onMount(async () => {
     igScanModels();
@@ -94,10 +97,29 @@
     unlistenProgress = await listen<string>("igload-progress", (e) => {
       loadStatus = e.payload;
     });
+    // Reset CFG/steps to what the just-loaded model actually wants (SD3.5 wants
+    // cfg≈4.5, not the SDXL-era 7.0 default) rather than carrying over whatever was
+    // set for the previously loaded model. Still fully user-editable afterward.
+    unlistenArch = await listen<{
+      family: string; default_cfg: number; default_steps: number;
+    }>("igload-arch", (e) => {
+      ig.cfg = e.payload.default_cfg;
+      ig.steps = e.payload.default_steps;
+      loadedFamily = e.payload.family;
+    });
+    // Rust/Python already emit real per-step progress during generation — nothing was
+    // listening for it, so the progress bar sat at 0% for the whole run regardless of
+    // model or step count.
+    unlistenGenProgress = await listen<{ step: number; total: number }>("imggen_progress", (e) => {
+      ig.progress = e.payload.step;
+      ig.progressTotal = e.payload.total;
+    });
   });
 
   onDestroy(() => {
     unlistenProgress?.();
+    unlistenArch?.();
+    unlistenGenProgress?.();
   });
 
   const hotLabel = $derived.by(() => {
@@ -115,11 +137,6 @@
     const text = `${ig.modelPath} ${selectedModelLabel}`.toLowerCase();
     return /pencil|sketch|line.?art|monochrome|grayscale|greyscale|black.?white|\bbw\b/.test(text);
   });
-  const ponyBiasedModel = $derived.by(() => {
-    const text = `${ig.modelPath} ${selectedModelLabel}`.toLowerCase();
-    return /pony|anime|manga/.test(text);
-  });
-
   const modelChanged = $derived(!!hotModel && !!ig.modelPath && ig.modelPath !== hotModel);
 
   async function loadModel() {
@@ -170,7 +187,7 @@
     </div>
 
     {#if hotModel && !modelChanged}
-      <div class="hot-badge">🔥 Hot — {hotLabel}</div>
+      <div class="hot-badge">🔥 Hot — {hotLabel}{loadedFamily ? ` (${loadedFamily})` : ""}</div>
       <button class="ig-unload-btn" onclick={unloadModel}>Unload / Free VRAM</button>
     {:else}
       <button class="ig-load-btn" onclick={loadModel} disabled={!ig.modelPath || loading}>
@@ -186,11 +203,6 @@
     {/if}
     {#if sketchBiasedModel}
       <div class="model-warning">Sketch-biased model. Good for drawn styles; use a color/game checkpoint for stronger color.</div>
-    {:else if ponyBiasedModel}
-      <div class="model-warning">Pony/anime checkpoint. Keep Pony score tags and Game asset guard on for cleaner single-subject output.</div>
-      {#if ig.scheduler !== "auto"}
-        <div class="model-warning">Manual scheduler selected. Auto uses the tested Saient asset preset.</div>
-      {/if}
     {/if}
 
     <div class="ig-section-label" style="margin-top:12px">LoRA</div>

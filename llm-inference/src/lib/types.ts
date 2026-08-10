@@ -1,7 +1,7 @@
 // Shared TypeScript types for Saient
 
 export type Screen = "chat" | "agent" | "imggen" | "assets" | "video" | "vision" | "tts" | "lora" | "merge";
-export type AgentTab = "files" | "terminal" | "planner" | "memory";
+export type AgentTab = "files" | "terminal" | "planner" | "memory" | "checkpoints";
 export type ChatTab = "chat" | "system";
 export type StepStatus = "pending" | "running" | "done" | "failed" | "skipped" | "retrying";
 
@@ -117,16 +117,28 @@ export interface TermLine {
   text: string;
 }
 
+/**
+ * Mirrors Rust's `planner::StepSummary` — the shape actually sent to the
+ * frontend, which is narrower than the full `PlanStep` held server-side.
+ *
+ * `tool` was missing here while Rust has always sent it. `depends_on`,
+ * `max_retries` and `output` are the reverse: declared here but never sent, so
+ * they are marked optional rather than quietly typed as present. Nothing reads
+ * them today; anything that starts to would otherwise get undefined at runtime
+ * while the compiler said it was fine.
+ */
 export interface PlanStep {
   id: string;
   index: number;
   description: string;
+  tool: string;
   status: StepStatus;
-  output?: unknown;
   error?: string;
-  depends_on: string[];
   retry_count: number;
-  max_retries: number;
+  /** Not sent by StepSummary — present only if the payload is ever widened. */
+  output?: unknown;
+  depends_on?: string[];
+  max_retries?: number;
 }
 
 export interface Plan {

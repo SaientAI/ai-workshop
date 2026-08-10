@@ -5,10 +5,12 @@
 //! The model is heavy (~27 GB) so keeping it resident across clips is essential.
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, TryLockError};
 use tauri::{Emitter, State, WebviewWindow};
 use crate::resolve;
 use crate::resolve::NoConsole;
@@ -45,10 +47,36 @@ pub struct VideoPayload {
     pub force_seam_blend: Option<bool>,
     pub low_vram: Option<bool>,
     pub block_offload: Option<bool>,  // park transformer to RAM, stream per-step (fits 5s@720p)
+    pub denoise_cache: Option<String>, // off | balanced; does not consume the LoRA adapter slot
+    pub cache_threshold: Option<f32>,
+    pub preview: Option<bool>,
+    pub preview_every: Option<u32>,
+    pub preview_max_width: Option<u32>,
 }
 
 #[derive(Serialize, Clone)]
-pub struct VideoProgress { pub step: u32, pub total: u32 }
+pub struct VideoProgress {
+    pub step: u32,
+    pub total: u32,
+    pub step_seconds: Option<f64>,
+    pub elapsed_seconds: Option<f64>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct VideoPreview {
+    pub base64_jpeg: String,
+    pub step: u32,
+    pub total: u32,
+    pub frames: Vec<u32>,
+    pub decode_seconds: Option<f64>,
+}
+
+#[derive(Clone)]
+pub(crate) enum GenerateUpdate {
+    Status(String),
+    Progress(VideoProgress),
+    Preview(VideoPreview),
+}
 
 #[derive(Serialize)]
 pub struct VideoResult {
@@ -78,6 +106,8 @@ pub struct EnhanceResult {
     pub width: u32,
     pub height: u32,
     pub elapsed: f64,
+    pub completed_stages: Vec<String>,
+    pub failed_stages: Vec<String>,
 }
 
 // ── Hot daemon ──────────────────────────────────────────────────────────────
@@ -89,8 +119,13 @@ pub struct VideoDaemon {
     pub model_path: String,
     pub lora_path: String,
     pub lora_strength: f32,
-    pub frames_hint: u32,
     pub precision: String,
+    pub device: String,
+}
+impl VideoDaemon {
+    fn is_running(&mut self) -> bool {
+        matches!(self._child.try_wait(), Ok(None))
+    }
 }
 impl Drop for VideoDaemon {
     fn drop(&mut self) {
@@ -115,6 +150,8 @@ impl Drop for VideoDaemon {
     }
 }
 pub type VideoHandle = Arc<Mutex<Option<VideoDaemon>>>;
+pub(crate) type LoadProgress = Arc<dyn Fn(String) + Send + Sync>;
+pub(crate) type GenerateProgress = Arc<dyn Fn(GenerateUpdate) + Send + Sync>;
 pub fn new_video_handle() -> VideoHandle { Arc::new(Mutex::new(None)) }
 
 pub(crate) fn loaded_matches(
@@ -122,23 +159,51 @@ pub(crate) fn loaded_matches(
     model_path: &str,
     lora_path: &str,
     lora_strength: f32,
-    frames_hint: u32,
     precision: &str,
 ) -> Result<bool, String> {
-    let guard = handle.lock().map_err(|e| e.to_string())?;
-    Ok(guard.as_ref().is_some_and(|d| {
-        d.model_path == model_path
+    let mut guard = handle.lock().map_err(|e| e.to_string())?;
+    Ok(guard.as_mut().is_some_and(|d| {
+        d.is_running()
+            && d.model_path == model_path
             && d.lora_path == lora_path
             && (d.lora_strength - lora_strength).abs() < f32::EPSILON
-            && d.frames_hint == frames_hint
             && d.precision == precision
     }))
 }
 
 pub(crate) fn loaded_model_from_handle(handle: &VideoHandle) -> Result<Option<String>, String> {
-    Ok(handle.lock().map_err(|e| e.to_string())?
-        .as_ref()
-        .map(|d| d.model_path.clone()))
+    let mut guard = handle.lock().map_err(|e| e.to_string())?;
+    if guard.as_mut().is_some_and(|d| !d.is_running()) {
+        *guard = None;
+    }
+    Ok(guard.as_ref().map(|d| d.model_path.clone()))
+}
+
+pub(crate) fn loaded_lora_from_handle(handle: &VideoHandle) -> Result<Option<String>, String> {
+    let mut guard = handle.lock().map_err(|e| e.to_string())?;
+    if guard.as_mut().is_some_and(|d| !d.is_running()) {
+        *guard = None;
+    }
+    Ok(guard.as_ref().map(|d| d.lora_path.clone()))
+}
+
+/// Returns `Ok(None)` when generation currently owns the daemon mutex.
+pub(crate) fn try_loaded_state_from_handle(
+    handle: &VideoHandle,
+) -> Result<Option<(Option<String>, Option<String>)>, String> {
+    match handle.try_lock() {
+        Ok(mut guard) => {
+            if guard.as_mut().is_some_and(|d| !d.is_running()) {
+                *guard = None;
+            }
+            Ok(Some((
+                guard.as_ref().map(|d| d.model_path.clone()),
+                guard.as_ref().map(|d| d.lora_path.clone()),
+            )))
+        }
+        Err(TryLockError::WouldBlock) => Ok(None),
+        Err(TryLockError::Poisoned(error)) => Err(error.to_string()),
+    }
 }
 
 pub(crate) fn load_blocking(
@@ -152,7 +217,22 @@ pub(crate) fn load_blocking(
     precision: Option<String>,
 ) -> Result<String, String> {
     if let Ok(mut g) = img.lock() { *g = None; }
-    do_load(handle, window, model_path, lora_path, lora_strength, frames, precision)
+    do_load(handle, window, model_path, lora_path, lora_strength, frames, precision, None)
+}
+
+pub(crate) fn load_blocking_with_progress(
+    handle: VideoHandle,
+    img: crate::imggen::DaemonHandle,
+    window: WebviewWindow,
+    model_path: String,
+    lora_path: Option<String>,
+    lora_strength: Option<f32>,
+    frames: Option<u32>,
+    precision: Option<String>,
+    progress: LoadProgress,
+) -> Result<String, String> {
+    if let Ok(mut g) = img.lock() { *g = None; }
+    do_load(handle, window, model_path, lora_path, lora_strength, frames, precision, Some(progress))
 }
 
 pub(crate) fn generate_blocking(
@@ -160,7 +240,25 @@ pub(crate) fn generate_blocking(
     payload: VideoPayload,
     window: WebviewWindow,
 ) -> Result<VideoResult, String> {
-    do_generate(handle, payload, window)
+    do_generate(handle, payload, window, None)
+}
+
+pub(crate) fn generate_blocking_with_progress(
+    handle: VideoHandle,
+    payload: VideoPayload,
+    window: WebviewWindow,
+    progress: GenerateProgress,
+) -> Result<VideoResult, String> {
+    do_generate(handle, payload, window, Some(progress))
+}
+
+pub(crate) fn enhance_blocking_with_progress(
+    handle: VideoHandle,
+    payload: EnhancePayload,
+    window: WebviewWindow,
+    progress: GenerateProgress,
+) -> Result<EnhanceResult, String> {
+    do_enhance(handle, payload, window, Some(progress))
 }
 
 // ── Scan for video models (diffusers dirs with a video pipeline) ──────────────
@@ -225,7 +323,7 @@ pub async fn video_load(
     // loading a video model doesn't OOM on top of ~6–7 GB the user can't see is in use.
     if let Ok(mut g) = img.lock() { *g = None; }
     let arc = handle.inner().clone();
-    tokio::task::spawn_blocking(move || do_load(arc, window, model_path, lora_path, lora_strength, frames, precision))
+    tokio::task::spawn_blocking(move || do_load(arc, window, model_path, lora_path, lora_strength, frames, precision, None))
         .await
         .map_err(|e| format!("task join: {e}"))?
 }
@@ -241,11 +339,9 @@ pub struct LoraEntry { pub path: String, pub label: String }
 pub fn video_scan_loras() -> Vec<LoraEntry> {
     let mut out = Vec::new();
     let mut roots: Vec<PathBuf> = Vec::new();
-    if let Ok(home) = std::env::var("HOME") {
-        roots.push(PathBuf::from(format!("{home}/.config/saient/loras")));
-        roots.push(PathBuf::from(format!("{home}/Saient/models/video-loras")));
-        roots.push(PathBuf::from(format!("{home}/Saient/models/wan/loras")));
-    }
+    roots.push(crate::paths::config_dir().join("loras"));
+    roots.push(crate::paths::models_dir().join("video-loras"));
+    roots.push(crate::paths::models_dir().join("wan").join("loras"));
     for d in resolve::model_scan_dirs() {
         roots.push(d.join("loras"));
         roots.push(d.join("wan").join("loras"));
@@ -327,7 +423,12 @@ pub async fn video_unload(handle: State<'_, VideoHandle>) -> Result<(), String> 
 
 #[tauri::command]
 pub fn video_loaded_model(handle: State<'_, VideoHandle>) -> Result<Option<String>, String> {
-    Ok(handle.lock().map_err(|e| e.to_string())?.as_ref().map(|d| d.model_path.clone()))
+    loaded_model_from_handle(handle.inner())
+}
+
+#[tauri::command]
+pub fn video_loaded_lora(handle: State<'_, VideoHandle>) -> Result<Option<String>, String> {
+    loaded_lora_from_handle(handle.inner())
 }
 
 #[tauri::command]
@@ -337,7 +438,7 @@ pub async fn video_generate(
     window: WebviewWindow,
 ) -> Result<VideoResult, String> {
     let arc = handle.inner().clone();
-    tokio::task::spawn_blocking(move || do_generate(arc, payload, window))
+    tokio::task::spawn_blocking(move || do_generate(arc, payload, window, None))
         .await
         .map_err(|e| format!("task join: {e}"))?
 }
@@ -351,7 +452,7 @@ pub async fn video_enhance(
     window: WebviewWindow,
 ) -> Result<EnhanceResult, String> {
     let arc = handle.inner().clone();
-    tokio::task::spawn_blocking(move || do_enhance(arc, payload, window))
+    tokio::task::spawn_blocking(move || do_enhance(arc, payload, window, None))
         .await
         .map_err(|e| format!("task join: {e}"))?
 }
@@ -362,7 +463,20 @@ pub async fn video_enhance(
 /// reading (None only if nvidia-smi isn't available — a CPU box, nothing to wait for).
 /// Used after evicting other GPU models so we don't spawn the video daemon onto memory the
 /// driver hasn't reclaimed yet. Advisory — the caller proceeds either way.
-fn wait_for_vram(window: &WebviewWindow, want_mib: u64, timeout_ms: u64) -> Option<u64> {
+fn emit_vidload_progress(window: &WebviewWindow, message: impl Into<String>, progress: Option<&LoadProgress>) {
+    let message = message.into();
+    if let Some(progress) = progress {
+        progress(message.clone());
+    }
+    let _ = window.emit("vidload-progress", message);
+}
+
+fn wait_for_vram(
+    window: &WebviewWindow,
+    want_mib: u64,
+    timeout_ms: u64,
+    progress: Option<&LoadProgress>,
+) -> Option<u64> {
     use std::time::{Duration, Instant};
     let start = Instant::now();
     let mut last = None;
@@ -373,9 +487,10 @@ fn wait_for_vram(window: &WebviewWindow, want_mib: u64, timeout_ms: u64) -> Opti
                 if free >= want_mib {
                     return Some(free);
                 }
-                let _ = window.emit(
-                    "vidload-progress",
+                emit_vidload_progress(
+                    window,
                     format!("waiting for GPU memory… {:.1} GB free", free as f64 / 1024.0),
+                    progress,
                 );
             }
             None => return last,
@@ -388,9 +503,28 @@ fn wait_for_vram(window: &WebviewWindow, want_mib: u64, timeout_ms: u64) -> Opti
 }
 
 fn do_load(arc: VideoHandle, window: WebviewWindow, model_path: String,
-           lora_path: Option<String>, lora_strength: Option<f32>, frames: Option<u32>,
-           precision: Option<String>) -> Result<String, String> {
+           lora_path: Option<String>, lora_strength: Option<f32>, _frames: Option<u32>,
+           precision: Option<String>, progress: Option<LoadProgress>) -> Result<String, String> {
+    let lora_path_value = lora_path.unwrap_or_default();
+    let lora_strength_value = lora_strength.unwrap_or(1.0_f32);
+    let precision_value = precision.unwrap_or_else(|| "fast".into());
     let mut guard = arc.lock().map_err(|e| e.to_string())?;
+    let already_loaded = guard.as_mut().and_then(|daemon| {
+        (daemon.is_running()
+            && daemon.model_path == model_path
+            && daemon.lora_path == lora_path_value
+            && (daemon.lora_strength - lora_strength_value).abs() < f32::EPSILON
+            && daemon.precision == precision_value)
+            .then(|| daemon.device.clone())
+    });
+    if let Some(actual_device) = already_loaded {
+        emit_vidload_progress(
+            &window,
+            format!("Already loaded on {actual_device}"),
+            progress.as_ref(),
+        );
+        return Ok(actual_device);
+    }
     *guard = None; // kill any existing daemon (frees VRAM)
 
     // A 16 GB card holds exactly ONE model at a time. Native 720p denoise peaks at
@@ -403,17 +537,17 @@ fn do_load(arc: VideoHandle, window: WebviewWindow, model_path: String,
     // memory is reclaimed, so spawning immediately would race onto not-yet-freed VRAM.
     crate::engine::kill_our_stale_servers();
     if crate::engine::gpu_available() {
-        let _ = window.emit("vidload-progress", "clearing GPU memory from other models…");
-        let free = wait_for_vram(&window, 13_500, 8_000);
+        emit_vidload_progress(&window, "clearing GPU memory from other models…", progress.as_ref());
+        let free = wait_for_vram(&window, 13_500, 8_000, progress.as_ref());
         if let Some(mib) = free {
             if mib < 12_000 {
                 // Couldn't get the card clean — something we don't manage (an external
                 // tinyq4/Saient server, another GPU app) is holding it. Don't swap-die or
                 // OOM cryptically: tell the user plainly. (We still proceed; a 480p gen may
                 // fit, and the daemon turns any residual OOM into a clean error, not a crash.)
-                let _ = window.emit("vidload-progress", format!(
+                emit_vidload_progress(&window, format!(
                     "⚠ only {:.1} GB GPU free — close other GPU apps/servers or HD may run out of memory",
-                    mib as f64 / 1024.0));
+                    mib as f64 / 1024.0), progress.as_ref());
             }
         }
     }
@@ -431,9 +565,11 @@ fn do_load(arc: VideoHandle, window: WebviewWindow, model_path: String,
     };
     let script = resolve::find_script(script_name).map_err(|e: anyhow::Error| e.to_string())?;
 
-    let _ = window.emit("vidload-progress", "Starting Python…");
+    emit_vidload_progress(&window, "Starting Python…", progress.as_ref());
 
-    let mut child = Command::new(python)
+    let mut cmd = Command::new(python);
+    crate::paths::apply_child_env(&mut cmd);
+    let mut child = cmd
         .arg(script)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -445,16 +581,10 @@ fn do_load(arc: VideoHandle, window: WebviewWindow, model_path: String,
     let mut stdin = BufWriter::new(child.stdin.take().ok_or("no stdin")?);
     let mut stdout = BufReader::new(child.stdout.take().ok_or("no stdout")?);
 
-    let lora_path_value = lora_path.unwrap_or_default();
-    let lora_strength_value = lora_strength.unwrap_or(1.0_f32);
-    let frames_hint_value = frames.unwrap_or(49);
-    let precision_value = precision.unwrap_or_else(|| "fast".into());
-
     let cfg = serde_json::json!({
         "model_path": model_path, "device": "auto",
         "lora_path": lora_path_value.clone(),
         "lora_strength": lora_strength_value,
-        "frames_hint": frames_hint_value,
         "precision": precision_value.clone(),
     });
     writeln!(stdin, "{cfg}").map_err(|e| format!("stdin write: {e}"))?;
@@ -473,7 +603,7 @@ fn do_load(arc: VideoHandle, window: WebviewWindow, model_path: String,
             break v["device"].as_str().unwrap_or("unknown").to_string();
         }
         if let Some(s) = v["loading_status"].as_str() {
-            let _ = window.emit("vidload-progress", s);
+            emit_vidload_progress(&window, s, progress.as_ref());
         }
     };
 
@@ -484,13 +614,18 @@ fn do_load(arc: VideoHandle, window: WebviewWindow, model_path: String,
         model_path,
         lora_path: lora_path_value,
         lora_strength: lora_strength_value,
-        frames_hint: frames_hint_value,
         precision: precision_value,
+        device: device.clone(),
     });
     Ok(device)
 }
 
-fn do_generate(arc: VideoHandle, payload: VideoPayload, window: WebviewWindow) -> Result<VideoResult, String> {
+fn do_generate(
+    arc: VideoHandle,
+    payload: VideoPayload,
+    window: WebviewWindow,
+    progress: Option<GenerateProgress>,
+) -> Result<VideoResult, String> {
     let mut guard = arc.lock().map_err(|e| e.to_string())?;
     let daemon = guard.as_mut().ok_or("No video model loaded — click Load Model first")?;
 
@@ -515,6 +650,11 @@ fn do_generate(arc: VideoHandle, payload: VideoPayload, window: WebviewWindow) -
         "force_seam_blend": payload.force_seam_blend.unwrap_or(false),
         "low_vram": payload.low_vram.unwrap_or(false),
         "block_offload": payload.block_offload.unwrap_or(false),
+        "denoise_cache": payload.denoise_cache.unwrap_or_else(|| "off".into()),
+        "cache_threshold": payload.cache_threshold.unwrap_or(0.10_f32),
+        "preview": payload.preview.unwrap_or(false),
+        "preview_every": payload.preview_every.unwrap_or(5),
+        "preview_max_width": payload.preview_max_width.unwrap_or(256),
     });
     writeln!(daemon.stdin, "{req}").map_err(|e| format!("stdin write: {e}"))?;
     daemon.stdin.flush().map_err(|e| format!("stdin flush: {e}"))?;
@@ -538,43 +678,231 @@ fn do_generate(arc: VideoHandle, payload: VideoPayload, window: WebviewWindow) -
         // Staged generate loads the text encoder on first use, then denoises —
         // surface those phase messages so the UI isn't stuck at 0% for ~1 min.
         if let Some(s) = v["loading_status"].as_str() {
-            let _ = window.emit("vidload-progress", s);
+            let message = s.to_string();
+            let _ = window.emit("vidload-progress", message.clone());
+            if let Some(progress) = progress.as_ref() {
+                progress(GenerateUpdate::Status(message));
+            }
         }
         if v["step"].is_number() {
-            let _ = window.emit("video_progress", VideoProgress {
+            let update = VideoProgress {
                 step: v["step"].as_u64().unwrap_or(0) as u32,
                 total: v["total"].as_u64().unwrap_or(1) as u32,
-            });
+                step_seconds: v["step_seconds"].as_f64(),
+                elapsed_seconds: v["elapsed_seconds"].as_f64(),
+            };
+            let _ = window.emit("video_progress", update.clone());
+            if let Some(progress) = progress.as_ref() {
+                progress(GenerateUpdate::Progress(update));
+            }
+        }
+        if let Some(base64_jpeg) = v["preview_base64_jpeg"].as_str() {
+            let update = VideoPreview {
+                base64_jpeg: base64_jpeg.to_string(),
+                step: v["preview_step"].as_u64().unwrap_or(0) as u32,
+                total: v["preview_total"].as_u64().unwrap_or(1) as u32,
+                frames: v["preview_frames"]
+                    .as_array()
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(|value| value.as_u64().map(|n| n as u32))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                decode_seconds: v["preview_seconds"].as_f64(),
+            };
+            let _ = window.emit("video-preview", update.clone());
+            if let Some(progress) = progress.as_ref() {
+                progress(GenerateUpdate::Preview(update));
+            }
         }
     }
 }
 
-fn do_enhance(arc: VideoHandle, payload: EnhancePayload, window: WebviewWindow) -> Result<EnhanceResult, String> {
+fn emit_enhance_status(
+    window: &WebviewWindow,
+    progress: Option<&GenerateProgress>,
+    message: impl Into<String>,
+) {
+    let message = message.into();
+    let _ = window.emit("vidload-progress", message.clone());
+    if let Some(progress) = progress {
+        progress(GenerateUpdate::Status(message));
+    }
+}
+
+const UPSCALE_MODEL_URL: &str =
+    "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth";
+const UPSCALE_MODEL_BYTES: u64 = 67_061_725;
+const UPSCALE_MODEL_SHA256: &str =
+    "49fafd45f8fd7aa8d31ab2a22d14d91b536c34494a5cfe31eb5d89c2fa266abb";
+
+fn sha256_file(path: &Path) -> Result<String, String> {
+    let mut file = File::open(path)
+        .map_err(|error| format!("Could not open {}: {error}", path.display()))?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 128 * 1024];
+    loop {
+        let count = file
+            .read(&mut buffer)
+            .map_err(|error| format!("Could not read {}: {error}", path.display()))?;
+        if count == 0 {
+            break;
+        }
+        digest.update(&buffer[..count]);
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
+fn ensure_upscale_model(
+    window: &WebviewWindow,
+    progress: Option<&GenerateProgress>,
+) -> Result<PathBuf, String> {
+    let path = crate::paths::config_dir()
+        .join("upscale")
+        .join("RealESRGAN_x2plus.pth");
+
+    if path.exists() {
+        let actual = sha256_file(&path)?;
+        if actual == UPSCALE_MODEL_SHA256 {
+            return Ok(path);
+        }
+        return Err(format!(
+            "Refusing to load {} because its SHA-256 does not match the official model",
+            path.display()
+        ));
+    }
+
+    crate::internet::require_enabled("RealESRGAN quality-pass model download")?;
+    emit_enhance_status(
+        window,
+        progress,
+        "upscale: downloading the verified RealESRGAN x2 model (64 MB, first use only)...",
+    );
+
+    let parent = path.parent().ok_or("Invalid upscale model path")?;
+    std::fs::create_dir_all(parent)
+        .map_err(|error| format!("Could not create {}: {error}", parent.display()))?;
+    let part = path.with_extension("pth.part");
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(30 * 60))
+        .build()
+        .map_err(|error| format!("Could not initialise the model downloader: {error}"))?;
+    let mut response = client
+        .get(UPSCALE_MODEL_URL)
+        .send()
+        .and_then(reqwest::blocking::Response::error_for_status)
+        .map_err(|error| format!("RealESRGAN model download failed: {error}"))?;
+    if let Some(length) = response.content_length() {
+        if length != UPSCALE_MODEL_BYTES {
+            return Err(format!(
+                "RealESRGAN model download reported {length} bytes; expected {UPSCALE_MODEL_BYTES}"
+            ));
+        }
+    }
+
+    let mut output = File::create(&part)
+        .map_err(|error| format!("Could not create {}: {error}", part.display()))?;
+    let mut digest = Sha256::new();
+    let mut downloaded = 0_u64;
+    let mut reported_percent = 0_u64;
+    let mut buffer = [0_u8; 128 * 1024];
+    loop {
+        let count = response
+            .read(&mut buffer)
+            .map_err(|error| format!("RealESRGAN model download stopped: {error}"))?;
+        if count == 0 {
+            break;
+        }
+        output
+            .write_all(&buffer[..count])
+            .map_err(|error| format!("Could not write {}: {error}", part.display()))?;
+        digest.update(&buffer[..count]);
+        downloaded += count as u64;
+        let percent = downloaded.saturating_mul(100) / UPSCALE_MODEL_BYTES;
+        if percent >= reported_percent + 10 {
+            reported_percent = percent - (percent % 10);
+            emit_enhance_status(
+                window,
+                progress,
+                format!("upscale model download: {}%", reported_percent.min(100)),
+            );
+        }
+    }
+    output
+        .sync_all()
+        .map_err(|error| format!("Could not finish {}: {error}", part.display()))?;
+    drop(output);
+
+    let actual = format!("{:x}", digest.finalize());
+    if downloaded != UPSCALE_MODEL_BYTES || actual != UPSCALE_MODEL_SHA256 {
+        let _ = std::fs::remove_file(&part);
+        return Err(format!(
+            "RealESRGAN model verification failed (bytes {downloaded}/{UPSCALE_MODEL_BYTES}, SHA-256 {actual})"
+        ));
+    }
+    std::fs::rename(&part, &path)
+        .map_err(|error| format!("Could not install {}: {error}", path.display()))?;
+    emit_enhance_status(
+        window,
+        progress,
+        "upscale: verified RealESRGAN x2 model installed locally",
+    );
+    Ok(path)
+}
+
+fn do_enhance(
+    arc: VideoHandle,
+    payload: EnhancePayload,
+    window: WebviewWindow,
+    progress: Option<GenerateProgress>,
+) -> Result<EnhanceResult, String> {
     // Free the whole GPU first: drop the resident generator daemon. The quality
     // pass then owns all VRAM (the user's "let it stop generating, free the load").
     {
         let mut guard = arc.lock().map_err(|e| e.to_string())?;
         *guard = None;
     }
-    let _ = window.emit("vidload-progress", "freeing generator — handing the GPU to the quality pass…");
+    emit_enhance_status(
+        &window,
+        progress.as_ref(),
+        "freeing generator — handing the GPU to the quality pass…",
+    );
 
     // Same one-GPU rule as load: the enhancer loads its OWN models (refine transformer +
     // RealESRGAN), so a resident chat server left over from a chat session would OOM the
     // pass. Evict it and wait for the VRAM (the video daemon was just dropped above).
     crate::engine::kill_our_stale_servers();
     if crate::engine::gpu_available() {
-        wait_for_vram(&window, 13_500, 8_000);
+        wait_for_vram(&window, 13_500, 8_000, None);
     }
 
     let python = resolve::find_python().map_err(|e: anyhow::Error| e.to_string())?;
     let script = resolve::find_script("enhance_video.py").map_err(|e: anyhow::Error| e.to_string())?;
 
-    // Default upscale weights live in the managed config dir.
-    let upscale_model = std::env::var("HOME")
-        .map(|h| format!("{h}/.config/saient/upscale/RealESRGAN_x2plus.pth"))
-        .unwrap_or_default();
+    // The weight is fetched only when an upscale pass requests it and the app's
+    // Internet switch is on. Once verified it remains local for subsequent runs.
+    let upscale_model = if payload.stages.iter().any(|stage| stage == "upscale") {
+        match ensure_upscale_model(&window, progress.as_ref()) {
+            Ok(path) => path.to_string_lossy().into_owned(),
+            Err(error) => {
+                emit_enhance_status(
+                    &window,
+                    progress.as_ref(),
+                    format!("upscale unavailable: {error}"),
+                );
+                String::new()
+            }
+        }
+    } else {
+        String::new()
+    };
 
-    let mut child = Command::new(python)
+    let mut cmd = Command::new(python);
+    crate::paths::apply_child_env(&mut cmd);
+    let mut child = cmd
         .arg(script)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -619,17 +947,41 @@ fn do_enhance(arc: VideoHandle, payload: EnhancePayload, window: WebviewWindow) 
                 width:  v["width"].as_u64().unwrap_or(0) as u32,
                 height: v["height"].as_u64().unwrap_or(0) as u32,
                 elapsed: v["elapsed"].as_f64().unwrap_or(0.0),
+                completed_stages: v["completed_stages"]
+                    .as_array()
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(|value| value.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                failed_stages: v["failed_stages"]
+                    .as_array()
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(|value| value.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
             });
         }
         if let Some(err) = v["error"].as_str() { return Err(err.to_string()); }
         if let Some(s) = v["loading_status"].as_str() {
-            let _ = window.emit("vidload-progress", s);
+            emit_enhance_status(&window, progress.as_ref(), s);
         }
         if v["step"].is_number() {
-            let _ = window.emit("video_progress", VideoProgress {
+            let update = VideoProgress {
                 step: v["step"].as_u64().unwrap_or(0) as u32,
                 total: v["total"].as_u64().unwrap_or(1) as u32,
-            });
+                step_seconds: None,
+                elapsed_seconds: None,
+            };
+            let _ = window.emit("video_progress", update.clone());
+            if let Some(progress) = progress.as_ref() {
+                progress(GenerateUpdate::Progress(update));
+            }
         }
     }
 }

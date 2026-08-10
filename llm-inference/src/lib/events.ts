@@ -2,10 +2,36 @@
 // Call once at app startup.
 
 import { listen } from "@tauri-apps/api/event";
-import { model, chat, dual, agent, tts, lora, merge, params, toast } from "./state.svelte.js";
+import { model, chat, dual, agent, tts, lora, merge, params, toast, video, pulse } from "./state.svelte.js";
 import { splitArtifact } from "./artifact.js";
 import { agentRun, checkGoalCompletion } from "./tauri.js";
 import type { LoadPhase } from "./types.js";
+import { animationFor, activityLine, pushActivity } from "./pulse.js";
+import { activityText } from "./turnState.js";
+
+/**
+ * Record a change of activity: reset the elapsed clock, point the robot at the
+ * new work, and append a timeline entry.
+ *
+ * Called from the event handlers rather than derived on a timer, so the bar can
+ * only ever show work that actually started. `text` overrides the derived line
+ * for things the turn state alone cannot name.
+ */
+function beginActivity(
+  step: { tool?: string; target?: string | null } | null,
+  text?: string,
+  detail?: string,
+) {
+  pulse.step = step;
+  pulse.startedAt = Date.now();
+  const line = text ?? activityLine(agent.turn, step ?? undefined, activityText(agent.turn));
+  pushActivity(pulse.log, {
+    at: pulse.startedAt,
+    text: line,
+    animation: animationFor(agent.turn, step ?? undefined),
+    detail: detail?.trim() || undefined,
+  });
+}
 
 const LOAD_PHASE_LABELS: Record<string, string> = {
   stopping: "⬛ Stopping server",
@@ -15,7 +41,135 @@ const LOAD_PHASE_LABELS: Record<string, string> = {
   ready: "✓ Ready",
 };
 
+type RemoteVideoLoadEvent = {
+  status: "started" | "done" | "error" | "unloaded";
+  model_path?: string | null;
+  lora_path?: string | null;
+  device?: string | null;
+  message?: string | null;
+};
+
+type VideoProgressEvent = {
+  step: number;
+  total: number;
+  step_seconds?: number;
+  elapsed_seconds?: number;
+};
+
+type VideoPreviewEvent = {
+  base64_jpeg: string;
+  step: number;
+  total: number;
+  frames: number[];
+  decode_seconds?: number;
+};
+
+type RemoteVideoGenerationEvent = {
+  status: "started" | "done" | "error";
+  message?: string | null;
+  frames?: number | null;
+  elapsed?: number | null;
+};
+
+function appendVideoLog(message: unknown) {
+  const line = String(message ?? "").trim();
+  if (!line) return;
+  const last = video.log[video.log.length - 1];
+  if (last?.endsWith(line)) return;
+  const time = new Date().toLocaleTimeString([], { hour12: false });
+  video.log = [...video.log, `${time}  ${line}`].slice(-300);
+}
+
 export async function setupEvents() {
+  // Phone requests can arrive while the desktop Video screen is not mounted.
+  // Keep its model state and rolling activity log synchronized at app scope.
+  await listen<string>("vidload-progress", (e) => {
+    video.loadStatus = e.payload || "Working…";
+    appendVideoLog(e.payload);
+  });
+
+  await listen<VideoProgressEvent>("video_progress", (e) => {
+    video.generating = true;
+    video.progress = e.payload.step;
+    video.progressTotal = e.payload.total;
+    video.loadStatus = "";
+    const timing = typeof e.payload.step_seconds === "number"
+      ? ` · ${e.payload.step_seconds.toFixed(1)}s step · ${Math.round(e.payload.elapsed_seconds ?? 0)}s elapsed`
+      : "";
+    appendVideoLog(`step ${e.payload.step}/${e.payload.total}${timing}`);
+  });
+
+  await listen<VideoPreviewEvent>("video-preview", (e) => {
+    video.previewB64 = e.payload.base64_jpeg;
+    video.previewStep = e.payload.step;
+    video.previewFrames = e.payload.frames;
+    const timing = typeof e.payload.decode_seconds === "number"
+      ? ` · ${e.payload.decode_seconds.toFixed(2)}s decode`
+      : "";
+    appendVideoLog(`preview · step ${e.payload.step}/${e.payload.total} · ${e.payload.frames.length} frames${timing}`);
+  });
+
+  await listen<RemoteVideoGenerationEvent>("remote-video-generation", (e) => {
+    const event = e.payload;
+    const message = event.message || "Phone video generation update";
+    if (event.status === "started") {
+      video.generating = true;
+      video.error = "";
+      video.progress = 0;
+      video.progressTotal = video.steps;
+      video.previewB64 = "";
+      video.previewStep = 0;
+      video.previewFrames = [];
+      appendVideoLog(`▶ ${message}`);
+      return;
+    }
+    video.generating = false;
+    video.loadStatus = "";
+    if (event.status === "done") {
+      appendVideoLog(`✓ ${message}${event.frames ? ` · ${event.frames} frames` : ""}${typeof event.elapsed === "number" ? ` · ${event.elapsed.toFixed(1)}s` : ""}`);
+    } else {
+      video.error = message;
+      appendVideoLog(`✗ ${message}`);
+    }
+  });
+
+  await listen<RemoteVideoLoadEvent>("remote-video-load", (e) => {
+    const event = e.payload;
+    const message = event.message || "Phone video model update";
+    if (event.status === "started") {
+      video.loading = true;
+      video.error = "";
+      video.loadStatus = message;
+      video.loadedPath = "";
+      if (event.model_path) video.modelPath = event.model_path;
+      video.loraPath = event.lora_path || "";
+      appendVideoLog(`▶ ${message}`);
+      return;
+    }
+    if (event.status === "done") {
+      video.loading = false;
+      video.loadStatus = "";
+      if (event.model_path) {
+        video.modelPath = event.model_path;
+        video.loadedPath = event.model_path;
+      }
+      video.loraPath = event.lora_path || "";
+      appendVideoLog(`✓ ${message}${event.device ? ` on ${event.device}` : ""}`);
+      return;
+    }
+    if (event.status === "unloaded") {
+      video.loading = false;
+      video.loadedPath = "";
+      video.loadStatus = "";
+      appendVideoLog(`✓ ${message}`);
+      return;
+    }
+    video.loading = false;
+    video.loadedPath = "";
+    video.loadStatus = "";
+    video.error = message;
+    appendVideoLog(`✗ phone load failed: ${message}`);
+  });
   // ── Model load phases ──────────────────────────────────────────────────────
   await listen("model-loading", (e) => {
     model.loading = true;
@@ -375,62 +529,153 @@ export async function setupEvents() {
   });
 
   // ── Agent plan ─────────────────────────────────────────────────────────────
-  await listen<string>("agent-planning", () => {
+  await listen<string>("agent-planning", (e) => {
     agent.planRunning = true;
     agent.planPhase = "generating";
+    agent.turn = "SAIENT_THINKING";
+    agent.retry = null;
+    beginActivity(null, "Planning", String(e.payload ?? ""));
     agent.planJson = "";
     agent.plan = null;
+    agent.planPrefill = null;
+    agent.planReasoning = "";
+    agent.planAbandoned = [];
+  });
+  await listen<{ done: number; total: number }>("agent-plan-prefill", (e) => {
+    // Reading the prompt is the bulk of the wait on a local model. Without this
+    // the panel sat blank until the first token, which reads as a hang.
+    agent.planPrefill = e.payload;
+  });
+  await listen<string>("agent-plan-reasoning", (e) => {
+    agent.planReasoning += e.payload;
   });
   await listen<string>("agent-plan-token", (e) => {
+    agent.planPrefill = null;        // tokens are flowing; the prompt is read
     agent.planJson += e.payload;
   });
   await listen<string>("agent-plan-ready", (e) => {
     agent.planJson = e.payload;
+    agent.planPrefill = null;
     agent.planPhase = "executing";
+  });
+  await listen<{ count: number; descriptions: string[] }>("plan-steps-abandoned", (e) => {
+    agent.planAbandoned = e.payload.descriptions;
   });
   await listen("plan-start", (e) => {
     agent.plan = e.payload as typeof agent.plan;
+    agent.turn = "SAIENT_ACTING";
   });
-  await listen("plan-step-start", () => {});
+  await listen<{ tool: string; description: string; target?: string | null }>(
+    "plan-step-start",
+    (e) => {
+      // Shell-outs are the slow, quiet ones — name them separately so a long build
+      // doesn't look like a stall.
+      agent.turn = e.payload.tool?.startsWith("exec") ? "WAITING_FOR_TOOL" : "SAIENT_ACTING";
+      agent.retry = null;
+      beginActivity(
+        { tool: e.payload.tool, target: e.payload.target ?? null },
+        undefined,
+        e.payload.description,
+      );
+    },
+  );
+  await listen<{ passed: boolean; reason: string }>("plan-step-verify", (e) => {
+    agent.turn = "VERIFYING";
+    pulse.step = null;
+    if (!e.payload.passed) {
+      beginActivity(null, "Verification failed", e.payload.reason);
+    }
+  });
+  await listen<{ step: number; total: number; reason: string }>("plan-step-retry", (e) => {
+    agent.turn = "RETRYING";
+    agent.retry = e.payload;
+    beginActivity(
+      null,
+      `Retrying step ${e.payload.step} of ${e.payload.total}`,
+      e.payload.reason,
+    );
+  });
   await listen("plan-step-done", (e) => {
     agent.plan = e.payload as typeof agent.plan;
   });
   await listen("plan-step-failed", () => {});
   await listen("plan-done", async (e) => {
     agent.plan = e.payload as typeof agent.plan;
-    agent.planRunning = false;
-    agent.planPhase = "idle";
 
-    // ── Autonomous loop ─────────────────────────────────────────────────────
-    if (!agent.autoMode) return;
+    // One plan finished. That is NOT the same as Saient having stopped: when the
+    // autonomous loop is on, a goal-completion inference and often a whole second
+    // run still follow. This used to set planRunning=false and planPhase="idle"
+    // right here, handing the keyboard back while all of that was still running.
+    // Ownership is now released in exactly one place — settle() below.
+    const planFailed = (agent.plan?.status ?? "").toLowerCase().includes("fail");
 
-    if (agent.autoIteration >= agent.autoMaxIter) {
+    /** Release the turn. The single exit from working states. */
+    const settle = (state: "COMPLETED" | "FAILED" | "INTERRUPTED", why: string) => {
       agent.autoMode = false;
-      agent.autoStatus = `Reached max iterations (${agent.autoMaxIter}) — review progress in the Memory tab`;
+      agent.continuing = false;
+      agent.planRunning = false;
+      agent.planPhase = "idle";
+      agent.turn = state;
+      agent.retry = null;
+      if (why) agent.autoStatus = why;
+      // The robot stops with the work, not on a timer of its own.
+      beginActivity(null, activityText(state), why);
+    };
+
+    if (!agent.autoMode) {
+      settle(planFailed ? "FAILED" : "COMPLETED", "");
       return;
     }
 
-    // Ask the LLM: is the goal achieved?
+    if (agent.autoIteration >= agent.autoMaxIter) {
+      settle(
+        "COMPLETED",
+        `Reached max iterations (${agent.autoMaxIter}) — review progress in the Memory tab`,
+      );
+      return;
+    }
+
+    // A pause takes effect between iterations, so the current step is never cut
+    // in half. Saient is stopping, so the turn does return to the user.
+    if (agent.paused) {
+      settle("INTERRUPTED", "Paused — press Auto to resume");
+      agent.paused = false;
+      return;
+    }
+
+    // Still working: evaluating counts as working, and the loop intends to run
+    // again, so the input stays with Saient across the gap.
+    agent.continuing = true;
+    agent.turn = "VERIFYING";
     agent.autoStatus = "Evaluating progress…";
     try {
       const verdict = await checkGoalCompletion(agent.planGoal);
       if (verdict.complete) {
-        agent.autoMode = false;
         agent.autoGoalDone = true;
-        agent.autoStatus = verdict.reason;
-      } else {
-        agent.autoIteration += 1;
-        agent.autoStatus = verdict.reason;
-        // Re-run — episodic memory tells the LLM what's already been done
-        await agentRun(agent.planGoal).catch((err: unknown) => {
-          agent.termLines.push({ type: "err", text: `Auto-run failed: ${String(err)}` });
-          agent.autoMode = false;
-          agent.autoStatus = "Run error — autonomous mode stopped";
-        });
+        settle("COMPLETED", verdict.reason);
+        return;
       }
+
+      agent.autoIteration += 1;
+      agent.autoStatus = verdict.reason;
+      agent.turn = "SAIENT_THINKING";
+
+      // Anything typed while Saient was working joins the next iteration rather
+      // than being lost or silently ignored.
+      let goal = agent.planGoal;
+      if (agent.pendingInstructions.length) {
+        goal = `${goal}\n\nAdditional instructions from the user:\n` +
+          agent.pendingInstructions.map((s) => `- ${s}`).join("\n");
+        agent.pendingInstructions = [];
+      }
+
+      // Re-run — episodic memory tells the LLM what's already been done
+      await agentRun(goal).catch((err: unknown) => {
+        agent.termLines.push({ type: "err", text: `Auto-run failed: ${String(err)}` });
+        settle("FAILED", "Run error — autonomous mode stopped");
+      });
     } catch (err) {
-      agent.autoStatus = `Evaluation failed: ${String(err)}`;
-      agent.autoMode = false;
+      settle("FAILED", `Evaluation failed: ${String(err)}`);
     }
   });
 }

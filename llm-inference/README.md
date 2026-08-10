@@ -56,7 +56,7 @@ Saient (Tauri v2 desktop shell)
 
 - **Rust** `>=1.75` — `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
 - **Node.js** `>=18` — [nodejs.org](https://nodejs.org)
-- **tinyq4** — build from `~/llm-runtime/tinyq4/`:
+- **tinyq4** — build from `../data/llm-runtime/tinyq4/` or run `../scripts/build-engine.sh`:
   ```bash
   # CPU only
   cargo build --release
@@ -66,7 +66,7 @@ Saient (Tauri v2 desktop shell)
 
 ### Optional (for Python features)
 
-- Python venv at `~/.venvs/ltx/` with `torch`, `diffusers`, `kokoro`, `peft`
+- Python venv managed by Saient at `../data/config/saient/venv/`
 - Or set `PYTHON_PATH=/path/to/python` and `SCRIPTS_DIR=/path/to/scripts/`
 
 ---
@@ -114,7 +114,9 @@ The `.deb` package lands at `src-tauri/target/release/bundle/deb/`.
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `TINYQ4_PATH` | auto-discovered | Override tinyq4 binary location |
-| `PYTHON_PATH` | `~/.venvs/ltx/bin/python` | Python interpreter for imggen/TTS/LoRA |
+| `SAIENT_DATA_DIR` | `../data` | Root for app-owned config, models, caches, and workspace |
+| `SAIENT_MODELS_DIR` | `$SAIENT_DATA_DIR/models` | Managed model folder |
+| `PYTHON_PATH` | managed venv, then `python3` | Python interpreter for imggen/TTS/LoRA |
 | `SCRIPTS_DIR` | auto-discovered | Directory containing helper `.py` scripts |
 | `CUDA_COMPUTE_CAP` | — | Required for CUDA builds (e.g. `89` for RTX 4090/5060 Ti) |
 
@@ -124,7 +126,7 @@ The `.deb` package lands at `src-tauri/target/release/bundle/deb/`.
 
 The agent can read files and run safe commands by default. To allow file writes, deletes, and arbitrary command execution, enable **Agent Write Mode** in the agent panel. A confirmation dialog is shown when enabling it.
 
-All destructive agent actions (file writes, deletes, patches, command executions) are logged to `~/.local/share/ai-workshop/audit.jsonl` for review.
+All destructive agent actions (file writes, deletes, patches, command executions) are logged to `../data/share/saient/audit.jsonl` for review.
 
 Safe read-only commands (always allowed): `ls`, `cat`, `head`, `tail`, `grep`, `find`, `wc`, `pwd`, `echo`, `file`, `stat`, `diff`, `which`, `env`, `git`, `cargo`, `python3`, `node`.
 

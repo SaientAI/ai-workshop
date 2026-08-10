@@ -16,7 +16,10 @@
 #      "interp_factor": 2}
 #   stdout: {"loading_status": "..."} / {"step": i, "total": t} progress lines,
 #           then {"enhanced_b64": "...", "frames": N, "width": W, "height": H, "elapsed": s}
-import base64, gc, json, os, sys, tempfile, time, traceback
+import base64, gc, json, os, re, sys, tempfile, time, traceback
+from saient_paths import cache_dir, config_dir, configure_hf_cache
+
+configure_hf_cache()
 
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
@@ -47,17 +50,7 @@ def _free_cuda():
 
 
 def _cache_dir(name):
-    """Managed cache dir ~/.config/saient/<name>. Migrate a pre-rebrand
-    ~/.config/ai-workshop/<name> in place on first use so we never re-quantize."""
-    new = os.path.expanduser(f"~/.config/saient/{name}")
-    old = os.path.expanduser(f"~/.config/ai-workshop/{name}")
-    if not os.path.exists(new) and os.path.exists(old):
-        try:
-            os.makedirs(os.path.dirname(new), exist_ok=True)
-            os.rename(old, new)
-        except Exception:
-            return old
-    return new
+    return str(cache_dir(name))
 
 
 def to_uint8(frame):
@@ -120,6 +113,54 @@ def frames_to_b64(frames, fps):
 
 # ── Stage: refine (Wan vid2vid, full bf16 — fits because generator is unloaded) ─
 
+# Wan/SVI often map vulva ↔ mouth/lips or fuse sex organs. Refine re-encodes the prompt,
+# so re-injecting these terms here is what actually cleans a bad 30s chain.
+_ANATOMY_NEG = (
+    "bad anatomy, deformed genitals, fused genitals, ambiguous genitals, hermaphrodite, "
+    "mouth between legs, lips instead of vagina, labia as lips, oral opening as genitals, "
+    "teeth on crotch, face on genitals, penis growing from vagina, vagina and penis fused, "
+    "inverted genitals, malformed labia, anatomically incorrect genitals"
+)
+_ANATOMY_POS = (
+    "anatomically correct female genitalia, clear detailed vulva with distinct labia majora "
+    "and labia minora and clitoris, natural vaginal opening (not a mouth, not lips, no teeth), "
+    "no penis, no fused sex organs, realistic intimate anatomy"
+)
+
+
+def _looks_explicit(text: str) -> bool:
+    return bool(re.search(
+        r"\b(pussy|vagina|vulva|labia|clitoris|clit|genital|nude|naked|nsfw|sex|erotic|"
+        r"breast|nipple|penis|cock|cum|creampie|masturbat)\b",
+        text or "", re.I,
+    ))
+
+
+def _merge_csv(base: str, extra: str) -> str:
+    seen, out = set(), []
+    for part in f"{base or ''}, {extra or ''}".split(","):
+        t = part.strip()
+        if not t:
+            continue
+        k = t.lower()
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(t)
+    return ", ".join(out)
+
+
+def _anatomy_lock_prompts(prompt: str, neg: str):
+    """Return (prompt, neg) with anatomy anti-confusion terms when content is explicit."""
+    p, n = (prompt or "").strip(), (neg or "").strip()
+    if not _looks_explicit(p) and not _looks_explicit(n):
+        return p, n
+    if p and not re.search(r"anatomically correct|labia majora|vulva with distinct", p, re.I):
+        p = f"{p}, {_ANATOMY_POS}"
+    n = _merge_csv(n, _ANATOMY_NEG)
+    return p, n
+
+
 def stage_refine(frames, req):
     import torch
     from PIL import Image
@@ -169,6 +210,10 @@ def stage_refine(frames, req):
     cfg_scale = float(req.get("cfg_scale", 6.0))
     do_cfg = cfg_scale > 1.0
 
+    prompt, neg_prompt = _anatomy_lock_prompts(req.get("prompt", ""), req.get("neg_prompt", "") or "")
+    if prompt != (req.get("prompt", "") or "").strip() or neg_prompt != (req.get("neg_prompt", "") or "").strip():
+        emit({"loading_status": "refine: anatomy lock injected (anti mouth↔vulva / fused genitals)"})
+
     # Encode prompt with a 4-bit text encoder, then free it (same staged trick).
     # Reuse the shared pre-quantized 4-bit UMT5 cache built by generate_video.py.
     cache = _cache_dir("umt5-xxl-4bit")
@@ -187,8 +232,8 @@ def stage_refine(frames, req):
             torch_dtype=torch.bfloat16, device_map={"": 0})
     pipe.text_encoder = te
     try:
-        pe, ne = pipe.encode_prompt(prompt=req.get("prompt", ""),
-                                    negative_prompt=(req.get("neg_prompt", "") or None),
+        pe, ne = pipe.encode_prompt(prompt=prompt,
+                                    negative_prompt=(neg_prompt or None),
                                     do_classifier_free_guidance=do_cfg,
                                     num_videos_per_prompt=1, device="cuda")
     finally:
@@ -197,17 +242,25 @@ def stage_refine(frames, req):
         _free_cuda()
 
     pil = [Image.fromarray(f) for f in frames]
+    # Long clips (30s multi-chunk) need a slightly stronger / longer refine to undo
+    # anatomy drift at seams without fully re-rolling the motion.
+    n_frames = max(len(frames), 1)
     total = int(req.get("refine_steps", 20))
+    strength = float(req.get("refine_strength", 0.35))
+    if n_frames > 100:
+        total = max(total, 24)
+        strength = min(0.55, max(strength, 0.40))
+        emit({"loading_status": f"refine: long-clip mode · {n_frames}f → strength {strength:g} / {total} steps"})
 
     def cb(_p, i, _t, kw):
         emit({"step": i + 1, "total": total})
         return kw
 
-    emit({"loading_status": f"refine: vid2vid @ strength {req.get('refine_strength', 0.35)}…"})
+    emit({"loading_status": f"refine: vid2vid @ strength {strength}…"})
     out = pipe(
         video=pil,
         prompt_embeds=pe, negative_prompt_embeds=ne,
-        strength=float(req.get("refine_strength", 0.35)),
+        strength=strength,
         num_inference_steps=total,
         guidance_scale=cfg_scale,
         callback_on_step_end=cb,
@@ -322,13 +375,27 @@ def stage_interpolate(frames, req):
     return out
 
 
+def stage_slow(frames, req):
+    """Optical-flow slow motion: add in-between frames but keep the source FPS.
+
+    The normal interpolate stage raises the output FPS after inserting frames, so
+    duration stays the same. This stage intentionally does not raise FPS in main(),
+    which turns the inserted frames into real slow motion.
+    """
+    factor = max(2, int(req.get("interp_factor", 2)))
+    emit({"loading_status": f"slow: {factor}× optical-flow slow motion (FPS held)"})
+    req = dict(req)
+    req["interp_factor"] = factor
+    return stage_interpolate(frames, req)
+
+
 # ── Stage: face restoration (CodeFormer via spandrel + facexlib detect/align/paste) ──────
 # i2v animation softens/"melts" faces (small region + frame-to-frame drift). CodeFormer
 # restores each detected face on a crisp 512 crop and facexlib pastes it back into the frame
 # with seamless blending, leaving the rest of the image untouched. Sidesteps the dead
 # basicsr/gfpgan stack: spandrel runs the model, spandrel_extra_arches registers the
 # CodeFormer arch. Per-frame, so mild temporal flicker is possible; the dramatic de-melt is
-# worth it. Weights: ~/.config/saient/face/codeformer.pth (+ facexlib auto-downloads its
+# worth it. Weights: <SAIENT_CONFIG_DIR>/face/codeformer.pth (+ facexlib auto-downloads its
 # detector on first use).
 def stage_face(frames, req):
     import torch, numpy as np
@@ -339,7 +406,7 @@ def stage_face(frames, req):
         emit({"loading_status": f"face: deps missing ({e}); skipping — install facexlib + spandrel_extra_arches"})
         return frames
     spandrel_extra_arches.install()
-    model_path = req.get("face_model") or os.path.expanduser("~/.config/saient/face/codeformer.pth")
+    model_path = req.get("face_model") or str(config_dir() / "face" / "codeformer.pth")
     if not os.path.exists(model_path):
         emit({"loading_status": "face: codeformer.pth not found — skipping"})
         return frames
@@ -376,7 +443,13 @@ def stage_face(frames, req):
     return out
 
 
-STAGES = {"refine": stage_refine, "face": stage_face, "upscale": stage_upscale, "interpolate": stage_interpolate}
+STAGES = {
+    "refine": stage_refine,
+    "face": stage_face,
+    "upscale": stage_upscale,
+    "interpolate": stage_interpolate,
+    "slow": stage_slow,
+}
 
 
 def main():
@@ -398,28 +471,40 @@ def main():
         # base res) → interpolate (flow is robust on small frames) → upscale (enlarge
         # the already-smooth sequence). Interpolating AFTER upscaling makes flow noisy
         # on 4× pixels → juddery in-betweens.
-        order = ["refine", "face", "interpolate", "upscale"]
-        stages = sorted(req.get("stages", []),
+        order = ["refine", "face", "interpolate", "slow", "upscale"]
+        requested_stages = list(dict.fromkeys(req.get("stages", [])))
+        stages = sorted(requested_stages,
                         key=lambda s: order.index(s) if s in order else 99)
+        completed_stages = []
+        failed_stages = []
         emit({"loading_status": f"pass order: {' → '.join(stages)}"})
         for name in stages:
             fn = STAGES.get(name)
             if fn is None:
+                message = f"{name}: unknown stage"
+                failed_stages.append(message)
                 emit({"loading_status": f"unknown stage '{name}' — skipped"})
                 continue
             try:                                   # one bad stage must not kill the pass
                 frames = fn(frames, req)
+                completed_stages.append(name)
                 if name == "interpolate":
                     fps *= int(req.get("interp_factor", 2))
             except Exception as se:
+                message = f"{name}: {type(se).__name__}: {se}"
+                failed_stages.append(message)
                 emit({"loading_status": f"  ⚠ {name} failed ({se}); skipping — other stages continue"})
                 _free_cuda()
+        if stages and not completed_stages:
+            emit({"error": "quality pass failed: " + "; ".join(failed_stages)})
+            return
         emit({"loading_status": "encoding result…"})
         frames = [to_uint8(f) for f in frames]   # final guard before mp4 encode
         b64 = frames_to_b64(frames, fps)
         h, w = frames[0].shape[0], frames[0].shape[1]
         emit({"enhanced_b64": b64, "frames": len(frames), "width": w, "height": h,
-              "elapsed": round(time.time() - t0, 1)})
+              "elapsed": round(time.time() - t0, 1),
+              "completed_stages": completed_stages, "failed_stages": failed_stages})
     except Exception as e:
         emit({"error": str(e), "trace": traceback.format_exc()[:1200]})
 

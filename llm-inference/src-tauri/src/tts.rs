@@ -43,7 +43,9 @@ fn run_tts(payload: TtsPayload, window: WebviewWindow) -> Result<TtsResult, Stri
 
     let python = resolve::find_python().map_err(|e: anyhow::Error| e.to_string())?;
     let script = resolve::find_script("tts_kokoro.py").map_err(|e: anyhow::Error| e.to_string())?;
-    let mut child = Command::new(python)
+    let mut cmd = Command::new(python);
+    crate::paths::apply_child_env(&mut cmd);
+    let mut child = cmd
         .arg(script)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -73,9 +75,20 @@ fn run_tts(payload: TtsPayload, window: WebviewWindow) -> Result<TtsResult, Stri
     }
 
     let output = child.wait_with_output().map_err(|e| format!("wait: {}", e))?;
-    let stdout  = String::from_utf8_lossy(&output.stdout);
-    let v: serde_json::Value = serde_json::from_str(&stdout)
-        .map_err(|_| format!("Bad JSON from Python: {}", stdout))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Belt-and-braces: the script redirects fd 1 so stdout should be pure JSON, but a
+    // stray banner from an unpatched/older script shouldn't lose us a finished render.
+    let json_part = match stdout.find('{') {
+        Some(i) => &stdout[i..],
+        None    => &stdout[..],
+    };
+    let v: serde_json::Value = serde_json::from_str(json_part).map_err(|_| {
+        // stdout carries a base64 WAV and can be tens of MB — never put it all in a UI error
+        let mut preview: String = stdout.chars().take(400).collect();
+        if stdout.chars().count() > 400 { preview.push('…'); }
+        format!("Bad JSON from Python: {}", preview)
+    })?;
 
     if let Some(err) = v["error"].as_str() {
         return Err(err.to_string());

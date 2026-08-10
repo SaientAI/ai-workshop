@@ -1,0 +1,36 @@
+=== 5 SEGMENT STORYBOARD PROMPTS ===
+For use with the provided reference image as the starting frame (add the image in the app before clicking Storyboard).
+This image is the only one that works well with the current SVI LoRA.
+
+Use with I2V model + SVI v2 PRO (High/Low) recipe.
+Recommended: 640x480 or 832x480, 81 frames per segment (~5s each @16fps), 12-20 steps, CFG 1.5-2.5, shift 5-8.
+The app will use the image for segment 1 and auto-capture last frames for 2-5 + seam blend.
+
+NEGATIVE PROMPT:
+blurry, deformed, bad anatomy, extra fingers, missing fingers, fused fingers, ugly, cartoon, 3d render, low quality, watermark, text, static, jerky motion, dull lighting, overexposed, underexposed, plastic skin, inconsistent face
+
+=== SEG 1 (Opening - exact match to the image) ===
+A photorealistic close-up video starting precisely from this reference image of a stunning woman with long voluminous dark brown wavy hair, striking green eyes with heavy seductive makeup, perfectly arched eyebrows, long lashes, full glossy lips slightly parted, flawless tanned skin with subtle glow, large natural full breasts with pinkish-brown nipples. She is topless, leaning slightly forward in a modern bedroom with light walls, white knitted blanket, small green plant, looking directly at the camera with a confident seductive expression. She slowly caresses her own body with both hands, gently running fingers over her breasts and collarbone, subtle natural breathing, hair moving softly, maintaining 100% exact likeness to the reference image including face, hair, eyes, body proportions, lighting, and setting. Slow sensual teasing movements, realistic detailed skin texture, five-fingered hands with natural nails, high detail anatomy.
+
+=== SEG 2 (Build - more intimate touch) ===
+Continuing seamlessly from the exact last frame of the previous segment with the identical woman, same long dark brown hair, same green eyes and makeup, same large breasts, same tanned skin, same bedroom with white blanket and plant, identical lighting and camera angle. She intensifies the self-touch, cupping and squeezing her breasts firmly with both hands, thumbs slowly circling and teasing her nipples, head tilting slightly, lips parting more, eyes staying locked on the camera with growing arousal, natural realistic breast movement and skin details, five fingers visible, consistent character identity and setting from the starting image, smooth erotic motion.
+
+=== SEG 3 (Progress - changing position) ===
+Seamless direct continuation from the previous segment's last frame, the exact same woman with identical appearance, face, hair, body, and the same indoor bedroom environment and warm lighting. She reclines back onto the white textured blanket, long hair spreading out, one hand continuing to caress her breast while the other slides slowly down her torso toward her waist, legs shifting naturally, more pronounced aroused expression with mouth open, detailed realistic anatomy, soft shadows, consistent exact likeness to the reference image, fluid natural body movements.
+
+=== SEG 4 (Peak - explicit self-pleasure) ===
+Perfect seamless continuation from the last frame of segment 3 with the identical woman, same beautiful face with green eyes and makeup, same long brown hair, same large breasts, same body, same room and lighting. She is now more reclined, actively pleasuring herself with one hand squeezing and playing with her breast and nipple, the other hand moving between her legs with fingers touching intimately, back arching, head back then returning to look at camera, intense pleasure expression, detailed genital and body anatomy, realistic hand positions with five fingers, sweat on skin, hair disheveled, highly consistent character from the original image, passionate rhythmic motions.
+
+=== SEG 5 (Climax & Afterglow) ===
+Direct seamless continuation from the previous segment's final frame, the exact same woman with unchanged appearance, face, hair, eyes, breasts, skin, and the bedroom setting with white blanket. She reaches a powerful climax, body tensing and shuddering, hands gripping tightly, mouth open in ecstasy, eyes half-closed then opening to look seductively at the camera, then slowly relaxes into afterglow, satisfied smile, gently caressing her body, hair messy on the blanket, soft breathing, warm satisfied lighting, detailed realistic post-orgasm anatomy and skin, full consistency with the starting reference image throughout the entire sequence.
+
+=== USAGE TIPS ===
+- Add the provided image using the "Add image → animate (i2v)" button FIRST.
+- Paste each Seg into the corresponding storyboard textarea.
+- Click the SVI v2 PRO recipe to set correct LoRA and params.
+- Load the I2V 14B model (FastI2V or similar).
+- Use Storyboard button.
+- The first segment will condition on your image.
+- Later segments auto-use last frame + these continuation prompts + seam blend for coherence with the SVI LoRA.
+- If needed, run Refine pass after for better quality.
+- Keep prompts focused on the woman from the image for best Lora results.

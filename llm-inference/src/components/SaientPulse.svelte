@@ -10,18 +10,28 @@
   // Everything shown here is derived from real state. There is no timer that
   // animates on its own — if the robot moves, work is happening.
 
-  import { agent, pulse, projects } from "../lib/state.svelte.js";
+  import { agent, pulse, projects, ui } from "../lib/state.svelte.js";
+  import AutonomyConfirm from "./AutonomyConfirm.svelte";
+  import * as T from "../lib/tauri.js";
   import { animationFor, activityLine, flavourFor, formatElapsed } from "../lib/pulse.js";
   import { restingText, isWorking } from "../lib/turnState.js";
-  import { needsLoop, parseAgiLevel } from "../lib/agiLevel.js";
+  import { AGI_LEVEL_INFO, effectiveAgiLevel, needsLoop } from "../lib/agiLevel.js";
 
   const anim = $derived(animationFor(agent.turn, pulse.step ?? undefined));
   const working = $derived(isWorking(agent.turn) || agent.continuing);
   // A project running the loop rests as "sleeping", not "idle": its state is
   // intact on disk and resumes where it left off.
-  const loopRuns = $derived(needsLoop(parseAgiLevel(projects.active?.agi_level)));
+  const loopRuns = $derived(needsLoop(effectiveAgiLevel(ui.saientEnabled, projects.active?.agi_level)));
+  // The Terminal tab runs the Python agent over a PTY and emits none of the
+  // events in `events.ts`, so `agent.turn` never leaves IDLE there. Say what
+  // can be supported rather than reading that silence as sleep.
+  const tracked = $derived(!(ui.screen === "agent" && agent.tab === "terminal"));
   const line = $derived(
-    activityLine(agent.turn, pulse.step ?? undefined, restingText(agent.turn, loopRuns)),
+    activityLine(
+      agent.turn,
+      pulse.step ?? undefined,
+      restingText(agent.turn, loopRuns, tracked),
+    ),
   );
   const flavour = $derived(flavourFor(anim, pulse.startedAt));
 
@@ -34,6 +44,19 @@
     return () => clearInterval(id);
   });
   const elapsed = $derived(formatElapsed(now - pulse.startedAt));
+
+  // What Saient is currently allowed to do, shown where it cannot be missed.
+  // It was previously rendered in exactly one place — ProjectPicker — which
+  // opens only when no project is active, i.e. once, on first run. So the level
+  // was invisible from then on, and this project ran "autonomous" with nothing
+  // saying so.
+  // Master switch wins. The badge showing "Autonomous" while the title-bar
+  // button is off would be the status bar lying again, in a new place.
+  const level = $derived(effectiveAgiLevel(ui.saientEnabled, projects.active?.agi_level));
+  const levelInfo = $derived(AGI_LEVEL_INFO[level]);
+  const levelIsHigh = $derived(level === "autonomous" || level === "companion");
+
+  let showLevel = $state(false);
 
   function togglePause() {
     agent.paused = !agent.paused;
@@ -108,6 +131,17 @@
     <span class="pulse-line">{line}</span>
     <!-- Flavour, clearly subordinate and never load-bearing. -->
     {#if working && flavour}<span class="pulse-flavour">{flavour}</span>{/if}
+
+    <!-- What Saient is allowed to do. Always visible while a project is open,
+         because the alternative was a setting nobody could see. -->
+    {#if projects.active}
+      <button
+        class="pulse-level"
+        class:pulse-level-high={levelIsHigh}
+        title={levelInfo.summary}
+        onclick={() => (showLevel = true)}
+      >{levelInfo.title}</button>
+    {/if}
   </div>
 
   {#if working}<span class="pulse-clock">{elapsed}</span>{/if}
@@ -254,3 +288,18 @@
     .bot *, .pulse * { animation: none !important; }
   }
 </style>
+
+{#if showLevel && projects.active}
+  <AutonomyConfirm
+    level={level}
+    project={projects.active.name}
+    onConfirm={() => (showLevel = false)}
+    onChange={async (next) => {
+      // Captured before the await: `projects.active` cannot be narrowed across
+      // the suspension, and it really could be cleared while the call is in
+      // flight.
+      const name = projects.active?.name;
+      if (name) projects.active = await T.projectSetLevel(name, next);
+      showLevel = false;
+    }} />
+{/if}

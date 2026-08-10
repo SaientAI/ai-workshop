@@ -27,6 +27,9 @@ use std::path::{Path, PathBuf};
 const IGNORED_DIRS: &[&str] = &[
     ".git", "node_modules", "target", "__pycache__", ".venv", "venv",
     "dist", "build", ".next", ".cache", ".mypy_cache", ".pytest_cache",
+    // Saient's own per-project data. Without this a checkpoint would contain
+    // every previous checkpoint, growing quadratically.
+    crate::projects::PROJECT_DATA_DIR,
 ];
 
 /// Skip individual files above this size. A checkpoint is for source and notes,
@@ -106,9 +109,16 @@ impl CheckpointStore {
         Self { root }
     }
 
-    /// Default location under the app's data dir.
+    /// The store for the active project.
+    ///
+    /// Checkpoints live inside the project they belong to, so a project is
+    /// self-contained and one project's history can never restore over another's.
+    /// With no project open this falls back to the legacy shared location.
     pub fn default_store() -> Self {
-        Self::new(crate::paths::data_dir().join("checkpoints"))
+        match crate::projects::active() {
+            Some(p) => Self::new(crate::projects::checkpoint_dir(Path::new(&p.path))),
+            None => Self::new(crate::paths::data_dir().join("checkpoints")),
+        }
     }
 
     fn objects_dir(&self) -> PathBuf {

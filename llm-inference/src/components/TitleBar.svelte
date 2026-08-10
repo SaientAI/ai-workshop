@@ -1,12 +1,19 @@
 <script lang="ts">
-  import { model, ui, update } from "../lib/state.svelte.js";
+  import { model, projects, ui, update } from "../lib/state.svelte.js";
   import * as T from "../lib/tauri.js";
+  import { effectiveAgiLevel, needsLoop } from "../lib/agiLevel.js";
 
   let { aw }: { aw: (a: "min" | "max" | "close") => void } = $props();
 
   async function toggleSaient() {
     ui.saientEnabled = !ui.saientEnabled;
     localStorage.setItem("saient_enabled", String(ui.saientEnabled));
+    // The button governs her loop, not just a chat prompt. Without this it
+    // claimed to switch her off while she kept ticking — a control that lies
+    // about something with real consequences.
+    await T.saientSetEnabled(
+      needsLoop(effectiveAgiLevel(ui.saientEnabled, projects.active?.agi_level)),
+    ).catch(() => {});
   }
 
   async function stopModel() {

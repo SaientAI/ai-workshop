@@ -8,6 +8,19 @@ import base64, io, json, os, sys
 # Force CPU if GPU is nearly full — TTS is fast on CPU anyway
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
+# stdout is our JSON channel and must stay clean. Third-party code writes to it:
+# misaki/en.py calls spacy.cli.download(), which spawns pip as a SUBPROCESS.
+# A subprocess inherits OS fd 1, so redirect_stdout / reassigning sys.stdout would
+# not catch it — this has to happen at the file-descriptor level.
+_REAL_OUT = os.dup(1)   # private handle to the true stdout
+os.dup2(2, 1)           # fd 1 → stderr, inherited by every child process
+
+
+def _emit(obj):
+    """Write our one JSON result to the real stdout, bypassing the redirect."""
+    os.write(_REAL_OUT, json.dumps(obj).encode())
+
+
 def main():
     payload = json.loads(sys.stdin.read())
     text     = payload.get("text", "").strip()
@@ -42,18 +55,17 @@ def main():
     sf.write(buf, audio, 24000, format="WAV")
     b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
-    sys.stdout.write(json.dumps({
+    _emit({
         "base64_wav": b64,
         "duration":   round(len(audio) / 24000, 2),
         "sample_rate": 24000,
-    }))
-    sys.stdout.flush()
+    })
     print(json.dumps({"progress": 100}), file=sys.stderr, flush=True)
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        sys.stdout.write(json.dumps({"error": str(e)}))
-        sys.stdout.flush()
+        # must also go to the real stdout — sys.stdout now points at stderr
+        _emit({"error": str(e)})
         sys.exit(1)

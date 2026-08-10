@@ -114,7 +114,25 @@ export function activityText(state: TurnState): string {
  * that something was lost, which is precisely what the help page has to spend a
  * paragraph undoing. Say sleeping and no one has to ask.
  */
-export function restingText(state: TurnState, runsLoop: boolean): string {
+export function restingText(
+  state: TurnState,
+  runsLoop: boolean,
+  tracked = true,
+): string {
+  // `tracked` is whether anything is actually driving the turn state on the
+  // surface being shown.
+  //
+  // `agent.turn` is set only from the Tauri event stream in `events.ts`. The
+  // Terminal tab runs the Python agent over a PTY and emits none of those, so
+  // the state sits at IDLE for the whole session — and this function, reading
+  // IDLE, faithfully reported "Saient is sleeping" over a live agent turn and
+  // over four straight hours of 100% GPU.
+  //
+  // The bar was not wrong about the state; it was answering a question it had no
+  // way to know. Inferring activity from PTY output would be a guess (keystroke
+  // echo arrives on the same channel as generation), so it says what it can
+  // support instead.
+  if (!tracked) return "Terminal session — activity not tracked here";
   if (runsLoop && (state === "IDLE" || state === "USER_TYPING")) {
     return "Saient is sleeping";
   }

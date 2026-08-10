@@ -17,6 +17,8 @@
   import SaientPulse from "./components/SaientPulse.svelte";
   import CheckpointBar from "./components/CheckpointBar.svelte";
   import ProjectPicker from "./components/ProjectPicker.svelte";
+  import AutonomyConfirm from "./components/AutonomyConfirm.svelte";
+  import { effectiveAgiLevel, needsConfirm, needsLoop } from "./lib/agiLevel.js";
   import ChatScreen from "./components/screens/ChatScreen.svelte";
   import AgentScreen from "./components/screens/AgentScreen.svelte";
   import ImageGenScreen from "./components/screens/ImageGenScreen.svelte";
@@ -30,6 +32,9 @@
   const appWindow = getCurrentWebviewWindow();
 
   let showSetup = $state(false);
+  // Session-scoped: re-confirming autonomy is a reminder, not a gate to
+  // pass on every turn.
+  let autonomyConfirmed = $state(false);
   let locked = $state(false);
 
   onMount(async () => {
@@ -61,6 +66,7 @@
     T.checkUpdate().then((u) => {
       update.checked = true;
       update.available = u.update_available;
+      update.installSupported = u.install_supported;
       update.current = u.current;
       update.latest = u.latest;
       update.url = u.url;
@@ -86,6 +92,8 @@
 
     // Active project. When one is remembered, point the agent at it; otherwise
     // the picker asks before any work lands in a shared heap.
+    // Project opening always pauses the heartbeat first. Only wake it after
+    // combining the remembered master switch with this project's level.
     projects.active = await T.projectActive().catch(() => null);
     if (projects.active) {
       await T.projectOpen(projects.active.name).catch(() => {});
@@ -93,6 +101,9 @@
     } else {
       agent.sandboxRoot = await T.getSandboxRoot().catch(() => "");
     }
+    await T.saientSetEnabled(
+      needsLoop(effectiveAgiLevel(ui.saientEnabled, projects.active?.agi_level)),
+    ).catch(() => {});
 
     // GPU poll
     setInterval(async () => {
@@ -148,8 +159,31 @@
 <!-- Ask only when the agent is opened. Chat writes nothing to disk, so blocking
      it behind a project choice is a dialog for no reason. Suppressed during
      first-run setup and while locked so dialogs cannot stack. -->
-{#if ui.screen === "agent" && !projects.active && !showSetup && !locked}
+{#if ui.screen === "agent" && !projects.active && !agent.sandboxRoot && !showSetup && !locked}
   <ProjectPicker />
+{/if}
+
+<!-- The autonomy choice lives inside ProjectPicker, which only opens when no
+     project or explicit external workspace is active. A managed project is restored on every
+     launch. So the level was chosen once, on first run, and never revisited:
+     this project has been running "autonomous" ever since with nothing saying
+     so. Re-confirm at the levels that give something up; stay quiet at the ones
+     that do not. Once per session, not once per turn. -->
+{#if ui.screen === "agent" && projects.active && !showSetup && !locked
+     && ui.saientEnabled
+     && needsConfirm(projects.active.agi_level) && !autonomyConfirmed}
+  <AutonomyConfirm
+    level={effectiveAgiLevel(ui.saientEnabled, projects.active.agi_level)}
+    project={projects.active.name}
+    onConfirm={() => (autonomyConfirmed = true)}
+    onChange={async (level) => {
+      const name = projects.active?.name;
+      if (name) projects.active = await T.projectSetLevel(name, level);
+      await T.saientSetEnabled(
+        needsLoop(effectiveAgiLevel(ui.saientEnabled, projects.active?.agi_level)),
+      ).catch(() => {});
+      autonomyConfirmed = true;
+    }} />
 {/if}
 
 {#if showSetup}

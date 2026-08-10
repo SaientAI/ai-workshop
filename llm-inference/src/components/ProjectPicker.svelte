@@ -6,12 +6,19 @@
   // also made checkpoints misleading — a snapshot of "the workspace" captured
   // every unrelated file too.
 
-  import { agent, projects, toast } from "../lib/state.svelte.js";
+  import { agent, projects, toast, ui } from "../lib/state.svelte.js";
   import * as T from "../lib/tauri.js";
+  import {
+    AGI_LEVELS, AGI_LEVEL_INFO, DEFAULT_AGI_LEVEL, CONDUCT_NOTE, MODEL_VOICE_NOTE,
+    effectiveAgiLevel, needsLoop,
+    type AgiLevel,
+  } from "../lib/agiLevel.js";
 
   let { onDone }: { onDone?: () => void } = $props();
 
   let name = $state("");
+  let level = $state<AgiLevel>(DEFAULT_AGI_LEVEL);
+  const chosen = $derived(AGI_LEVEL_INFO[level]);
   let busy = $state(false);
   let error = $state("");
 
@@ -25,7 +32,7 @@
     busy = true;
     error = "";
     try {
-      const info = await T.projectCreate(name.trim());
+      const info = await T.projectCreate(name.trim(), level);
       await adopt(info);
     } catch (e) {
       // The Rust side explains exactly why a name was refused; show that rather
@@ -51,12 +58,16 @@
   async function adopt(info: T.ProjectInfo) {
     projects.active = info;
     agent.sandboxRoot = info.path;
+    agent.workspaceEpoch += 1;
     // The file tree and checkpoint list both belong to the old project; clear
     // them so nothing from the previous one lingers on screen.
     agent.tree = [];
     agent.selPath = null;
     agent.content = "";
     name = "";
+    await T.saientSetEnabled(
+      needsLoop(effectiveAgiLevel(ui.saientEnabled, info.agi_level)),
+    ).catch(() => {});
     await refresh();
     toast(`Project “${info.name}” open`, "success");
     onDone?.();
@@ -88,6 +99,29 @@
     <button class="pp-btn primary" onclick={create} disabled={busy || !name.trim()}>
       Create
     </button>
+  </div>
+
+  <!-- Chosen per project, at creation, because it changes what the agent may do
+       and one project may want it where another does not. -->
+  <div class="pp-label">How much of Saient runs here?</div>
+  <div class="pp-levels">
+    {#each AGI_LEVELS as l}
+      <button class="pp-level" class:sel={level === l} onclick={() => (level = l)}>
+        <span class="pp-level-title">{AGI_LEVEL_INFO[l].title}</span>
+        <span class="pp-level-sum">{AGI_LEVEL_INFO[l].summary}</span>
+      </button>
+    {/each}
+  </div>
+
+  <div class="pp-detail">
+    <p>{chosen.detail}</p>
+    {#if chosen.tradeoff}
+      <p class="pp-tradeoff">{chosen.tradeoff}</p>
+    {/if}
+    {#if needsLoop(level)}
+      <p class="pp-voice">{MODEL_VOICE_NOTE}</p>
+      <p class="pp-conduct">{CONDUCT_NOTE}</p>
+    {/if}
   </div>
 
   {#if error}<div class="pp-error">{error}</div>{/if}
@@ -146,4 +180,22 @@
   .pp-btn:hover { color: var(--text); border-color: var(--text3); }
   .pp-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .pp-later { align-self: flex-start; font-size: 11px; padding: 4px 10px; }
+  .pp-levels { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .pp-level {
+    display: flex; flex-direction: column; gap: 2px; text-align: left;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 7px 9px; cursor: pointer;
+  }
+  .pp-level:hover { border-color: var(--text3); }
+  .pp-level.sel { border-color: var(--accent); background: rgba(108,142,245,0.08); }
+  .pp-level-title { font-size: 12px; color: var(--text); font-weight: 600; }
+  .pp-level-sum { font-size: 10px; color: var(--text3); line-height: 1.4; }
+  .pp-detail { display: flex; flex-direction: column; gap: 6px; }
+  .pp-detail p { margin: 0; font-size: 11px; color: var(--text2); line-height: 1.55; }
+  .pp-tradeoff { color: #d08a3a !important; }
+  .pp-voice { color: var(--text3) !important; border-left: 2px solid var(--border); padding-left: 8px; }
+  .pp-conduct {
+    color: var(--text3) !important; border-left: 2px solid var(--border);
+    padding-left: 8px;
+  }
 </style>

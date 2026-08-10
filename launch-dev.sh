@@ -3,16 +3,24 @@
 # If the window is already open, focus it. Otherwise kill any stale port and start fresh.
 
 APP_DIR="$(cd "$(dirname "$0")/llm-inference" && pwd)"
+ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP_TITLE="Saient"
 PID_FILE="${XDG_RUNTIME_DIR:-/tmp}/saient-dev.pid"
 
 focus_existing_window() {
     if command -v xdotool >/dev/null 2>&1; then
-        xdotool search --name "$APP_TITLE" windowfocus >/dev/null 2>&1 && return 0
+        local window_id
+        window_id="$(xdotool search --name "^${APP_TITLE}$" 2>/dev/null | head -n 1)"
+        [ -n "$window_id" ] || return 1
+        xdotool windowfocus "$window_id" >/dev/null 2>&1 && return 0
+        return 1
     fi
 
     if command -v wmctrl >/dev/null 2>&1; then
-        wmctrl -a "$APP_TITLE" >/dev/null 2>&1 && return 0
+        local window_id
+        window_id="$(wmctrl -l 2>/dev/null | awk -v title="$APP_TITLE" '$0 ~ (" " title "$") { print $1; exit }')"
+        [ -n "$window_id" ] || return 1
+        wmctrl -i -a "$window_id" >/dev/null 2>&1 && return 0
     fi
 
     return 1
@@ -62,5 +70,10 @@ fi
 fuser -k 1421/tcp 2>/dev/null || true
 
 cd "$APP_DIR"
+export SAIENT_DATA_DIR="${SAIENT_DATA_DIR:-$ROOT_DIR/data}"
+export SAIENT_CONFIG_DIR="${SAIENT_CONFIG_DIR:-$SAIENT_DATA_DIR/config/saient-dev}"
+export SAIENT_MODELS_DIR="${SAIENT_MODELS_DIR:-$SAIENT_DATA_DIR/models}"
+export HF_HOME="${HF_HOME:-$SAIENT_DATA_DIR/huggingface}"
+export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
 echo "$$" > "$PID_FILE"
 exec npm run tauri dev

@@ -91,7 +91,9 @@ pub async fn lora_start_training(
             Ok(p) => p,
             Err(e) => { emit_err(e.to_string()); return; }
         };
-        let mut child = match Command::new(python)
+        let mut cmd = Command::new(python);
+        crate::paths::apply_child_env(&mut cmd);
+        let mut child = match cmd
             .arg(script)
             .arg(&tmp_clone)
             .stdout(Stdio::piped())
@@ -155,7 +157,9 @@ pub async fn lora_clean_dataset(
             Ok(p) => p,
             Err(e) => { emit_err(e.to_string()); return; }
         };
-        let mut child = match Command::new(python)
+        let mut cmd = Command::new(python);
+        crate::paths::apply_child_env(&mut cmd);
+        let mut child = match cmd
             .arg(script)
             .arg(&dataset_dir)
             .stdout(Stdio::piped())

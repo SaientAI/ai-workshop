@@ -146,6 +146,94 @@ export const agentRun = (goal: string) => invoke<void>("agent_run", { goal });
 export const checkGoalCompletion = (goal: string) =>
   invoke<{ complete: boolean; reason: string }>("check_goal_completion", { goal });
 
+/// Prefill the constant part of the planning prompt into the engine's KV cache.
+/// Resolves false when no model is loaded. Safe to call more than once.
+export const warmAgentCache = () => invoke<boolean>("warm_agent_cache");
+
+// ── Projects ──────────────────────────────────────────────────────────────────
+// One folder per piece of work. Opening a project repoints files, patches, the
+// sandbox and checkpoints at it.
+
+export interface ProjectInfo {
+  name: string;
+  path: string;
+  modified: number;
+  entry_count: number;
+  /** off | guided | companion | autonomous — see lib/agiLevel.ts */
+  agi_level: string;
+}
+
+export const projectList = () => invoke<ProjectInfo[]>("project_list");
+export const projectActive = () => invoke<ProjectInfo | null>("project_active");
+export const projectCreate = (name: string, agiLevel: string) =>
+  invoke<ProjectInfo>("project_create", { name, agiLevel });
+
+export const projectSetLevel = (name: string, agiLevel: string) =>
+  invoke<ProjectInfo>("project_set_level", { name, agiLevel });
+export const projectOpen = (name: string) => invoke<ProjectInfo>("project_open", { name });
+
+// ── Checkpoints ───────────────────────────────────────────────────────────────
+// A checkpoint saves the working state, not just the transcript: goal, step in
+// flight, terminal cwd, outstanding work and the workspace files.
+
+export type CheckpointKind = "manual" | "auto_turn" | "auto_task" | "pre_restore";
+
+export interface CheckpointMeta {
+  id: string;
+  name: string;
+  created_at: number;
+  kind: CheckpointKind;
+  parent: string | null;
+  goal: string;
+  turn_state: string;
+  terminal_cwd: string;
+  step_index: number | null;
+  step_total: number | null;
+  outstanding: string[];
+  file_count: number;
+  total_bytes: number;
+}
+
+export interface SessionState {
+  goal: string;
+  turn_state: string;
+  terminal_cwd: string;
+  step_index: number | null;
+  step_total: number | null;
+  outstanding: string[];
+  conversation: unknown;
+  plan: unknown;
+  terminal: string[];
+}
+
+export interface RestoreReport {
+  restored: string[];
+  unchanged: string[];
+  left_in_place: string[];
+  undo_checkpoint: string;
+}
+
+export const checkpointSave = (
+  name: string,
+  kind: CheckpointKind,
+  parent: string | null,
+  session: SessionState,
+) => invoke<CheckpointMeta>("checkpoint_save", { name, kind, parent, session });
+
+export const checkpointList = () => invoke<CheckpointMeta[]>("checkpoint_list");
+
+export const checkpointLoad = (id: string) => invoke<unknown>("checkpoint_load", { id });
+
+/// Overwrites the workspace. A safety checkpoint is taken first; its id comes
+/// back as `undo_checkpoint`.
+export const checkpointRestore = (id: string, session: SessionState) =>
+  invoke<RestoreReport>("checkpoint_restore", { id, session });
+
+export const checkpointDelete = (id: string) => invoke<void>("checkpoint_delete", { id });
+
+export const checkpointExport = (id: string, format: "markdown" | "json") =>
+  invoke<string>("checkpoint_export", { id, format });
+
 // plan_execute requires both the JSON and the original goal text
 export const executePlan = (planJson: string, goal: string) =>
   invoke<void>("plan_execute", { planJson, goal });
@@ -183,6 +271,13 @@ export const clearUserData = (opts: {
     clearAudit: opts.clearAudit,
     clearLogs: opts.clearLogs,
   });
+
+// ── Internet / network access gate ───────────────────────────────────────────
+
+export const getInternetEnabled = () => invoke<boolean>("get_internet_enabled");
+
+export const setInternetEnabled = (enabled: boolean) =>
+  invoke<void>("set_internet_enabled", { enabled });
 
 // ── Dep check ─────────────────────────────────────────────────────────────────
 
@@ -291,6 +386,11 @@ export interface VideoPayload {
   force_seam_blend?: boolean;   // for storyboard on T2V: force frame-level concat with crossfade blend at seam
   low_vram?: boolean;
   block_offload?: boolean;      // park transformer to RAM, stream per-step → fits native 5s@720p (slow)
+  denoise_cache?: "off" | "balanced";
+  cache_threshold?: number;
+  preview?: boolean;
+  preview_every?: number;
+  preview_max_width?: number;
 }
 export interface VideoResult { base64_mp4: string; frames: number; elapsed: number }
 
@@ -299,7 +399,15 @@ export interface EnhancePayload {
   prompt: string; neg_prompt?: string; cfg_scale?: number;
   refine_strength?: number; refine_steps?: number; interp_factor?: number;
 }
-export interface EnhanceResult { enhanced_b64: string; frames: number; width: number; height: number; elapsed: number }
+export interface EnhanceResult {
+  enhanced_b64: string;
+  frames: number;
+  width: number;
+  height: number;
+  elapsed: number;
+  completed_stages: string[];
+  failed_stages: string[];
+}
 
 export interface LoraEntry { path: string; label: string }
 export const videoScanModels  = () => invoke<VideoModelEntry[]>("video_scan_models");
@@ -308,6 +416,7 @@ export const videoLoad        = (modelPath: string, loraPath?: string, loraStren
   invoke<string>("video_load", { modelPath, loraPath: loraPath || null, loraStrength: loraStrength ?? 1.0, frames: frames ?? 49, precision: precision ?? "fast" });
 export const videoUnload      = () => invoke<void>("video_unload");
 export const videoLoadedModel = () => invoke<string | null>("video_loaded_model");
+export const videoLoadedLora = () => invoke<string | null>("video_loaded_lora");
 export const videoGenerate    = (payload: VideoPayload) => invoke<VideoResult>("video_generate", { payload });
 export const videoEnhance     = (payload: EnhancePayload) => invoke<EnhanceResult>("video_enhance", { payload });
 
@@ -446,6 +555,10 @@ export const hfListFiles = (repo: string, exts: string[], token?: string) =>
 export const downloadHfFile = (repo: string, file: string, target: string, token?: string) =>
   invoke<string>("download_hf_file", { repo, file, target, token: token || null });
 
+/** Download a full diffusers repo into the managed image model folder. */
+export const downloadHfRepo = (repo: string, target: string, token?: string) =>
+  invoke<string>("download_hf_repo", { repo, target, token: token || null });
+
 // ── PTY terminal ──────────────────────────────────────────────────────────────
 
 /** Spawn the platform shell at cwd in a real PTY. Emits "pty-data" events for output. */
@@ -462,32 +575,38 @@ export const ptyResize = (cols: number, rows: number) =>
 /** Kill the shell process and clean up the PTY session. */
 export const ptyKill   = () => invoke<void>("pty_kill");
 
-// ── Licensing (30-day trial → signed-key unlock) ────────────────────────────────
-export interface LicenseState {
-  status: "trial" | "expired" | "licensed";
-  days_left: number;
-  trial_days: number;
-  tier: string | null;
-}
 
-/** Current license/trial state. */
-export const licenseStatus = () => invoke<LicenseState>("license_status");
-
-/** Validate + store a purchased key. Rejects (throws) if the key is invalid. */
-export const licenseActivate = (key: string) =>
-  invoke<LicenseState>("license_activate", { key });
-
-// ── Update check (best-effort; points at the site) ───────────────────────────────
+// ── Signed desktop updates ──────────────────────────────────────────────────────
 export interface UpdateInfo {
   current: string;
   latest: string;
   update_available: boolean;
+  install_supported: boolean;
   url: string;
   notes: string;
 }
 
+export interface UpdateProgress {
+  phase: "checking" | "downloading" | "verifying" | "installing" | "installed";
+  downloaded: number;
+  total: number;
+  message: string;
+}
+
+export interface InstallUpdateResult {
+  version: string;
+  restart_required: boolean;
+}
+
 /** Check the site for a newer version. Best-effort — throws if offline. */
 export const checkUpdate = () => invoke<UpdateInfo>("check_update");
+
+/** Download, verify and install the signed Debian update with OS authorization. */
+export const installUpdate = (expectedVersion: string) =>
+  invoke<InstallUpdateResult>("install_update", { expectedVersion });
+
+/** Restart the current executable after the package manager replaces it. */
+export const relaunchAfterUpdate = () => invoke<void>("relaunch_after_update");
 
 // ── Phone pairing ─────────────────────────────────────────────────────────────
 export interface RemotePairingInfo {
@@ -499,11 +618,15 @@ export interface RemotePairingInfo {
     type: string;
     version: number;
     url: string;
+    token: string;
   };
 }
 
 export const remotePairingInfo = () =>
   invoke<RemotePairingInfo>("remote_pairing_info");
+
+export const remoteResetPairing = () =>
+  invoke<RemotePairingInfo>("remote_reset_pairing");
 
 /** Plain-text diagnostics (version, OS, GPU, paths) for support. No telemetry. */
 export const diagnostics = () => invoke<string>("diagnostics");
@@ -517,3 +640,9 @@ export const passwordVerify = (password: string) => invoke<boolean>("password_ve
 export const passwordSet    = (next: string, current?: string) =>
   invoke<void>("password_set", { new: next, current: current ?? null });
 export const passwordClear  = (current: string) => invoke<void>("password_clear", { current });
+
+/** Write the effective loop gate (master switch combined with project level). */
+export const saientSetEnabled = (enabled: boolean) =>
+  invoke<void>("saient_set_enabled", { enabled });
+export const saientIsEnabled = () => invoke<boolean>("saient_is_enabled");
+export const saientLoopRunning = () => invoke<boolean>("saient_loop_running");

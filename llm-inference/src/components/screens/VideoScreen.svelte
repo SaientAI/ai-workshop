@@ -31,20 +31,19 @@
   const selectedModelText = $derived(
     `${video.modelPath || ""} ${video.loadedPath || ""} ${selectedModel?.label || ""} ${(selectedModel as any)?.pipeline || ""}`.toLowerCase()
   );
-  // Strict 14B detection. We refuse 5B/lower fallbacks, but Wan2.1 14B I2V is still a real 14B path.
+  function isTi2v5bText(text: string) {
+    const t = text.toLowerCase();
+    return t.includes("wan2.2") && t.includes("ti2v") && t.includes("5b");
+  }
+  // Strict 14B detection. 5B is now its own 480p-first path, not a fallback.
   const is14bSelected = $derived((selectedModelText.includes("14b") || selectedModelText.includes("a14b")) && !selectedModelText.includes("5b"));
+  const isTi2v5bSelected = $derived(isTi2v5bText(selectedModelText));
+  const isWanVideoSelected = $derived(is14bSelected || isTi2v5bSelected);
   const canTailCondition = $derived(
     selectedModelText.includes("i2v") ||
     selectedModelText.includes("ti2v") ||
     selectedModelText.includes("imagetovideo")
   );
-  const isPureWan22T2vA14b = $derived(
-    selectedModelText.includes("wan2.2") &&
-    selectedModelText.includes("t2v") &&
-    selectedModelText.includes("a14b") &&
-    !canTailCondition
-  );
-
   // ── Activity log (non-typable mini terminal under Params) ──────────────────
   let termEl: HTMLDivElement | undefined = $state();
 
@@ -100,6 +99,16 @@
     return n;
   }
   function ensureLongClipQualitySettings() {
+    if (isTi2v5bSelected) {
+      const bumped = video.steps < 50 || video.cfg !== 5 || video.fps !== 24;
+      video.steps = Math.max(video.steps, 50);
+      video.cfg = 5;
+      video.fps = 24;
+      video.scheduler = "auto";
+      video.shift = 5;
+      if (bumped) logln("quality floor: TI2V-5B uses official 50 steps · CFG 5 · 24 FPS timing");
+      return;
+    }
     // SPEED PATH: Lightning is distilled for 4 steps. Bumping to 20 on a 4-chunk 30s
     // run turned ~12 min into ~66 min (80 dual-expert steps). Keep the distill recipe.
     // Quality lever for long Lightning is Refine after, not more denoise steps.
@@ -174,20 +183,25 @@
     if (video.loadedPath && !video.generating && !(window as any).__saientTestRan) {
       const modelL = (video.modelPath || '').toLowerCase();
       const is14bT2v = is14bSelected || modelL.includes('a14b') || modelL.includes('14b') || modelL.includes('wan2.2-t2v');
-      if (is14bT2v) {
+      const isAutoRunWan = is14bT2v || isTi2v5bSelected;
+      if (isAutoRunWan) {
         (window as any).__saientTestRan = true;
         setTimeout(() => {
-          if (!video.resLocked) {
+          if (isTi2v5bSelected) {
+            if (!video.resLocked) { video.width = 832; video.height = 480; }
+            video.steps = 50; video.cfg = 5; video.fps = 24; video.shift = 5;
+          } else if (!video.resLocked) {
             video.width = 640; video.height = 480; // proven safe high-quality for 14B on 16GB
           }
           if (video.numFrames > 200) {
-            video.numFrames = 81; // ~5s segments for storyboard (4x = ~20s+)
+            video.numFrames = isTi2v5bSelected ? 121 : 81; // native debug segment for the selected model
           }
+          const autoLabel = isTi2v5bSelected ? "TI2V-5B" : "14B (SVI/T2V)";
           if (video.storyboardPrompts && video.storyboardPrompts.some((p: string) => p && p.trim())) {
-            logln('Auto-running storyboard with 14B (SVI or T2V) — no 5B...');
+            logln(`Auto-running storyboard with ${autoLabel}...`);
             generateStoryboard();
           } else if (video.prompt && video.prompt.trim()) {
-            logln('Auto-running generate with 14B (SVI/T2V) — no 5B...');
+            logln(`Auto-running generate with ${autoLabel}...`);
             generate();
           }
         }, 300);
@@ -198,8 +212,15 @@
   onMount(async () => {
     video.models = await T.videoScanModels().catch(() => []) as typeof video.models;
     video.loras = await T.videoScanLoras().catch(() => []) as typeof video.loras;
-    const cur = await T.videoLoadedModel().catch(() => null);
-    if (cur) { video.loadedPath = cur; video.modelPath = cur; }
+    const [cur, curLora] = await Promise.all([
+      T.videoLoadedModel().catch(() => null),
+      T.videoLoadedLora().catch(() => null),
+    ]);
+    if (cur) {
+      video.loadedPath = cur;
+      video.modelPath = cur;
+      video.loraPath = curLora || "";
+    }
     else if (video.models.length && !video.modelPath) video.modelPath = video.models[0].path;
     autoSet();   // snap params to the initially-selected model
     seedBuiltinRecipes();
@@ -208,6 +229,15 @@
   async function refresh() {
     video.models = await T.videoScanModels().catch(() => video.models) as typeof video.models;
     video.loras = await T.videoScanLoras().catch(() => video.loras) as typeof video.loras;
+    const [cur, curLora] = await Promise.all([
+      T.videoLoadedModel().catch(() => null),
+      T.videoLoadedLora().catch(() => null),
+    ]);
+    video.loadedPath = cur || "";
+    if (cur) {
+      video.modelPath = cur;
+      video.loraPath = curLora || "";
+    }
     seedBuiltinRecipes();
   }
 
@@ -268,11 +298,13 @@
     if (l.includes("fastwan"))
       return { width: 832, height: 480, numFrames: 49, steps: 3,  cfg: 1, fps: 16, scheduler: "auto" as const, shift: 5, resLocked: false };
     if (l.includes("wan2.2") && l.includes("t2v") && l.includes("a14b"))
-      // 14B dual-expert T2V — highest quality only. Lightning LoRA (auto-picked) will force 4 steps/CFG1 via loraAutoTune.
-      // Use safe 640x480/81f in auto-run for 16GB stability. Never fall back to 5B models.
+      // Base 14B dual-expert recipe. Native First Block Cache is selected separately and
+      // leaves the adapter slot available for the user's own LoRA.
       return { width: 832, height: 480, numFrames: 81, steps: 40, cfg: 4, fps: 16, scheduler: "auto" as const, shift: 5, resLocked: false };
     if (l.includes("ti2v-5b"))
-      return { width: 832, height: 480, numFrames: 49, steps: 30, cfg: 5, fps: 16, scheduler: "auto" as const, shift: 5, resLocked: false };
+      // Official TI2V-5B recipe is 121f @ 24 FPS, 50 steps, CFG 5, shift 5. Keep
+      // the app 480p-first for this 16 GB display GPU; use Refine/Upscale after.
+      return { width: 832, height: 480, numFrames: 121, steps: 50, cfg: 5, fps: 24, scheduler: "auto" as const, shift: 5, resLocked: false };
     if (l.includes("wan2.2"))
       return { width: 832, height: 480, numFrames: 49, steps: 30, cfg: 5, fps: 16, scheduler: "auto" as const, shift: 5, resLocked: false };
     return { width: 832, height: 480, numFrames: 49, steps: 30, cfg: 5, fps: 16, scheduler: "auto" as const, shift: 5, resLocked: false }; // Wan2.1 default
@@ -281,27 +313,32 @@
     const m = video.models.find((x) => x.path === video.modelPath);
     if (!m) return;
     const pr = presetFor(m.label, (m as any).pipeline ?? "");
+    const ti2v5b = isTi2v5bText(`${m.path} ${m.label} ${(m as any).pipeline ?? ""}`);
     video.width = pr.width; video.height = pr.height; video.numFrames = pr.numFrames;
     video.steps = pr.steps; video.cfg = pr.cfg; video.fps = pr.fps;
     video.scheduler = pr.scheduler; video.shift = pr.shift; video.resLocked = pr.resLocked;
-    adjustResolutionForLength();
-    if (!advanced) autoPickLora(m.label);
-    loraAutoTune();
-  }
-
-  // Simple mode: choose the right speed LoRA for the model, so "pick model → Load →
-  // Generate" always lands on the verified fast recipe. A14B without its Lightning
-  // pair is a ~2 h/clip trap — never let simple mode walk into it.
-  function autoPickLora(modelLabel: string) {
-    const l = modelLabel.toLowerCase();
-    if (l.includes("wan2.2") && l.includes("a14b")) {
-      const lightning = video.loras.find((x) => /lightning/i.test(x.label) && /high/i.test(x.label))
-        ?? video.loras.find((x) => /lightning/i.test(x.label));
-      if (lightning && video.loraPath !== lightning.path) {
-        video.loraPath = lightning.path;
-        logln(`auto: 14B + Lightning or SVI — highest quality path, NO 5B models`);
-      }
+    if (ti2v5b) {
+      video.width = 832;
+      video.height = 480;
+      video.numFrames = 121;
+      video.steps = 50;
+      video.cfg = 5;
+      video.fps = 24;
+      video.scheduler = "auto";
+      video.shift = 5;
+      video.resLocked = false;
+      video.qualityMode = true;
+      video.lowVramMode = false;
+      video.blockOffload = false;
+      video.doRefine = true;
+      video.doUpscale = true;
+      video.doInterpolate = false;
     }
+    adjustResolutionForLength();
+    video.denoiseCache = "off";
+    // Auto adjusts model parameters only. The selected LoRA is user-owned state and must
+    // never be replaced with a distillation adapter behind their back.
+    loraAutoTune();
   }
 
   // A speed-distill LoRA dictates steps/CFG no matter which model it sits on — running
@@ -336,6 +373,7 @@
     loraStrength: number; loraHighStrength: number; loraLowStrength: number; loraSplitStep: number;
     steps: number; cfg: number; scheduler: "auto" | "euler_beta"; shift: number;
     width: number; height: number; numFrames: number; fps: number; qualityMode: boolean;
+    denoiseCache?: "off" | "balanced";
   };
   const RECIPES_KEY = "saient.video.recipes";
   let recipes = $state<VideoRecipe[]>([]);
@@ -352,6 +390,7 @@
       steps: video.steps, cfg: video.cfg, scheduler: video.scheduler, shift: video.shift,
       width: video.width, height: video.height, numFrames: video.numFrames, fps: video.fps,
       qualityMode: video.qualityMode,
+      denoiseCache: video.denoiseCache,
     };
     const i = recipes.findIndex((x) => x.name === name);
     if (i >= 0) recipes[i] = r; else recipes.push(r);
@@ -367,6 +406,7 @@
     video.steps = r.steps; video.cfg = r.cfg; video.scheduler = r.scheduler; video.shift = r.shift;
     video.width = r.width; video.height = r.height; video.numFrames = r.numFrames; video.fps = r.fps;
     video.qualityMode = r.qualityMode; video.resLocked = false;
+    video.denoiseCache = r.denoiseCache ?? "off";
     logln(`recipe: ${r.name}${needsReload ? " → hit Load to apply the model/LoRA" : ""}`);
   }
   function deleteRecipe(name: string) {
@@ -375,7 +415,7 @@
   }
 
   // ── Simple-tab one-click presets: pick → Load → Generate ─────────────────
-  type SimplePresetId = "t2v_30s_fast" | "t2v_5s_fast" | "t2v_hd_3s" | "t2v_hd_5s_max" | "i2v_svi_5s";
+  type SimplePresetId = "t2v_30s_fast" | "t2v_5s_fast" | "t2v_hd_3s" | "t2v_hd_5s_max" | "ti2v_5b_480p_hq" | "ti2v_5b_480p_10s" | "i2v_svi_5s";
   let activeSimplePreset = $state<SimplePresetId | "">("");
   // Max native 720p (1280×704) frame count that fits FastWan-14B on the 16 GB card.
   // Measured on the 5060 Ti: 49f (~3s) peak ~15.1 GB with safe margin; 65f (~4s) completes
@@ -410,6 +450,9 @@
         && !t.includes("a14b") && !t.includes("insta") && !t.includes("i2v");
     }) ?? null;
   }
+  function findTi2v5b() {
+    return video.models.find((m) => isTi2v5bText(`${m.path} ${m.label} ${(m as any).pipeline ?? ""}`)) ?? null;
+  }
   function findLightningLora() {
     return video.loras.find((l) => /lightning/i.test(l.label) && /high/i.test(l.label))
       ?? video.loras.find((l) => /lightning|4.?step/i.test(l.label))
@@ -427,10 +470,49 @@
     video.resLocked = false;
     video.lowVramMode = false;
     video.blockOffload = false;
+    video.denoiseCache = "off";
     video.anatomyLock = true;
     video.fps = 16;
     video.scheduler = "auto";
     video.seed = -1;
+
+    if (id === "ti2v_5b_480p_hq" || id === "ti2v_5b_480p_10s") {
+      const m = findTi2v5b();
+      if (!m) {
+        video.error = "No Wan2.2 TI2V-5B model found. Drop it in and Refresh.";
+        logln(`✗ preset: ${video.error}`);
+        return;
+      }
+      video.modelPath = m.path;
+      video.loraPath = "";
+      video.loraProfile = "single";
+      video.loraStrength = 1;
+      video.loraHighStrength = 1;
+      video.loraLowStrength = 1;
+      video.loraSplitStep = 4;
+      video.qualityMode = true;
+      video.lowVramMode = id === "ti2v_5b_480p_10s";
+      video.blockOffload = false;
+      video.doRefine = true;
+      video.doUpscale = true;
+      video.doInterpolate = false;
+      video.fps = 24;
+      video.steps = 50;
+      video.cfg = 5;
+      video.shift = 5;
+      video.width = 832;
+      video.height = 480;
+      video.numFrames = id === "ti2v_5b_480p_10s" ? framesFor(10) : 121;
+      const label = id === "ti2v_5b_480p_10s"
+        ? "5B HQ 10s 480p (2x native chunks)"
+        : "5B HQ 5s 480p";
+      logln(`preset: ${label} · ${m.label} · bf16 quality · 50 steps · CFG 5 · 24 FPS · ${video.numFrames}f`);
+      logln("480p-first path: Generate, then Quality Pass Refine + Upscale to hand off toward 720p.");
+      logln(loaded && video.loadedPath === m.path
+        ? "✓ model already loaded — paste prompt → Generate"
+        : "→ hit Load Model, then paste prompt → Generate");
+      return;
+    }
 
     // HD 3s / HD 5s (max) / short 5s → single-transformer FastWan-14B (full fp32, sharp, no
     // boundary). 30s stays on A14B below — only the dual-expert path chunks the long clip.
@@ -624,20 +706,21 @@
   function isWan14bHd() {
     return is14bSelected && !video.resLocked && video.width * video.height >= 500_000;
   }
+  function isTi2v5bHd() {
+    return isTi2v5bSelected && !video.resLocked && video.width * video.height >= 500_000;
+  }
   function nativeSegmentFrames() {
+    if (isTi2v5bSelected) return 121;
     // 720p 14B on this 16 GB display GPU does not fit the old 81f single pass.
     // 49f is the proven native-quality HD unit; SD can still use ~5s / 81f chunks.
     return isWan14bHd() ? 49 : 81;
   }
-  function nativeSegmentSeconds() {
-    return Math.max(1, Math.round((nativeSegmentFrames() - 1) / Math.max(video.fps, 1)));
-  }
   let _lengthNoteTimer: ReturnType<typeof setTimeout> | null = null;
   function noteNativeSegmentLimit(immediate = false) {
     const run = () => {
-      if (!is14bSelected || video.fps < 16 || video.numFrames <= nativeSegmentFrames()) return;
+      if (!isWanVideoSelected || video.fps < (isTi2v5bSelected ? 24 : 16) || video.numFrames <= nativeSegmentFrames()) return;
       if (canTailCondition) {
-        logln(`${isWan14bHd() ? "HD native" : "Native"} long: ${video.numFrames}f will chain as ${nativeSegmentFrames()}f I2V tail-conditioned chunks.`);
+        logln(`${isTi2v5bSelected ? "TI2V-5B" : isWan14bHd() ? "HD native" : "Native"} long: ${video.numFrames}f will chain as ${nativeSegmentFrames()}f tail-conditioned chunks.`);
       } else {
         // Pure T2V-A14B: one prompt, backend low-VRAM chunked dual-expert. Keep SD res —
         // chunking is the VRAM strategy, not downscaling to 512×288.
@@ -657,7 +740,8 @@
     _lengthNoteTimer = setTimeout(run, 200);
   }
   function isNativeLongClip() {
-    return is14bSelected && video.fps >= 16 && video.numFrames > nativeSegmentFrames();
+    const nativeFps = isTi2v5bSelected ? 24 : 16;
+    return isWanVideoSelected && video.fps >= nativeFps && video.numFrames > nativeSegmentFrames();
   }
   /** Pure T2V long (the path that actually delivered single-prompt 30s). */
   function isPureT2vLongClip() {
@@ -667,6 +751,9 @@
     if (is14bSelected && video.fps < 16) {
       video.fps = 16;
       logln("native timing restored: 16 FPS. Use the Keyframes buttons only when you explicitly want slow/keyframe mode.");
+    } else if (isTi2v5bSelected && video.fps < 24) {
+      video.fps = 24;
+      logln("native timing restored: TI2V-5B official timing is 24 FPS.");
     }
     video.numFrames = framesFor(sec);
     adjustResolutionForLength();
@@ -682,6 +769,7 @@
   function adjustResolutionForLength() {
     if (video.resLocked) return;
     if (isWan14bHd()) return;
+    if (isTi2v5bSelected) return;
     // I2V AR long can still soft-cap very wide custom sizes; pure T2V keeps selected size.
     if (isPureT2vLongClip() || (!canTailCondition && is14bSelected)) return;
     const secs = clipSecondsFromFrames();
@@ -919,10 +1007,19 @@
 
   async function generateSingleSegment() {
     if (!loaded || video.generating || !video.prompt.trim()) return;
+    if (isWanVideoSelected) {
+      const requestedFrames = Math.max(1, Math.round(video.numFrames));
+      const supportedFrames = Math.max(9, Math.floor((requestedFrames - 1) / 4) * 4 + 1);
+      if (supportedFrames !== requestedFrames) {
+        video.numFrames = supportedFrames;
+        logln(`Wan frame count: ${requestedFrames} snapped to supported ${supportedFrames} (4n+1)`);
+      }
+    }
     const prevBase = appendFromB64;
     const isExtension = !!prevBase;
 
     video.generating = true; video.error = ""; video.enhanced = false;
+    video.previewB64 = ""; video.previewStep = 0; video.previewFrames = [];
     if (!isExtension) {
       video.resultB64 = "";
     } else {
@@ -933,6 +1030,7 @@
     if (!isExtension) video.loadStatus = "Preparing…";
     clampLoraSplit();
     const sched = video.scheduler === "euler_beta" ? ` · Euler Beta s${video.shift}` : ` · model scheduler s${video.shift}`;
+    const cache = video.denoiseCache === "balanced" ? " · cached denoise" : " · exact denoise";
     const split = video.loraPath && video.loraProfile === "high_low"
       ? ` · LoRA ${video.loraHighStrength}/${video.loraLowStrength} (${video.loraSplitStep}/${Math.max(video.steps - video.loraSplitStep, 0)})`
       : "";
@@ -942,10 +1040,12 @@
     // Pure T2V long + any 14B gen over the safe chunk / 20s mark forces backend low-VRAM
     // chunking (this is the single-prompt 30s path).
     const pureT2vLong = !isExtension && isPureT2vLongClip();
-    const useLowVram = video.lowVramMode
-      || pureT2vLong
-      || (is14bSelected && (video.numFrames > wanSafeChunkFrames || isWanHighRes || video.numFrames / Math.max(video.fps, 1) >= 20));
-    logln(isExtension ? `➕ extend · appending ${video.numFrames}f to prior clip` : `🎬 generate · ${video.width}×${video.height} · ${video.numFrames}f · ${video.steps} steps${sched}${split}`);
+    const useLowVram =
+      video.lowVramMode ||
+      pureT2vLong ||
+      (is14bSelected && (video.numFrames > wanSafeChunkFrames || isWanHighRes || video.numFrames / Math.max(video.fps, 1) >= 20)) ||
+      (isTi2v5bSelected && (video.numFrames > 121 || isTi2v5bHd()));
+    logln(isExtension ? `➕ extend · appending ${video.numFrames}f to prior clip` : `🎬 generate · ${video.width}×${video.height} · ${video.numFrames}f · ${video.steps} steps${sched}${cache}${split}`);
     if (useLowVram) {
       if (pureT2vLong || video.numFrames > wanSafeChunkFrames) {
         logln(
@@ -953,7 +1053,7 @@
           `(single prompt — not I2V AR)`
         );
       } else if (isWanHighRes) {
-        logln(`low-VRAM mode active: ${video.width}×${video.height} needs high-res 14B headroom`);
+        logln(`low-VRAM mode active: ${video.width}×${video.height} needs high-res ${isTi2v5bSelected ? "5B" : "14B"} headroom`);
       } else {
         logln("low-VRAM mode active for this generation");
       }
@@ -964,10 +1064,28 @@
     // Phase messages (text-encoder load, then denoise) come over vidload-progress;
     // step progress comes over video_progress. The first real step clears the phase text.
     const unStatus = await listen<string>("vidload-progress", (e) => { video.loadStatus = e.payload; logln(e.payload); });
-    const un = await listen<{ step: number; total: number }>("video_progress", (e) => {
+    const un = await listen<{ step: number; total: number; step_seconds?: number; elapsed_seconds?: number }>("video_progress", (e) => {
       video.progress = e.payload.step; video.progressTotal = e.payload.total;
       video.loadStatus = "";
-      logln(`step ${e.payload.step}/${e.payload.total}`);
+      const timing = typeof e.payload.step_seconds === "number"
+        ? ` · ${e.payload.step_seconds.toFixed(1)}s step · ${Math.round(e.payload.elapsed_seconds ?? 0)}s elapsed`
+        : "";
+      logln(`step ${e.payload.step}/${e.payload.total}${timing}`);
+    });
+    const unPreview = await listen<{
+      base64_jpeg: string;
+      step: number;
+      total: number;
+      frames: number[];
+      decode_seconds?: number;
+    }>("video-preview", (e) => {
+      video.previewB64 = e.payload.base64_jpeg;
+      video.previewStep = e.payload.step;
+      video.previewFrames = e.payload.frames;
+      const timing = typeof e.payload.decode_seconds === "number"
+        ? ` · ${e.payload.decode_seconds.toFixed(2)}s decode`
+        : "";
+      logln(`preview · step ${e.payload.step}/${e.payload.total} · ${e.payload.frames.length} frames${timing}`);
     });
     // Anatomy + long-clip locks applied at request time so the textarea stays what the user typed
     // (except AR/storyboard which temporarily rewrite video.prompt per chunk).
@@ -991,6 +1109,11 @@
         force_seam_blend: !!(prevBase && video.storyboardPrompts && video.storyboardPrompts.some(p => p && p.trim())),
         low_vram: useLowVram,
         block_offload: video.blockOffload,
+        denoise_cache: video.denoiseCache,
+        cache_threshold: 0.10,
+        preview: video.livePreview,
+        preview_every: 5,
+        preview_max_width: 256,
       });
       video.resultB64 = r.base64_mp4; video.frames = r.frames; video.elapsed = r.elapsed;
       if (isExtension) {
@@ -1005,7 +1128,7 @@
       logln('Click "Save MP4" to save the video (nothing is auto-saved to disk).');
     } catch (e) { video.error = compactGpuMessage(e); logln(`✗ ${e}`); }
     finally {
-      un(); unStatus(); video.generating = false; video.loadStatus = "";
+      un(); unStatus(); unPreview(); video.generating = false; video.loadStatus = "";
       appendFromB64 = "";  // always clear after the round
       // After a successful extension, clear the temporary "last frame" seed image chip.
       // The player now shows the full stitched clip; hit Extend again to chain further.
@@ -1042,8 +1165,9 @@
 
   async function generateAutoregressiveLong() {
     if (!loaded || video.generating || !video.prompt.trim()) return;
-    if (!video.imageB64) {
-      video.error = "Native 16 FPS autoregressive long mode needs a starting image on an I2V/SVI 14B model. Add an image first, then Generate.";
+    const startsFromText = isTi2v5bSelected && !video.imageB64;
+    if (!video.imageB64 && !startsFromText) {
+      video.error = "Native autoregressive long mode needs a starting image on this I2V/SVI model. Add an image first, then Generate.";
       logln(`✗ ${video.error}`);
       return;
     }
@@ -1067,7 +1191,10 @@
     if (video.anatomyLock && looksExplicitAnatomy(originalPrompt)) {
       logln("anatomy lock: positive vulva descriptors + anti mouth/lips/fused-genital negatives on every chunk");
     }
-    logln(`native autoregressive: ${targetFrames} frames @ ${video.fps} FPS as ${chunks}×${segmentFrames}f tail-conditioned chunks`);
+    logln(
+      `native autoregressive: ${targetFrames} frames @ ${video.fps} FPS as ${chunks}×${segmentFrames}f ` +
+      (startsFromText ? "TI2V chunks (first T2V, then tail-image conditioned)" : "tail-conditioned chunks")
+    );
 
     for (let i = 0; i < chunks; i++) {
       const remaining = Math.max(targetFrames - produced, 1);
@@ -1088,7 +1215,9 @@
         }
       }
 
-      logln(`native chunk ${i + 1}/${chunks}: ${segFrames}f @ ${video.fps} FPS${i > 0 ? " · tail image conditioned" : " · starting image conditioned"}`);
+      logln(`native chunk ${i + 1}/${chunks}: ${segFrames}f @ ${video.fps} FPS${
+        i > 0 ? " · tail image conditioned" : startsFromText ? " · text-only opening" : " · starting image conditioned"
+      }`);
       await generateSingleSegment();
       if (video.error) break;
 
@@ -1227,8 +1356,8 @@
       await generateSingleSegment();
       return;
     }
-    logln(`📖 Storyboard (14B SVI or T2V, no 5B): ${prompts.length} segments — single load, coherence across clips + seam blend`);
-    logln("Pre-test VRAM clear check: ensuring clean state (<500MiB) for 14B highest quality run.");
+    logln(`📖 Storyboard (${isTi2v5bSelected ? "TI2V-5B 480p" : "14B SVI/T2V"}): ${prompts.length} segments — single load, coherence across clips + seam blend`);
+    logln(`Pre-test VRAM clear check: ensuring clean state (<500MiB) for ${isTi2v5bSelected ? "TI2V-5B" : "14B"} quality run.`);
     video.resultB64 = "";
     video.error = "";
     video.frames = 0;
@@ -1334,6 +1463,16 @@
           title="Freeze-proof HD 5s: FastWan-14B renders native 5s@480p (fits the 16 GB card), then click Enhance for the 2× ESRGAN upscale to ~960p HD. Avoids the RAM-parking route that froze the PC. Load → Generate → Enhance.">
           HD 5s (safe)
         </button>
+        <button class="vsize-btn" class:on={activeSimplePreset === "ti2v_5b_480p_hq"}
+          onclick={() => applySimplePreset("ti2v_5b_480p_hq")}
+          title="Wan2.2 TI2V-5B · official 121f @ 24 FPS · 50 steps · CFG 5 · 832×480. Quality-first 5s base for the refiner/upscaler. Load → Generate → Enhance.">
+          5B HQ 5s
+        </button>
+        <button class="vsize-btn" class:on={activeSimplePreset === "ti2v_5b_480p_10s"}
+          onclick={() => applySimplePreset("ti2v_5b_480p_10s")}
+          title="Wan2.2 TI2V-5B · 10s as 2 native 121f chunks, first from text then tail-frame conditioned · 832×480. Load → Generate → Enhance.">
+          5B HQ 10s
+        </button>
         <button class="vsize-btn" class:on={activeSimplePreset === "i2v_svi_5s"}
           onclick={() => applySimplePreset("i2v_svi_5s")}
           title="I2V-A14B + SVI v2 PRO · 640×480 · 5s. Needs a start image. Load → Generate.">
@@ -1345,6 +1484,8 @@
         {activeSimplePreset === "t2v_30s_fast" ? " Active: 30s Lightning (speed path)."
           : activeSimplePreset === "t2v_5s_fast" ? " Active: 5s Lightning smoke."
           : activeSimplePreset === "t2v_hd_3s" ? " Active: HD 3s Lightning."
+          : activeSimplePreset === "ti2v_5b_480p_hq" ? " Active: 5B 480p quality baseline."
+          : activeSimplePreset === "ti2v_5b_480p_10s" ? " Active: 5B 480p long test, chained 121f chunks."
           : activeSimplePreset === "i2v_svi_5s" ? " Active: SVI I2V — add an image first."
           : ""}
       </div>
@@ -1363,12 +1504,12 @@
           <div class="vsize" style="margin-top:2px;">
             <button class="vsize-btn" class:on={video.numFrames === framesFor(2)} onclick={() => setSeconds(2)} title="~2 second clip">2s</button>
             <button class="vsize-btn" class:on={video.numFrames === framesFor(3)} onclick={() => setSeconds(3)} title="~3 second clip">3s</button>
-            <button class="vsize-btn" class:on={video.numFrames === framesFor(5)} onclick={() => setSeconds(5)} title="~5 second native 16 FPS target">5s</button>
+            <button class="vsize-btn" class:on={video.numFrames === framesFor(5)} onclick={() => setSeconds(5)} title="~5 second native target: 5B uses 121f @24 FPS; 14B uses 16 FPS chunks">5s</button>
           </div>
           <div class="vsize" style="margin-top:2px;">
-            <button class="vsize-btn" class:on={currentSec === 10} onclick={() => setSeconds(10)} title="~10s @16fps. Pure T2V-A14B: backend chunked denoise. I2V: tail-frame AR chunks.">10s</button>
-            <button class="vsize-btn" class:on={currentSec === 20} onclick={() => setSeconds(20)} title="~20s @16fps. Pure T2V-A14B: single prompt + backend seam-chunked denoise (how 30s worked).">20s</button>
-            <button class="vsize-btn" class:on={currentSec === 30} onclick={() => setSeconds(30)} title="~30s @16fps. Pure T2V-A14B: one prompt, backend low-VRAM chunked dual-expert. I2V uses image AR instead.">30s</button>
+            <button class="vsize-btn" class:on={currentSec === 10} onclick={() => setSeconds(10)} title="~10s. TI2V-5B chains 121f @24 FPS chunks; A14B pure T2V uses backend chunked denoise; I2V uses tail-frame chunks.">10s</button>
+            <button class="vsize-btn" class:on={currentSec === 20} onclick={() => setSeconds(20)} title="~20s. Long 5B/I2V routes chain tail-conditioned native chunks; pure A14B T2V uses single-prompt backend chunks.">20s</button>
+            <button class="vsize-btn" class:on={currentSec === 30} onclick={() => setSeconds(30)} title="~30s. Best for 480p-first chained tests; 14B pure T2V keeps a single prompt, 5B starts from text then tail-conditions later chunks.">30s</button>
           </div>
         </div>
       </div>
@@ -1379,18 +1520,39 @@
                   title="832×480 — fastest and rock-solid stable">SD 480p</button>
           <button class="vsize-btn" class:on={!video.resLocked && video.width === 1280 && video.height === 704}
                   disabled={video.resLocked} onclick={() => setRes(1280, 704)}
-                  title="1280×704 HD — 14B uses safe 49-frame chunks on 16GB; longer HD needs I2V/SVI tail conditioning. No 5B models.">HD 720p</button>
+                  title="1280×704 HD — 14B uses safe 49-frame chunks on 16GB. TI2V-5B can be tested short, but the stable path is 480p then Refine/Upscale.">HD 720p</button>
         </div>
       </div>
       <div class="vhint">
         Auto setup: {video.steps} steps · CFG {video.cfg}{video.loraPath ? ` · ${video.loras.find((l) => l.path === video.loraPath)?.label ?? "LoRA"}` : ""}.
         {isNativeLongClip() && canTailCondition
-          ? `I2V long: ${video.fps} FPS · tail-conditioned ${nativeSegmentFrames()}f chunks.`
+          ? `${isTi2v5bSelected ? "TI2V-5B long" : "I2V long"}: ${video.fps} FPS · tail-conditioned ${nativeSegmentFrames()}f chunks.`
           : isPureT2vLongClip()
             ? `Pure T2V long: one prompt · backend seam-chunked denoise (~${clipSecondsFromFrames()}s). Anatomy lock + Refine for quality.`
             : "Everything is picked for this model — switch to Advanced to override."}
       </div>
     {/if}
+
+    <div class="vlabel" style="margin-top:14px">Denoise</div>
+    <div class="vrow"><span>Execution</span>
+      <div class="vsize">
+        <button class="vsize-btn" class:on={video.denoiseCache === "off"}
+          onclick={() => video.denoiseCache = "off"}
+          title="Run every transformer block on every step">Exact</button>
+        <button class="vsize-btn" class:on={video.denoiseCache === "balanced"}
+          onclick={() => video.denoiseCache = "balanced"}
+          title="Reuse similar block outputs between denoise steps. Leaves the LoRA slot free and may slightly change the result.">Cached</button>
+      </div>
+    </div>
+    <div class="vhint">
+      {video.denoiseCache === "balanced"
+        ? "Native block cache is active. Your selected LoRA remains the only adapter."
+        : "Exact runs every block and is the slow reference path."}
+    </div>
+    <label class="vrow" style="cursor:pointer">
+      <span>Live latent preview</span>
+      <input type="checkbox" bind:checked={video.livePreview} disabled={video.generating} />
+    </label>
 
     {#if advanced}
     <div class="vlabel" style="margin-top:14px">LoRA <span style="font-weight:400;text-transform:none;color:var(--text3)">(optional, applied at load)</span></div>
@@ -1452,7 +1614,9 @@
     </label>
     <div class="vhint">
       {#if is14bSelected}
-        <strong style="color:#e0a060">14B high-quality. Long native quality means 16 FPS chunks with I2V tail-frame conditioning. Pure Wan2.2 T2V cannot condition long chunks. No 5B.</strong>
+        <strong style="color:#e0a060">14B high-quality. Long native quality means 16 FPS chunks with I2V tail-frame conditioning. Pure Wan2.2 T2V cannot condition long chunks.</strong>
+      {:else if isTi2v5bSelected}
+        <strong style="color:#e0a060">TI2V-5B quality route. Use 480p, 121f @ 24 FPS, 50 steps, CFG 5; longer clips chain native chunks and then go through Refine/Upscale.</strong>
       {:else if video.qualityMode}
         Experimental bf16: full-precision weights streamed from RAM (sharper). Optimized offload aims for 30s–1m gens. If a gen OOMs/errors, untick + Re-Load.
       {:else}
@@ -1477,12 +1641,12 @@
         <div class="vsize" style="margin-top:2px;">
           <button class="vsize-btn" class:on={video.numFrames === framesFor(2)} onclick={() => setSeconds(2)} title="~2 second clip">2s</button>
           <button class="vsize-btn" class:on={video.numFrames === framesFor(3)} onclick={() => setSeconds(3)} title="~3 second clip">3s</button>
-          <button class="vsize-btn" class:on={video.numFrames === framesFor(5)} onclick={() => setSeconds(5)} title="~5 second native 16 FPS target">5s</button>
+          <button class="vsize-btn" class:on={video.numFrames === framesFor(5)} onclick={() => setSeconds(5)} title="~5 second native target: 5B uses 121f @24 FPS; 14B uses 16 FPS chunks">5s</button>
         </div>
         <div class="vsize" style="margin-top:2px;">
-          <button class="vsize-btn" class:on={currentSec === 10} onclick={() => setSeconds(10)} title="~10s @16fps. Pure T2V: backend chunked denoise. I2V: tail AR.">10s</button>
-          <button class="vsize-btn" class:on={currentSec === 20} onclick={() => setSeconds(20)} title="~20s @16fps. Pure T2V single-prompt backend chunks (seam-conditioned).">20s</button>
-          <button class="vsize-btn" class:on={currentSec === 30} onclick={() => setSeconds(30)} title="~30s @16fps. Pure T2V-A14B single prompt + low-VRAM chunked dual-expert.">30s</button>
+          <button class="vsize-btn" class:on={currentSec === 10} onclick={() => setSeconds(10)} title="~10s. TI2V-5B chains 121f @24 FPS chunks; A14B pure T2V uses backend chunked denoise; I2V uses tail-frame chunks.">10s</button>
+          <button class="vsize-btn" class:on={currentSec === 20} onclick={() => setSeconds(20)} title="~20s. Long 5B/I2V routes chain tail-conditioned native chunks; pure A14B T2V uses single-prompt backend chunks.">20s</button>
+          <button class="vsize-btn" class:on={currentSec === 30} onclick={() => setSeconds(30)} title="~30s. Best for 480p-first chained tests; 14B pure T2V keeps a single prompt, 5B starts from text then tail-conditions later chunks.">30s</button>
         </div>
       </div>
     </div>
@@ -1502,7 +1666,7 @@
                 title="832×480 — fastest and rock-solid stable">SD 480p</button>
         <button class="vsize-btn" class:on={!video.resLocked && video.width === 1280 && video.height === 704}
                 disabled={video.resLocked} onclick={() => setRes(1280, 704)}
-                title="1280×704 HD — 14B uses safe 49-frame chunks on 16GB; longer HD needs I2V/SVI tail conditioning. 5B models not used.">HD 720p</button>
+                title="1280×704 HD — 14B uses safe 49-frame chunks on 16GB. TI2V-5B can be tested short, but the stable path is 480p then Refine/Upscale.">HD 720p</button>
       </div>
     </div>
     <div class="vrow"><span>Width</span><input type="number" bind:value={video.width} min="256" max="1360" step="16" disabled={video.resLocked} /></div>
@@ -1510,7 +1674,7 @@
     <div class="vrow"><span>FPS</span><input type="number" bind:value={video.fps} min="2" max="30" /></div>
     <div class="vrow"><span>Seed</span><input type="number" bind:value={video.seed} /></div>
     <div class="vhint" style="margin-top:4px">
-      {#if video.resLocked}🔒 This model locks resolution — Width/Height fixed.{:else}−1 seed = random. HD 14B uses 49f chunks on 16GB; SD can use 81f. Long native quality needs a model that can take a tail image. Keyframe FPS is manual and trades motion quality for duration.{/if}
+      {#if video.resLocked}🔒 This model locks resolution — Width/Height fixed.{:else}−1 seed = random. HD 14B uses 49f chunks on 16GB; TI2V-5B targets 121f @24 FPS at 480p. Long native quality needs a model that can take a tail image. Keyframe FPS is manual and trades motion quality for duration.{/if}
     </div>
     {/if}
 
@@ -1538,8 +1702,8 @@
       </span>
     </label>
 
-    <!-- Storyboard: multiple prompts for segmented long video on 14B (T2V or SVI I2V).
-         No 5B. Auto-chains + force seam blend. SVI I2V path uses image seeding for best continuity.
+    <!-- Storyboard: multiple prompts for segmented long video on 14B (T2V or SVI I2V) or TI2V-5B.
+         Auto-chains + force seam blend. SVI I2V path uses image seeding for best continuity.
          Target longer total video (20s–minutes) with good character coherence. -->
     <div class="vlabel" style="margin-top:8px">Storyboard Prompts (1-4 segments)</div>
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; font-size:11px;">
@@ -1553,7 +1717,7 @@
       {/each}
     </div>
     <div style="font-size:10px; color:var(--text3); margin-top:2px">
-      <strong>14B (T2V or SVI I2V) — refuse 5B / lower quality.</strong> One load only. For pure T2V no image seed (prompt+force blend). For I2V/SVI: uses last frame as seed for continuity. Fill later boxes with strong "continues the exact same shot, anatomy, camera, lighting seamlessly...". SVI excels at long coherent videos. Use Refine after.
+      <strong>14B or TI2V-5B storyboard.</strong> One load only. 5B starts from text at 480p, then uses the last frame as the seed for continuity. For I2V/SVI: uses last frame as seed for continuity. Fill later boxes with strong "continues the exact same shot, anatomy, camera, lighting seamlessly...". Use Refine after.
     </div>
 
     <div class="i2v-row">
@@ -1583,6 +1747,14 @@
       {:else}
         <div class="vbar vbar-indet"><div class="vbar-fill"></div></div>
         <div class="vbar-label">{video.loadStatus || "Preparing…"}</div>
+      {/if}
+      {#if video.previewB64}
+        <div class="vlive-preview">
+          <img src="data:image/jpeg;base64,{video.previewB64}" alt="Live latent preview" />
+          <div class="vbar-label">
+            Preview step {video.previewStep} · frames {video.previewFrames.join(", ")}
+          </div>
+        </div>
       {/if}
     {/if}
 
@@ -1754,6 +1926,8 @@
   .vbar-indet .vbar-fill { width: 35%; transition: none; animation: vbar-sweep 1.1s ease-in-out infinite; }
   @keyframes vbar-sweep { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
   .vbar-label { font-size: 11px; color: var(--text3); font-family: var(--mono); overflow-wrap: anywhere; }
+  .vlive-preview { width: min(100%, 768px); display: flex; flex-direction: column; gap: 5px; }
+  .vlive-preview img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: #05060a; border: 1px solid var(--border); border-radius: var(--radius-sm); }
   .verr { background: rgba(248,113,113,0.08); border: 1px solid rgba(248,113,113,0.3); color: var(--red); font-size: 12px; padding: 10px 12px; border-radius: var(--radius-sm); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 30vh; max-width: 100%; overflow-y: auto; overflow-x: hidden; }
 
   .vresult { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }

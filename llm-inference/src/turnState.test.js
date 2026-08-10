@@ -142,4 +142,24 @@ test("sleeping never masks real work or a real outcome", () => {
   }
 });
 
+test("restingText does not claim sleep on a surface it cannot see", () => {
+  // The Terminal tab drives no turn events, so `agent.turn` stays IDLE for the
+  // whole session. Reading that as sleep is how the bar came to say "Saient is
+  // sleeping" during a live turn and through four hours of pegged GPU.
+  assert.equal(
+    restingText("IDLE", true, false),
+    "Terminal session — activity not tracked here",
+  );
+  assert.equal(
+    restingText("SAIENT_THINKING", true, false),
+    "Terminal session — activity not tracked here",
+  );
+});
+
+test("restingText still reports sleep where the state is real", () => {
+  assert.equal(restingText("IDLE", true), "Saient is sleeping");
+  assert.equal(restingText("IDLE", true, true), "Saient is sleeping");
+  assert.notEqual(restingText("IDLE", false), "Saient is sleeping");
+});
+
 console.log(`turnState.test.js — ${passed} passed`);

@@ -63,7 +63,7 @@
 
     <div class="ig-section-label" style="margin-top:10px">Output</div>
     <input type="text" bind:value={merge.outputName} placeholder="merged_model" />
-    <input type="text" bind:value={merge.outputDir} placeholder="~/models/" style="margin-top:4px;" />
+    <input type="text" bind:value={merge.outputDir} placeholder="data/models/checkpoints" style="margin-top:4px;" />
   </div>
 
   <div class="ig-main">

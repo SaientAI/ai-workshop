@@ -1,7 +1,7 @@
 //! auth.rs — optional local launch password (argon2).
 //!
 //! Scope (chosen for v1): deter casual access to someone's chats/agent. The password hash
-//! lives in ~/.config/saient/auth.json; data on disk is NOT encrypted (that's a separate,
+//! lives in Saient's managed config dir; data on disk is NOT encrypted (that's a separate,
 //! larger feature). The UI gates the app behind the lock screen until verify() succeeds.
 
 use serde::{Deserialize, Serialize};

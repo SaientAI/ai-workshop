@@ -727,10 +727,10 @@ pub fn find_tinyq4() -> Result<PathBuf> {
     // 4. Local source build — dev only, never baked into a release binary.
     #[cfg(debug_assertions)]
     {
-        let home = std::env::var("HOME").unwrap_or_default();
-        for sub in ["llm-runtime/tinyq4/target/release/tinyq4",
-                    "llm-runtime/tinyq4/target/debug/tinyq4"] {
-            let p = Path::new(&home).join(sub);
+        let runtime = crate::paths::llm_runtime_dir();
+        for sub in ["tinyq4/target/release/tinyq4",
+                    "tinyq4/target/debug/tinyq4"] {
+            let p = runtime.join(sub);
             if p.exists() { return Ok(p); }
         }
     }

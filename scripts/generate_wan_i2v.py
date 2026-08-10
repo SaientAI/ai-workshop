@@ -22,6 +22,9 @@
 #                 CUDA cache before denoising with the resident transformer.
 #   Peak VRAM ~8 GB (during encode), peak RAM < ~10 GB. No 27 GB CPU read, ever.
 import base64, gc, json, os, signal, sys, tempfile, time, traceback
+from saient_paths import cache_dir, configure_hf_cache
+
+configure_hf_cache()
 
 # Reduce CUDA fragmentation so the RESIDENT daemon survives many generations.
 # Without this, reserved-but-idle blocks from earlier denoise runs pile up and a
@@ -82,6 +85,172 @@ def _free_cuda():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
+
+
+# --- Extend / concat helpers (used when previous_video_b64 + image is supplied for chaining) ---
+def _b64_to_frames(video_b64: str):
+    if not video_b64:
+        return []
+    import base64, tempfile, os
+    try:
+        import imageio.v2 as imageio
+        import numpy as np
+    except Exception as e:
+        raise RuntimeError(f"imageio not available for video concat: {e}")
+    raw = base64.b64decode(video_b64)
+    tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+    try:
+        tmp.write(raw)
+        tmp.close()
+        reader = imageio.get_reader(tmp.name, "ffmpeg")
+        frames = []
+        for f in reader:
+            a = np.asarray(f)
+            if a.ndim == 3 and a.shape[2] >= 3:
+                frames.append(a[:, :, :3].copy())
+        return frames
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except Exception:
+            pass
+
+
+def _frame_to_uint8(frame, np):
+    """Normalize Diffusers float frames and decoded uint8 frames for ffmpeg."""
+    if hasattr(frame, "detach"):
+        frame = frame.detach().cpu().numpy()
+    arr = np.asarray(frame)
+    if arr.ndim != 3:
+        raise ValueError(f"video frame must be HxWxC, got shape {arr.shape}")
+    if arr.dtype == np.uint8:
+        return np.ascontiguousarray(arr)
+    if np.issubdtype(arr.dtype, np.floating):
+        arr = np.nan_to_num(arr, nan=0.0, posinf=1.0, neginf=0.0)
+        low = float(arr.min()) if arr.size else 0.0
+        high = float(arr.max()) if arr.size else 0.0
+        if low >= -1.01 and high <= 1.01:
+            arr = (arr + 1.0) * 127.5 if low < -0.01 else arr * 255.0
+    return np.ascontiguousarray(np.clip(np.rint(arr), 0, 255).astype(np.uint8))
+
+
+def _frames_to_b64(frames, fps: int) -> str:
+    if frames is None or len(frames) == 0:
+        return ""
+    import base64, tempfile, os
+    try:
+        import imageio.v2 as imageio
+        import numpy as np
+    except Exception as e:
+        raise RuntimeError(f"imageio not available for video concat: {e}")
+    tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+    tmp.close()
+    writer = None
+    try:
+        writer = imageio.get_writer(
+            tmp.name,
+            fps=fps,
+            codec="libx264",
+            quality=9,
+            pixelformat="yuv420p",
+            ffmpeg_params=["-preset", "medium", "-movflags", "+faststart"],
+        )
+        for f in frames:
+            writer.append_data(_frame_to_uint8(f, np))
+        writer.close()
+        writer = None
+        with open(tmp.name, "rb") as fh:
+            return base64.b64encode(fh.read()).decode("ascii")
+    finally:
+        if writer is not None:
+            try:
+                writer.close()
+            except Exception:
+                pass
+        try:
+            os.unlink(tmp.name)
+        except Exception:
+            pass
+
+
+def _match_extension_to_tail(prev_frames, ext_frames, window=24):
+    """CPU-light seam normalization: match extension RGB stats to previous tail.
+
+    Soft ease-in over the first frames so multi-chunk 20–30s i2v chains don't
+    accumulate a hard brightness step (and so skin-tone over-correction doesn't
+    make labia↔lips confusion worse at the cut).
+    """
+    if not prev_frames or not ext_frames:
+        return ext_frames
+    try:
+        import numpy as np
+        n = max(1, min(int(window), len(prev_frames), len(ext_frames)))
+        prev_sample = np.concatenate([np.asarray(f, dtype=np.float32).reshape(-1, 3) for f in prev_frames[-n:]], axis=0)
+        ext_sample = np.concatenate([np.asarray(f, dtype=np.float32).reshape(-1, 3) for f in ext_frames[:n]], axis=0)
+        prev_mean, prev_std = prev_sample.mean(axis=0), prev_sample.std(axis=0)
+        ext_mean, ext_std = ext_sample.mean(axis=0), ext_sample.std(axis=0)
+        gain = np.clip(prev_std / np.maximum(ext_std, 1.0), 0.82, 1.22)
+        bias = prev_mean - ext_mean * gain
+        out = []
+        fade = min(12, len(ext_frames))
+        for i, f in enumerate(ext_frames):
+            arr = np.asarray(f, dtype=np.float32)
+            if fade > 1 and i < fade:
+                t = (i + 1) / fade
+                g = 1.0 + (gain - 1.0) * t
+                b = bias * t
+                arr = arr * g + b
+            else:
+                arr = arr * gain + bias
+            out.append(np.clip(arr, 0, 255).astype(np.uint8))
+        return out
+    except Exception:
+        return ext_frames
+
+
+def _ffmpeg_concat(prev_b64: str, new_frames, fps: int) -> str | None:
+    """File-level concat using system ffmpeg when available. Guarantees duration = prev + new."""
+    if not prev_b64 or (len(new_frames) <= 0 if hasattr(new_frames, '__len__') else not bool(new_frames)):
+        return None
+    import base64, tempfile, os, subprocess, shutil
+    if not shutil.which("ffmpeg"):
+        return None
+    prev_tmp = new_tmp = comb_tmp = None
+    try:
+        prev_tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+        prev_tmp.write(base64.b64decode(prev_b64))
+        prev_tmp.close()
+
+        new_tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+        new_tmp.close()
+        with open(new_tmp.name, "wb") as f:
+            f.write(base64.b64decode(_frames_to_b64(new_frames, fps)))
+
+        comb_tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+        comb_tmp.close()
+
+        cmd = [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-i", prev_tmp.name, "-i", new_tmp.name,
+            "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[outv]",
+            "-map", "[outv]",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p",
+            comb_tmp.name,
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode != 0:
+            return None
+        with open(comb_tmp.name, "rb") as f:
+            return base64.b64encode(f.read()).decode("ascii")
+    except Exception:
+        return None
+    finally:
+        for p in (prev_tmp, new_tmp, comb_tmp):
+            if p and getattr(p, "name", None):
+                try:
+                    os.unlink(p.name)
+                except Exception:
+                    pass
 
 
 def _shutdown():
@@ -245,6 +414,20 @@ def _lora_state_dict(path):
     return out if out else sd
 
 
+def _svi_low_path(high_path: str) -> str:
+    """If given the SVI HIGH, return the matching LOW sibling if it exists on disk."""
+    if not high_path or 'HIGH' not in high_path.upper():
+        return high_path
+    cand = high_path.replace('HIGH', 'LOW').replace('High', 'Low').replace('high', 'low')
+    if os.path.exists(cand):
+        return cand
+    d, b = os.path.split(high_path)
+    for swap in [('HIGH', 'LOW'), ('High', 'Low'), ('high', 'low')]:
+        c = os.path.join(d, b.replace(swap[0], swap[1]))
+        if os.path.exists(c):
+            return c
+    return high_path
+
 def _apply_lora(lora_path=None, lora_strength=None):
     """Attach a Wan LoRA as a PEFT adapter to the currently-loaded transformer.
     This is intentionally NOT a model merge: the base remains the cached 4-bit
@@ -275,6 +458,31 @@ def _set_lora_strength(strength):
         PIPE.set_adapters(["extra"], adapter_weights=[LORA_STRENGTH])
     if I2V_PIPE is not None:
         I2V_PIPE.set_adapters(["extra"], adapter_weights=[LORA_STRENGTH])
+
+
+def _ensure_lora_adapter(strength=None):
+    if not LORA_PATH:
+        return False
+    target = LORA_STRENGTH if strength is None else float(strength)
+    try:
+        _set_lora_strength(target)
+        return True
+    except Exception as e:
+        msg = str(e)
+        recoverable = (
+            "not in the list of present adapters" in msg
+            or "present adapters" in msg
+            or "requires_grad=True on inference tensor" in msg
+        )
+        if not recoverable:
+            raise
+        emit({"loading_status": "LoRA adapter state invalid — re-applying sidecar…"})
+        try:
+            PIPE.unload_lora_weights()
+        except Exception:
+            pass
+        _apply_lora(lora_strength=target)
+        return True
 
 
 def _configure_scheduler(req):
@@ -329,18 +537,7 @@ def _configure_scheduler(req):
 
 
 def _cache_dir(name):
-    """Managed cache dir ~/.config/saient/<name>. If a pre-rebrand ~/.config/ai-workshop/<name>
-    exists and the new one doesn't, migrate it in place on first use (instant rename, same
-    filesystem) so we never re-quantize a cache the old brand already built."""
-    new = os.path.expanduser(f"~/.config/saient/{name}")
-    old = os.path.expanduser(f"~/.config/ai-workshop/{name}")
-    if not os.path.exists(new) and os.path.exists(old):
-        try:
-            os.makedirs(os.path.dirname(new), exist_ok=True)
-            os.rename(old, new)
-        except Exception:
-            return old
-    return new
+    return str(cache_dir(name))
 
 
 def _safetensors_gb(folder):
@@ -696,7 +893,6 @@ def _decode_latents(latents):
 
 def generate(req):
     import torch
-    from diffusers.utils import export_to_video
 
     t0 = time.time()
     _free_cuda()  # release reserved blocks left over from the previous generation
@@ -718,7 +914,7 @@ def generate(req):
     lora_switched = False
     _configure_scheduler(req)
     if LORA_PATH and lora_profile == "high_low":
-        _set_lora_strength(lora_high)
+        _ensure_lora_adapter(lora_high)
         emit({"loading_status": f"LoRA high/low: {lora_high:g} for {lora_split_step} steps, then {lora_low:g}"})
 
     # ── Prompt embeddings: reuse cache, else load text encoder + encode ──────────
@@ -749,6 +945,7 @@ def generate(req):
     marks = {"first": None, "last": None}
 
     def cb(_pipe, i, _t, kwargs):
+        global LORA_PATH
         nonlocal lora_switched
         now = time.time()
         if marks["first"] is None:
@@ -761,8 +958,21 @@ def generate(req):
             and i + 1 >= lora_split_step
             and i + 1 < total
         ):
-            _set_lora_strength(lora_low)
             lora_switched = True
+            # For SVI, actually swap to the LOW weights file instead of just changing strength
+            if 'svi' in LORA_PATH.lower() or 'SVI' in LORA_PATH:
+                lowp = _svi_low_path(LORA_PATH)
+                if lowp != LORA_PATH and os.path.exists(lowp):
+                    # unload current and load the low
+                    try:
+                        PIPE.unload_lora_weights()
+                    except Exception:
+                        pass
+                    LORA_PATH = lowp
+                    sd = _lora_state_dict(LORA_PATH)
+                    PIPE.load_lora_weights(sd, adapter_name="extra")
+                    emit({"loading_status": f"LoRA switched to SVI LOW: {os.path.basename(lowp)}"})
+            _ensure_lora_adapter(lora_low)
             emit({"loading_status": f"LoRA low-noise strength → {lora_low:g}"})
         emit({"step": i + 1, "total": total})
         return kwargs
@@ -789,7 +999,7 @@ def generate(req):
     # tensors still resident). We decode separately below with the GPU freed.
     # ── Image-to-video (native Wan2.1-I2V; PIPE already IS the i2v pipeline) ──────
     if not image_b64:
-        emit({"error": "Wan2.1-I2V is image-to-video — add an image (the 'Add image → animate' button)."})
+        emit({"error": "This is an image-to-video model — add an image using the 'Add image → animate' button (or start a storyboard after adding an image)."})
         return
     import io
     from PIL import Image
@@ -826,12 +1036,78 @@ def generate(req):
     _free_cuda()
 
     fps = int(req.get("fps", 16))
-    tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
-    tmp.close()
-    export_to_video(frames, tmp.name, fps=fps)
-    with open(tmp.name, "rb") as f:
-        b64 = base64.b64encode(f.read()).decode("ascii")
-    os.unlink(tmp.name)
+    prev_b64 = (req.get("previous_video_b64") or "").strip()
+    image_b64_for_seed = (req.get("image_b64") or "").strip()
+
+    if prev_b64 and frames is not None and (len(frames) > 0 if hasattr(frames, '__len__') else bool(frames)):
+        # Force first frame of extension to the exact seed image (last frame of previous)
+        # to avoid brightness/color pop at the seam.
+        try:
+            if image_b64_for_seed:
+                import io
+                from PIL import Image
+                import numpy as _np
+                seed = Image.open(io.BytesIO(base64.b64decode(image_b64_for_seed))).convert("RGB")
+                h, w = frames[0].shape[:2]
+                seed = seed.resize((w, h), Image.LANCZOS)
+                frames[0] = _np.asarray(seed, dtype=_np.uint8)
+        except Exception:
+            pass
+
+        force_seam = req.get("force_seam_blend", False)
+        do_force_blend = force_seam or not image_b64_for_seed
+        try:
+            prev_frames = _b64_to_frames(prev_b64)
+            if prev_frames:
+                ext = frames[1:] if len(frames) > 1 else frames
+                if hasattr(ext, 'ndim') and getattr(ext, 'ndim', 0) == 4:
+                    ext = [ext[i] for i in range(ext.shape[0])]
+                ext = list(ext)
+                if image_b64_for_seed:
+                    ext = _match_extension_to_tail(prev_frames, ext)
+                    emit({"loading_status": "seam: dropped duplicate seed frame + matched chunk color/exposure to previous tail"})
+                elif do_force_blend:
+                    if len(ext) > 0:
+                        ext[0] = prev_frames[-1].copy()
+                    join = min(12, len(prev_frames), len(ext) if isinstance(ext, (list, tuple)) else 0)
+                    import numpy as _np
+                    for i in range(join):
+                        t = (i + 1) / float(join + 1)
+                        alpha = t * t * (3 - 2 * t)
+                        p = _np.asarray(prev_frames[-join + i], dtype=_np.float32)
+                        e = _np.asarray(ext[i], dtype=_np.float32)
+                        blended = (p * (1.0 - alpha) + e * alpha).astype(_np.uint8)
+                        prev_frames[-join + i] = blended
+                    emit({"loading_status": "seam: prompt-only crossfade blend applied"})
+                combined_frames = prev_frames + ext
+                b64 = _frames_to_b64(combined_frames, fps)
+                emit({"base64_mp4": b64, "frames": len(combined_frames), "elapsed": round(time.time() - t0, 1), "extended": True})
+                return
+        except Exception as ce:
+            emit({"loading_status": f"⚠ frame concat/color match failed ({ce})"})
+
+        combined_b64 = _ffmpeg_concat(prev_b64, frames, fps)
+        if combined_b64:
+            # Correct longer mp4; frame count here is just for the added segment display.
+            emit({"base64_mp4": combined_b64, "frames": len(frames), "elapsed": round(time.time() - t0, 1), "extended": True})
+            return
+        else:
+            try:
+                prev_frames = _b64_to_frames(prev_b64)
+                if prev_frames:
+                    ext = frames[1:] if len(frames) > 1 else frames
+                    if hasattr(ext, 'ndim') and getattr(ext, 'ndim', 0) == 4:  # ndarray (T,H,W,C)
+                        ext = [ext[i] for i in range(ext.shape[0])]
+                    combined_frames = prev_frames + ext
+                    b64 = _frames_to_b64(combined_frames, fps)
+                    emit({"base64_mp4": b64, "frames": len(combined_frames), "elapsed": round(time.time() - t0, 1), "extended": True})
+                    return
+            except Exception as ce:
+                emit({"loading_status": f"⚠ frame concat fallback failed ({ce})"})
+
+    # Normal single-clip path
+    emit({"loading_status": "video export: H.264/libx264 high quality…"})
+    b64 = _frames_to_b64(frames, fps)
     emit({"base64_mp4": b64, "frames": len(frames), "elapsed": round(time.time() - t0, 1)})
 
 

@@ -55,7 +55,7 @@
 
     <div class="ig-section-label" style="margin-top:12px">Dataset folder</div>
     <div style="display:flex;gap:6px;">
-      <input type="text" bind:value={lora.datasetDir} placeholder="~/dataset/" style="flex:1;" />
+      <input type="text" bind:value={lora.datasetDir} placeholder="data/datasets/my-dataset" style="flex:1;" />
       <button class="tab-action" onclick={browseDataset}>…</button>
     </div>
     <button class="tab-action" onclick={cleanDataset} disabled={lora.cleaning} style="width:100%;margin-top:4px;">
@@ -64,7 +64,7 @@
 
     <div class="ig-section-label" style="margin-top:12px">Output</div>
     <input type="text" bind:value={lora.outputName} placeholder="my_lora" />
-    <input type="text" bind:value={lora.outputDir} placeholder="~/loras/" style="margin-top:4px;" />
+    <input type="text" bind:value={lora.outputDir} placeholder="data/models/lora" style="margin-top:4px;" />
 
     <div class="ig-section-label" style="margin-top:12px">Hyperparams</div>
     <div class="sl-field"><div class="sl-row">Rank<span>{lora.rank}</span></div><input type="range" min="4" max="128" step="4" bind:value={lora.rank} /></div>
