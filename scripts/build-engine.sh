@@ -25,8 +25,11 @@ echo "==> building tinyq4 (CPU)…"
 CARGO_TARGET_DIR=/tmp/tq4-cpu cargo build --release
 # The engine crate was renamed tinyq4 -> quartz; CI checks out the renamed
 # repo while local copies may still be the old name. Accept either.
-TQ4_CPU_BIN="$(ls /tmp/tq4-cpu/release/quartz /tmp/tq4-cpu/release/tinyq4 2>/dev/null | head -1)"
-[ -n "$TQ4_CPU_BIN" ] || { echo "no engine binary in /tmp/tq4-cpu/release"; ls /tmp/tq4-cpu/release; exit 1; }
+TQ4_CPU_BIN=""
+for c in /tmp/tq4-cpu/release/quartz /tmp/tq4-cpu/release/tinyq4; do
+  [ -f "$c" ] && { TQ4_CPU_BIN="$c"; break; }
+done
+[ -n "$TQ4_CPU_BIN" ] || { echo "no engine binary in /tmp/tq4-cpu/release"; ls -la /tmp/tq4-cpu/release || true; exit 1; }
 cp "$TQ4_CPU_BIN" "$DEST/tinyq4-cpu"
 strip "$DEST/tinyq4-cpu" || true
 
@@ -34,8 +37,11 @@ strip "$DEST/tinyq4-cpu" || true
 if [ -x "$CUDA_HOME/bin/nvcc" ]; then
   echo "==> building tinyq4 (CUDA, $CUDA_HOME)…"
   CUDA_HOME="$CUDA_HOME" cargo build --release --features cuda
-  TQ4_CUDA_BIN="$(ls target/release/quartz target/release/tinyq4 2>/dev/null | head -1)"
-  [ -n "$TQ4_CUDA_BIN" ] || { echo "no engine binary in target/release"; ls target/release; exit 1; }
+  TQ4_CUDA_BIN=""
+  for c in target/release/quartz target/release/tinyq4; do
+    [ -f "$c" ] && { TQ4_CUDA_BIN="$c"; break; }
+  done
+  [ -n "$TQ4_CUDA_BIN" ] || { echo "no engine binary in target/release"; ls -la target/release || true; exit 1; }
   cp "$TQ4_CUDA_BIN" "$DEST/tinyq4-cuda"
   strip "$DEST/tinyq4-cuda" || true
   # Bundle libcudart so the binary loads without a system CUDA install.
