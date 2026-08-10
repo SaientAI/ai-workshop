@@ -16,6 +16,11 @@ on:
 env:
   CARGO_TERM_COLOR: always
   TINYQ4_CUDA_ARCH: all-major
+  # The engine crate was renamed tinyq4 -> saient-quartz and its build.rs now
+  # reads QUARTZ_CUDA_ARCH. The old name is ignored, so both platforms fell
+  # back to the local-dev default sm_120, which nvcc 12.6 rejects. Both names
+  # are exported so either engine revision builds.
+  QUARTZ_CUDA_ARCH: all-major
   TINYQ4_REPO: staticplayHub/tinyq4
   # 12.6.x is broadly supported by the toolkit action and, with all-major, still runs on
   # Blackwell (RTX 50xx) via PTX JIT. For native sm_120 SASS, bump to 12.8.x AND bump the
@@ -64,6 +69,7 @@ jobs:
           CUDA_HOME="$CUDA_PATH" \
           TINYQ4_SRC="${{ github.workspace }}/tinyq4-src" \
           TINYQ4_CUDA_ARCH="${{ env.TINYQ4_CUDA_ARCH }}" \
+          QUARTZ_CUDA_ARCH="${{ env.QUARTZ_CUDA_ARCH }}" \
           bash scripts/build-engine.sh
 
       - uses: actions/setup-node@v4
@@ -141,6 +147,7 @@ jobs:
           # ("Value 'sm_120' is not defined for option 'gpu-architecture'").
           # all-major emits SASS for every major arch and JITs on Blackwell.
           $env:TINYQ4_CUDA_ARCH = "${{ env.TINYQ4_CUDA_ARCH }}"
+          $env:QUARTZ_CUDA_ARCH = "${{ env.QUARTZ_CUDA_ARCH }}"
           cargo build --release --features cuda
           $cudaBin = @("target\release\quartz.exe","target\release\tinyq4.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $cudaBin) { Get-ChildItem "target\release"; throw "no engine binary (cuda)" }
