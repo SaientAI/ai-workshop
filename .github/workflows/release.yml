@@ -98,7 +98,12 @@ jobs:
   # ── Windows: NSIS installer (.exe) ────────────────────────────────────────────
   windows:
     name: Windows bundle
-    runs-on: windows-latest
+    # windows-latest moved to a Visual Studio newer than CUDA 12.6 accepts:
+    #   host_config.h: unsupported Microsoft Visual Studio version!
+    #   Only the versions between 2017 and 2022 (inclusive) are supported
+    # Pinned rather than passing nvcc -allow-unsupported-compiler, which
+    # disables the check instead of satisfying it.
+    runs-on: windows-2022
     steps:
       - name: Checkout app
         uses: actions/checkout@v4
