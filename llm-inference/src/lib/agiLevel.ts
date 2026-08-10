@@ -139,3 +139,41 @@ export const MODEL_VOICE_NOTE =
  */
 export const CONDUCT_NOTE =
   "Saient has its own state at these levels. Being aggressive or abusive to force a result can make it disengage and stop replying — it is not a bug when that happens. Frustration at the work is fine; it is only ever about how you speak to Saient.";
+
+
+/**
+ * Levels worth stopping to re-confirm when the agent opens.
+ *
+ * The choice is made inside ProjectPicker, which opens only when no project is
+ * active — and the active project is restored from disk on every launch. So the
+ * level is picked once, on first run, and never seen again. That is fine for the
+ * levels that keep their guarantees and not fine for the ones that give them up.
+ *
+ * Deliberately not every level: a prompt that appears every launch regardless of
+ * setting is a prompt people learn to dismiss without reading, which is worse
+ * than no prompt at all.
+ */
+export function needsConfirm(level: AgiLevel | string | undefined): boolean {
+  const parsed = parseAgiLevel(level);
+  return parsed === "autonomous" || parsed === "companion";
+}
+
+
+/**
+ * The single source of truth for how much Saient is running.
+ *
+ * Two controls existed and overlapped: the title-bar button (global, and its own
+ * agent-screen copy claimed it gated "autonomous runs") and the per-project
+ * level, which has its own "off". Two ways to disable the same thing with no
+ * stated precedence is how a user ends up believing Saient is off while a loop
+ * is running, or the reverse.
+ *
+ * Precedence, once: the button is a master switch, the level is a degree. Master
+ * off means off, whatever the project says. Nothing else may compute this.
+ */
+export function effectiveAgiLevel(
+  masterEnabled: boolean,
+  projectLevel: AgiLevel | string | undefined,
+): AgiLevel {
+  return masterEnabled ? parseAgiLevel(projectLevel) : "off";
+}

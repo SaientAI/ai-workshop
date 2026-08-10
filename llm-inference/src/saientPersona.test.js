@@ -6,6 +6,7 @@
 
 import assert from "node:assert/strict";
 import { chatSystemPrompt, SAIENT_IDENTITY } from "./lib/saientPersona.ts";
+import { effectiveAgiLevel } from "./lib/agiLevel.ts";
 
 let passed = 0;
 function test(name, fn) {
@@ -46,6 +47,17 @@ test("the identity does not fabricate live state", () => {
   // claiming numbers here would be the model inventing telemetry.
   assert.ok(!/energy is \d|valence|\d\.\d\d/.test(SAIENT_IDENTITY));
   assert.ok(SAIENT_IDENTITY.includes("not currently living the goal-pursuit loop"));
+});
+
+
+test("the master switch beats the project level", () => {
+  // Two controls, one meaning. Master off means off however the project is set,
+  // so the badge can never read "Autonomous" while the title-bar button is off.
+  assert.equal(effectiveAgiLevel(false, "autonomous"), "off");
+  assert.equal(effectiveAgiLevel(false, "companion"), "off");
+  assert.equal(effectiveAgiLevel(true, "autonomous"), "autonomous");
+  assert.equal(effectiveAgiLevel(true, "off"), "off");
+  assert.equal(effectiveAgiLevel(true, undefined), "off");
 });
 
 console.log(`saientPersona.test.js — ${passed} passed`);

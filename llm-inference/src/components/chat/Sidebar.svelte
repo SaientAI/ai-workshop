@@ -22,9 +22,8 @@
   let hfFiles = $state<T.HfFile[]>([]);
   let hfListing = $state(false);
   let hfError = $state("");
-  let hfToken = $state(localStorage.getItem("hf_token") ?? "");
+  let hfToken = $state("");
   let hfShowToken = $state(false);
-  $effect(() => { localStorage.setItem("hf_token", hfToken); });
 
   // Accept "owner/name", a repo URL, or a direct file URL (resolve/blob).
   function parseHf(raw: string): { repo: string; file?: string } | null {

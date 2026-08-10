@@ -1,0 +1,26 @@
+{
+  "bundle": {
+    "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
+    "resources": [
+      "resources/engine/tinyq4-cpu.exe",
+      "resources/saient/**/*"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNFQ0VGMzc0MEMyMTdGQUIKUldTcmZ5RU1kUFBPUHFYTW9jRWQ1ZkY0a1duMm9VcE02L2hGYkVjbk94STFPMDdqRUhCbmNCK0cK",
+      "endpoints": [
+        "https://saient.co.uk/tauri-update.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

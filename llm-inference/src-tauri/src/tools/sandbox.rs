@@ -92,6 +92,9 @@ impl Default for SandboxConfig {
         base_env.insert("HOME".into(), std::env::var("HOME").unwrap_or_default());
         base_env.insert("LANG".into(), "en_US.UTF-8".into());
         base_env.insert("TERM".into(), "xterm-256color".into());
+        base_env.insert(crate::paths::DATA_DIR_ENV.into(), crate::paths::data_dir().to_string_lossy().into_owned());
+        base_env.insert(crate::paths::CONFIG_DIR_ENV.into(), crate::paths::config_dir().to_string_lossy().into_owned());
+        base_env.insert(crate::paths::MODELS_DIR_ENV.into(), crate::paths::models_dir().to_string_lossy().into_owned());
 
         Self {
             root: PathBuf::from("."),
@@ -224,6 +227,17 @@ impl Sandbox {
 
         let timeout_dur = Duration::from_secs(req.timeout_secs.max(1));
         let started = Instant::now();
+
+        // Point HOME at the jailed root, not the real one.
+        //
+        // base_env carries the launching user's HOME, so until now every agent
+        // `exec` step could read ~/.ssh and ~/.saient-keys (the licence-signing
+        // seed) simply by expanding `~`. Nothing in the command policy stopped
+        // that — it is a substring blocklist, not an isolation boundary.
+        // Overriding here rather than in SandboxConfig::default() because the
+        // root is set later via set_root(), so a value baked in at construction
+        // time would be stale.
+        env.insert("HOME".into(), cwd.to_string_lossy().into_owned());
 
         // Build command
         let mut cmd = Command::new(&req.command);

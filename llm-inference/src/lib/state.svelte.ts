@@ -6,6 +6,10 @@ import type {
   LoadPhase, DepReport, ModelEntry, ModelSummary, RunningServer, PerfResult,
   IgState, TtsState, LoraState, MergeState, TreeEntry, TermLine, Plan, MemoryFact,
 } from "./types.js";
+import type { TurnState, RetryInfo } from "./turnState.js";
+import type { ActivityEntry } from "./pulse.js";
+import type { CheckpointMeta, RestoreReport, ProjectInfo } from "./tauri.js";
+import type { AutoSavePolicy } from "./checkpoints.js";
 
 // ── UI ────────────────────────────────────────────────────────────────────────
 
@@ -46,21 +50,13 @@ export const update = $state({
   checking: false,
   checked: false,
   available: false,
+  installSupported: false,
   current: "",
   latest: "",
   url: "https://saient.co.uk/#download",
   notes: "",
   error: "",
   dismissed: false,
-});
-
-// ── Licensing (30-day trial → £20 unlock) ───────────────────────────────────────
-export const license = $state({
-  status: "licensed" as "trial" | "expired" | "licensed",  // optimistic until checked
-  daysLeft: 30,
-  trialDays: 30,
-  tier: null as string | null,
-  showUnlock: false,   // paywall opened manually (vs. forced on expiry)
 });
 
 // ── Model / server ────────────────────────────────────────────────────────────
@@ -140,6 +136,10 @@ export const params = $state<SamplingParams>({
 export const agent = $state({
   tab: "files" as AgentTab,
   sandboxRoot: "",
+  // Incremented only after the backend accepts a workspace change. The PTY is
+  // otherwise mounted once and can remain in the previous project's cwd while
+  // the file tools point somewhere else.
+  workspaceEpoch: 0,
   tree: [] as TreeEntry[],
   selPath: null as string | null,
   content: "",
@@ -150,11 +150,32 @@ export const agent = $state({
   termCmd: "ls",
   termArgs: "",
   termCwd: "",
-  planGoal: localStorage.getItem("saient_goal") ?? "",
-  planJson: localStorage.getItem("saient_plan_json") ?? "",
+  planGoal: "",
+  planJson: "",
   plan: null as Plan | null,
   planRunning: false,
   planPhase: "idle" as "idle" | "generating" | "executing",
+  /// Explicit turn ownership. planRunning/planPhase describe one inference;
+  /// this describes whether Saient has actually stopped, which is not the same
+  /// thing once the autonomous loop is involved. See lib/turnState.ts.
+  turn: "IDLE" as TurnState,
+  /// The autonomous loop intends another iteration. Keeps the input with Saient
+  /// across the gap between one inference ending and the next beginning.
+  continuing: false,
+  /// Set while a step is being retried, so the reason can be shown rather than
+  /// the run appearing to stall.
+  retry: null as RetryInfo | null,
+  /// Pause requested: finish the current step, then stop before the next one.
+  paused: false,
+  /// Typed by the user while Saient is working; folded into the next iteration.
+  pendingInstructions: [] as string[],
+  /// Prompt-processing progress, which on a local model is most of the wait
+  /// before the first token. Null once tokens start arriving.
+  planPrefill: null as { done: number; total: number } | null,
+  /// The model's thinking, kept apart from planJson so it never reaches the parser.
+  planReasoning: "",
+  /// Steps that never ran because something they depend on failed.
+  planAbandoned: [] as string[],
   memFacts: [] as MemoryFact[],
   memQuery: "",
   // Autonomous loop
@@ -209,6 +230,11 @@ export const video = $state({
                          // streamed from RAM (higher fidelity, ~10 GB PCIe round-trip/gen)
   lowVramMode: false,
   blockOffload: false,   // park transformer to RAM, stream per-step → fits native 5s@720p (slow ~17min)
+  denoiseCache: "off" as "off" | "balanced",
+  livePreview: true,
+  previewB64: "",
+  previewStep: 0,
+  previewFrames: [] as number[],
   imageB64: "",          // i2v input still (base64, no data: prefix)
   imageName: "",         // display name of the picked image
   resLocked: false,      // model requires a fixed resolution (e.g. CogVideoX)
@@ -325,4 +351,55 @@ export const merge = $state<MergeState>({
   log: [],
   progress: 0,
   total: 0,
+});
+
+// ── Saient Pulse ──────────────────────────────────────────────────────────────
+// App-level activity, not agent-tab-level: the bar spans the whole window and
+// reports whatever Saient is doing. Everything here is derived from real events
+// so a moving robot always means real work — see lib/pulse.ts.
+
+export const pulse = $state({
+  /// The step currently in flight, used to say *what* is being worked on.
+  /// Cleared whenever the turn state leaves a working state.
+  step: null as { tool?: string; target?: string | null } | null,
+  /// When the current activity began, for the elapsed clock.
+  startedAt: Date.now(),
+  /// Details drawer open. Groundwork for the full activity timeline.
+  expanded: false,
+  log: [] as ActivityEntry[],
+});
+
+// ── Checkpoints ───────────────────────────────────────────────────────────────
+// Saved working state: goal, step in flight, terminal cwd, outstanding work and
+// the workspace files. See lib/checkpoints.ts for what gets captured.
+
+export const checkpoints = $state({
+  list: [] as CheckpointMeta[],
+  /// Default is "ask": offer the choice at the end of a turn rather than
+  /// deciding for the user. Persisted so a decision only has to be made once.
+  policy: (localStorage.getItem("checkpoint_policy") ?? "ask") as AutoSavePolicy,
+  /// The save prompt is up, waiting on an answer.
+  prompting: false,
+  busy: false,
+  error: "",
+  /// Most recent save, for the "saved just now" confirmation.
+  lastSaved: null as CheckpointMeta | null,
+  /// Result of the last restore, so it can be reported and undone.
+  lastRestore: null as RestoreReport | null,
+  /// Name typed into the save dialog.
+  draftName: "",
+});
+
+/** Persist the policy so the choice survives a restart. */
+export function setCheckpointPolicy(policy: AutoSavePolicy) {
+  checkpoints.policy = policy;
+  localStorage.setItem("checkpoint_policy", policy);
+}
+
+// ── Projects ──────────────────────────────────────────────────────────────────
+
+export const projects = $state({
+  /// Null until one is opened. The picker shows while this is null.
+  active: null as ProjectInfo | null,
+  list: [] as ProjectInfo[],
 });

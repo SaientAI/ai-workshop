@@ -5,9 +5,11 @@ Streams JSON progress lines to stdout.
 """
 import json, sys, os, signal, glob, math
 from pathlib import Path
+from saient_paths import configure_hf_cache, model_scan_dirs
 
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
+configure_hf_cache()
 
 _stop_requested = False
 
@@ -36,7 +38,7 @@ signal.signal(signal.SIGTERM, _handle_stop)
 signal.signal(signal.SIGINT,  _handle_stop)
 
 # ── Local SDXL config discovery (same logic as generate_sdxl.py) ────────────
-_MODEL_DIRS = ["/home/tiny/models", "/home/tiny/projects/models"]
+_MODEL_DIRS = [str(p) for p in model_scan_dirs()]
 
 def _find_local_sdxl_base():
     for d in _MODEL_DIRS:

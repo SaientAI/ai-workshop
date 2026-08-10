@@ -2,9 +2,10 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { save, open } from "@tauri-apps/plugin-dialog";
-  import { chat, model, dual, params } from "../../lib/state.svelte.js";
+  import { chat, model, dual, params, ui } from "../../lib/state.svelte.js";
   import * as T from "../../lib/tauri.js";
   import { isArtifactRequest, friendlyGenerateError, stripThinkTags } from "../../lib/format.js";
+  import { chatSystemPrompt } from "../../lib/saientPersona.js";
 
   // OS-specific steer so the model uses Windows commands when on Windows.
   let osHint = $state("");
@@ -125,13 +126,15 @@ Forms/tools:
 
     const wantsArtifact =
       chat.artifactMode && (hasSlashCmd || chat.artifact.active || isArtifactRequest(rawText));
-    const effectiveSystem = [
-      chat.systemPrompt,
+    // With Saient on, its identity takes the system slot instead of the custom
+    // prompt. Both are read with the same authority, so keeping both would let
+    // the custom prompt simply override the persona — the toggle would look on
+    // while doing nothing. The OS hint and artifact instructions still apply:
+    // they describe the environment, not who is speaking.
+    const effectiveSystem = chatSystemPrompt(ui.saientEnabled, chat.systemPrompt, [
       osHint,
       wantsArtifact ? ARTIFACT_SYSTEM_PROMPT : "",
-    ]
-      .filter(Boolean)
-      .join("\n\n");
+    ]);
 
     const msgs: Array<{ role: string; content: string }> = [];
     if (effectiveSystem) msgs.push({ role: "system", content: effectiveSystem });

@@ -76,7 +76,9 @@ pub async fn merge_start(
         let script = match resolve::find_script("merge_checkpoints.py") {
             Ok(p) => p, Err(e) => { emit_err(e.to_string()); return; }
         };
-        let mut child = match Command::new(python)
+        let mut cmd = Command::new(python);
+        crate::paths::apply_child_env(&mut cmd);
+        let mut child = match cmd
             .arg(script)
             .arg(&tmp_clone)
             .stdout(Stdio::piped())

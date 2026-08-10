@@ -6,12 +6,12 @@
 # present (libcudart is bundled, so no system CUDA toolkit is needed on the user's box).
 #
 # Usage:   scripts/build-engine.sh
-# Env:     TINYQ4_SRC   path to the tinyq4 source repo   (default: ~/llm-runtime/tinyq4)
+# Env:     TINYQ4_SRC   path to the tinyq4 source repo   (default: ./data/llm-runtime/tinyq4)
 #          CUDA_HOME    CUDA toolkit for the CUDA build  (default: /usr/local/cuda-12.8)
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")/.." && pwd)"          # llm-inference-tauri/
-TINYQ4_SRC="${TINYQ4_SRC:-$HOME/llm-runtime/tinyq4}"
+TINYQ4_SRC="${TINYQ4_SRC:-$HERE/data/llm-runtime/tinyq4}"
 CUDA_HOME="${CUDA_HOME:-/usr/local/cuda-12.8}"
 DEST="$HERE/llm-inference/src-tauri/resources/engine"
 mkdir -p "$DEST"

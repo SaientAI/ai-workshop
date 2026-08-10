@@ -19,10 +19,10 @@ Source of truth for the v1.0 push. Tackle top-down; Tier 1 has no open decisions
 ---
 
 ## Tier 1 — quick wins, no decisions (do first)
-- [ ] **Finish rebrand → Saient.** `TitleBar.svelte:36`, `SetupWizard.svelte:95` (`AI·Workshop` → `Saient`); config dir `~/.config/ai-workshop` → `~/.config/saient` (+ one-time migration of existing dir); default models dir `main.rs:113` (`~/llm-runtime/models` → e.g. `~/.local/share/saient/models`); audit/log/PTY paths.
+- [ ] **Finish rebrand → Saient.** `TitleBar.svelte:36`, `SetupWizard.svelte:95` (`AI·Workshop` → `Saient`). Runtime config/models/cache paths now resolve under the project-local `data/` root.
 - [ ] **Security bind:** tinyq4 server `0.0.0.0` → `127.0.0.1` (`tinyq4 server.rs`). Closes LAN exposure of the LLM + agent endpoints.
 - [ ] **Stale text:** `engine.rs:723` error still says "Install it with `pip install tinyq4`" → bundled-engine wording.
-- [ ] **Path leak:** gate `engine.rs:709-710` `/home/tiny/...` fallbacks behind `#[cfg(debug_assertions)]`.
+- [x] **Path leak:** local runtime paths now resolve through `paths.rs` and `SAIENT_DATA_DIR`.
 - [ ] **Hygiene:** remove my unused imports (`Ordering`, `bail`, `last`); strip 14 frontend `console.log`s; clear the `TTSScreen.svelte:44` TODO; pass over the ~50 real (non-lock) `unwrap()`s.
 
 ## Tier 2 — the three big features

@@ -27,6 +27,44 @@ pub struct ProjectInfo {
     pub modified: u64,
     /// Files at the top level, so the picker can show "empty" vs "has work in it".
     pub entry_count: usize,
+    /// How much of Saient runs behind the agent here: off | guided | companion |
+    /// autonomous. Stored per project because it changes what the agent may do,
+    /// and someone may well want one project autonomous and another not.
+    pub agi_level: String,
+}
+
+/// Per-project settings, kept beside its checkpoints.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct ProjectSettings {
+    #[serde(default)]
+    agi_level: String,
+}
+
+fn settings_file(project_path: &Path) -> PathBuf {
+    project_path.join(PROJECT_DATA_DIR).join("project.json")
+}
+
+fn read_level(project_path: &Path) -> String {
+    std::fs::read_to_string(settings_file(project_path))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<ProjectSettings>(&raw).ok())
+        .map(|s| s.agi_level)
+        .filter(|l| !l.is_empty())
+        // Anything missing or unrecognised means off. A project should never end
+        // up acting on its own because a settings file failed to parse.
+        .unwrap_or_else(|| "off".to_string())
+}
+
+pub fn set_level(name: &str, level: &str) -> Result<ProjectInfo> {
+    const VALID: &[&str] = &["off", "guided", "companion", "autonomous"];
+    if !VALID.contains(&level) {
+        bail!("Unknown AGI level: {level}");
+    }
+    let path = path_for(name)?;
+    std::fs::create_dir_all(path.join(PROJECT_DATA_DIR))?;
+    let json = serde_json::to_string_pretty(&ProjectSettings { agi_level: level.to_string() })?;
+    std::fs::write(settings_file(&path), json)?;
+    Ok(describe(name, &path))
 }
 
 pub fn projects_dir() -> PathBuf {
@@ -113,6 +151,7 @@ fn describe(name: &str, path: &Path) -> ProjectInfo {
         path: path.to_string_lossy().into_owned(),
         modified,
         entry_count,
+        agi_level: read_level(path),
     }
 }
 
@@ -146,6 +185,16 @@ pub fn set_active(name: &str) -> Result<ProjectInfo> {
     }
     std::fs::write(&pref, name)?;
     Ok(describe(name, &path))
+}
+
+/// Leave managed-project mode without deleting any project or its history.
+pub fn clear_active() -> Result<()> {
+    let pref = active_pref_file();
+    if let Some(parent) = pref.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(pref, "")?;
+    Ok(())
 }
 
 /// The remembered project, or None on first run or if it has been deleted.

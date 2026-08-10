@@ -10,7 +10,7 @@
 /// The LLM is called for planning and verification.
 /// Tool execution is pure Rust (no LLM needed for fs/exec/patch).
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -137,8 +137,13 @@ impl Plan {
         self.steps.iter().any(|s| s.status == StepStatus::Failed)
     }
 
+    /// Steps that actually completed, over the total.
+    ///
+    /// Skipped deliberately does not count as done. A step is only skipped when a
+    /// prerequisite failed, so counting it here would report a plan that fell over
+    /// after step one as fully finished.
     pub fn progress(&self) -> (usize, usize) {
-        let done = self.steps.iter().filter(|s| matches!(s.status, StepStatus::Done | StepStatus::Skipped)).count();
+        let done = self.steps.iter().filter(|s| s.status == StepStatus::Done).count();
         (done, self.steps.len())
     }
 
@@ -150,6 +155,7 @@ impl Plan {
             total_steps: total,
             done_steps: done,
             failed_steps: self.steps.iter().filter(|s| s.status == StepStatus::Failed).count(),
+            skipped_steps: self.steps.iter().filter(|s| s.status == StepStatus::Skipped).count(),
             pending_steps: self.steps.iter().filter(|s| s.status == StepStatus::Pending).count(),
             status: format!("{:?}", self.status),
             steps: self.steps.iter().map(|s| StepSummary {
@@ -174,6 +180,8 @@ pub struct PlanSummary {
     pub total_steps: usize,
     pub done_steps: usize,
     pub failed_steps: usize,
+    /// Steps never attempted because something they depend on failed.
+    pub skipped_steps: usize,
     pub pending_steps: usize,
     pub status: String,
     pub steps: Vec<StepSummary>,
@@ -311,18 +319,24 @@ pub struct VerifyResult {
 // ── Planner (template-based, wired to LLM in main.rs) ────────────────────────
 
 /// A structured prompt template the planner uses to ask the LLM for a plan.
+///
+/// Layout matters as much as wording here. Everything fixed — role, tool list,
+/// schema, rules — comes first, and the two parts that change per run (memory,
+/// then the goal) come last. The engine's KV cache reuses the longest shared
+/// token prefix between consecutive prompts, so holding the boilerplate constant
+/// means only the goal is actually prefilled on a second planning call. With the
+/// goal near the top, as it used to be, the shared prefix ended after about a
+/// dozen tokens and the whole template was re-processed every time.
+///
+/// Putting the goal last also helps a small model follow it, since it lands
+/// nearest the generation point.
 pub fn plan_prompt(goal: &str, memory_context: &str, available_tools: &[&str]) -> String {
     format!(
         r#"You are an autonomous agent planner. Given a goal, produce a JSON execution plan.
 
-## Goal
-{goal}
-
 ## Available tools
+Use these exact tool names, and these exact parameter names. `?` marks optional.
 {tools}
-
-## Memory context
-{memory}
 
 ## Instructions
 Return ONLY valid JSON matching this schema:
@@ -345,16 +359,134 @@ Return ONLY valid JSON matching this schema:
   ]
 }}
 
+A correct single step looks exactly like this:
+{{
+  "description": "Create the reports folder",
+  "tool": "fs_mkdir",
+  "params": {{ "path": "reports" }},
+  "depends_on": [],
+  "verification": {{ "file_exists": "reports" }}
+}}
+
 Rules:
 - steps execute in order unless depends_on creates a dependency
 - verification fields are all optional, use only what makes sense
-- tool params must exactly match the tool's expected parameters
+- every entry in "params" must be a "name": value pair using the names listed above
+- paths are relative to the workspace root; do not invent absolute paths
 - prefer small, atomic steps over large ones
-- if a step might fail, add a verification so it can be retried"#,
+- if a step might fail, add a verification so it can be retried
+- emit the smallest plan that achieves the goal; a one-step goal gets one step
+- every string must be double-quoted, and emit no text outside the JSON object
+
+## Memory context
+{memory}
+
+## Goal
+{goal}"#,
         goal = goal,
-        tools = available_tools.join(", "),
+        tools = available_tools
+            .iter()
+            .map(|t| format!("  {t}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
         memory = if memory_context.is_empty() { "none" } else { memory_context },
     )
+}
+
+/// Best-effort repair of the JSON defects a small model actually emits.
+///
+/// A 7B asked for a 2000-token strict-JSON document gets it *nearly* right and
+/// then drops a quote somewhere in the middle. Before this, one bad character
+/// threw away the whole plan — and the ~11s spent generating it. Repair is free;
+/// re-asking is not.
+pub fn repair_json(raw: &str) -> String {
+    // Take the outermost object. Models like to wrap it in prose or fences, and
+    // both are harmless once we slice to the braces.
+    let body = match (raw.find('{'), raw.rfind('}')) {
+        (Some(s), Some(e)) if e > s => &raw[s..=e],
+        _ => raw,
+    };
+
+    let mut out = String::with_capacity(body.len() + 32);
+    for line in body.lines() {
+        out.push_str(&repair_line(line));
+        out.push('\n');
+    }
+
+    // Trailing comma before a closing brace/bracket — the other habitual defect.
+    match regex::Regex::new(r",(\s*[}\]])") {
+        Ok(re) => re.replace_all(&out, "$1").into_owned(),
+        Err(_) => out,
+    }
+}
+
+/// Fix the two per-line defects small models produce: a bare key, and a value
+/// that lost its opening quote.
+fn repair_line(line: &str) -> String {
+    repair_value(&quote_bare_key(line))
+}
+
+/// Re-quote a key that was never quoted: `  verification: {}` → `  "verification": {}`
+///
+/// Observed from Qwen2.5-Coder-14B, which is otherwise more reliable than the 7B
+/// but drops key quotes where the 7B drops value quotes.
+fn quote_bare_key(line: &str) -> String {
+    let indent_len = line.len() - line.trim_start().len();
+    let (indent, rest) = line.split_at(indent_len);
+
+    // Already quoted, or not the start of a key.
+    if rest.starts_with('"') || rest.is_empty() {
+        return line.to_string();
+    }
+    let Some(colon) = rest.find(':') else {
+        return line.to_string();
+    };
+    let key = &rest[..colon];
+    // Only a plain identifier is safe to assume was meant as a key. Anything with
+    // a space, quote or brace is something else entirely — leave it alone.
+    if key.is_empty()
+        || !key.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+    {
+        return line.to_string();
+    }
+    format!("{indent}\"{key}\"{}", &rest[colon..])
+}
+
+/// Re-quote a value that lost its opening quote: `"k": text",` → `"k": "text",`
+fn repair_value(line: &str) -> String {
+    let Some(idx) = line.find("\":") else {
+        return line.to_string();
+    };
+    let after_colon = &line[idx + 2..];
+    let ws = after_colon.len() - after_colon.trim_start().len();
+    let split = idx + 2 + ws;
+    let (head, tail) = line.split_at(split);
+
+    let trimmed = tail.trim_end();
+    let (value, trailing) = match trimmed.strip_suffix(',') {
+        Some(v) => (v, ","),
+        None => (trimmed, ""),
+    };
+
+    // Leave anything that already parses as a JSON value alone.
+    if value.is_empty()
+        || value.starts_with('"')
+        || value.starts_with('{')
+        || value.starts_with('[')
+        || value == "true"
+        || value == "false"
+        || value == "null"
+        || value.starts_with(|c: char| c.is_ascii_digit() || c == '-')
+    {
+        return line.to_string();
+    }
+
+    // The signature we repair: closes with a quote but never opened one.
+    if value.ends_with('"') {
+        format!("{head}\"{value}{trailing}")
+    } else {
+        line.to_string()
+    }
 }
 
 /// Parse a JSON plan from LLM output.
@@ -367,8 +499,20 @@ pub fn parse_plan_response(goal: &str, json: &str) -> Result<Plan> {
         .trim_end_matches("```")
         .trim();
 
-    let val: serde_json::Value = serde_json::from_str(clean)
-        .with_context(|| format!("LLM returned invalid JSON: {}", &clean[..clean.len().min(200)]))?;
+    // Try it as written; fall back to a repaired copy rather than losing the plan.
+    let val: serde_json::Value = match serde_json::from_str(clean) {
+        Ok(v) => v,
+        Err(strict_err) => {
+            let repaired = repair_json(clean);
+            serde_json::from_str(&repaired).with_context(|| {
+                format!(
+                    "LLM returned invalid JSON ({}), and repair did not fix it: {}",
+                    strict_err,
+                    &repaired[..repaired.len().min(200)]
+                )
+            })?
+        }
+    };
 
     let mut plan = Plan::new(goal);
 
@@ -443,6 +587,160 @@ mod tests {
         let json = "```json\n{\"steps\":[]}\n```";
         let plan = parse_plan_response("goal", json).unwrap();
         assert_eq!(plan.steps.len(), 0);
+    }
+
+    /// Verbatim output from Qwen2.5-Coder-7B for "create a folder called
+    /// test-folder": the description value lost its opening quote. Before the
+    /// repair pass this threw the whole plan away after ~11s of generation.
+    #[test]
+    fn repairs_the_real_missing_quote_defect() {
+        let json = r#"```json
+{
+  "goal": "create a folder called test-folder in my workspace",
+  "steps": [
+    {
+      "description": "Check if the folder already exists.",
+      "tool": "fs_list",
+      "params": { "path": "/workspace" },
+      "depends_on": []
+    },
+    {
+      "description": If the folder does not exist, create it.",
+      "tool": "fs_mkdir",
+      "params": { "path": "/workspace/test-folder" },
+      "depends_on": []
+    }
+  ]
+}
+```"#;
+        let plan = parse_plan_response("goal", json).expect("repair should rescue this");
+        assert_eq!(plan.steps.len(), 2);
+        assert_eq!(plan.steps[1].tool_call.tool, "fs_mkdir");
+        assert_eq!(
+            plan.steps[1].description,
+            "If the folder does not exist, create it."
+        );
+    }
+
+    /// Verbatim from Qwen2.5-Coder-14B for "list the files in my workspace":
+    /// every key quoted except the last one.
+    #[test]
+    fn repairs_the_real_unquoted_key_defect() {
+        let json = r#"```json
+{
+  "goal": "list the files",
+  "steps": [
+    {
+      "description": "List the files",
+      "tool": "fs_list",
+      "params": {
+        "path": "."
+      },
+      "depends_on": [],
+      verification: {}
+    }
+  ]
+}
+```"#;
+        let plan = parse_plan_response("goal", json).expect("repair should rescue this");
+        assert_eq!(plan.steps.len(), 1);
+        assert_eq!(plan.steps[0].tool_call.tool, "fs_list");
+    }
+
+    #[test]
+    fn key_repair_leaves_urls_and_prose_alone() {
+        // A colon inside a quoted value must not be mistaken for a bare key.
+        let json = r#"{"steps":[{"tool":"fs_write","description":"see https://x/y",
+                     "params":{"path":"a.txt","content":"note: hello"}}]}"#;
+        let plan = parse_plan_response("goal", json).unwrap();
+        assert_eq!(plan.steps[0].description, "see https://x/y");
+        assert_eq!(
+            plan.steps[0].tool_call.params["content"].as_str().unwrap(),
+            "note: hello"
+        );
+    }
+
+    #[test]
+    fn repairs_trailing_commas() {
+        let json = r#"{"steps":[{"tool":"fs_mkdir","description":"d","params":{"path":"x"},},]}"#;
+        let plan = parse_plan_response("goal", json).unwrap();
+        assert_eq!(plan.steps.len(), 1);
+    }
+
+    #[test]
+    fn repair_strips_prose_around_the_object() {
+        let json = "Sure! Here is the plan you asked for:\n\
+                    {\"steps\":[{\"tool\":\"fs_list\",\"description\":\"d\",\"params\":{}}]}\n\
+                    Let me know if you want changes.";
+        let plan = parse_plan_response("goal", json).unwrap();
+        assert_eq!(plan.steps.len(), 1);
+        assert_eq!(plan.steps[0].tool_call.tool, "fs_list");
+    }
+
+    #[test]
+    fn repair_leaves_valid_values_untouched() {
+        // Numbers, bools, null, objects and arrays must survive a repair pass.
+        let json = r#"{"steps":[{"tool":"exec","description":"d","params":{},
+                      "depends_on":[],"verification":{"exit_code":0,
+                      "output_contains":"ok","output_excludes":null}}]}"#;
+        let plan = parse_plan_response("goal", json).unwrap();
+        assert_eq!(plan.steps.len(), 1);
+        let v = plan.steps[0].verification.as_ref().unwrap();
+        assert_eq!(v.exit_code, Some(0));
+        assert_eq!(v.output_contains.as_deref(), Some("ok"));
+    }
+
+    #[test]
+    fn repair_does_not_rescue_genuine_garbage() {
+        assert!(parse_plan_response("goal", "this is not json at all").is_err());
+    }
+
+    /// The cache reuses the longest shared token prefix, so everything that varies
+    /// per run has to sit at the end or the saving disappears.
+    #[test]
+    fn plan_prompt_keeps_the_variable_parts_last() {
+        let tools = ["fs_mkdir(path) — create a directory"];
+        let p = plan_prompt("MY_GOAL_MARKER", "MY_MEMORY_MARKER", &tools);
+
+        let goal_at = p.find("MY_GOAL_MARKER").expect("goal present");
+        let mem_at = p.find("MY_MEMORY_MARKER").expect("memory present");
+        let rules_at = p.find("Rules:").expect("rules present");
+        let tools_at = p.find("fs_mkdir(path)").expect("tool signature present");
+
+        assert!(tools_at < rules_at, "tools must precede rules");
+        assert!(rules_at < mem_at, "fixed rules must precede variable memory");
+        assert!(mem_at < goal_at, "memory must precede the goal");
+        assert!(
+            goal_at > p.len() * 3 / 4,
+            "the goal should sit near the very end so the prefix stays cacheable"
+        );
+
+        // Two different goals must share everything up to the memory section.
+        let q = plan_prompt("OTHER_GOAL", "MY_MEMORY_MARKER", &tools);
+        let shared = p
+            .chars()
+            .zip(q.chars())
+            .take_while(|(a, b)| a == b)
+            .count();
+        assert!(
+            shared > mem_at,
+            "prompts for different goals should share the whole template ({shared} chars shared, \
+             memory starts at {mem_at})"
+        );
+    }
+
+    /// Print the rendered prompt so it can be checked against a real model.
+    /// `cargo test --bins render_plan_prompt -- --nocapture --ignored`
+    #[test]
+    #[ignore]
+    fn render_plan_prompt() {
+        let tools = crate::AGENT_TOOLS;
+        println!("<<<PROMPT_START>>>");
+        println!(
+            "{}",
+            plan_prompt("create a folder called test-folder in my workspace", "", tools)
+        );
+        println!("<<<PROMPT_END>>>");
     }
 
     #[test]

@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Quartz AI Inference Engine — Native Vulkan, No Cloud | Saient</title>
+<meta name="description" content="Learn how Quartz, Saient's native on-device AI inference engine, runs language and image models locally with Vulkan and without cloud inference or ONNX Runtime." />
+<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1" />
+<link rel="canonical" href="https://saient.co.uk/quartz-engine" />
+<meta property="og:type" content="article" />
+<meta property="og:title" content="Quartz — Saient's Native AI Inference Engine" />
+<meta property="og:description" content="A high-level look at Saient's local inference runtime: native model execution, Vulkan image generation, no cloud inference and no ONNX Runtime." />
+<meta property="og:url" content="https://saient.co.uk/quartz-engine" />
+<meta property="og:site_name" content="Saient" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="Quartz — Saient's Native AI Inference Engine" />
+<meta name="twitter:description" content="Native on-device inference through Saient's own runtime. No cloud inference. No ONNX Runtime." />
+<script type="application/ld+json">
+{
+  "@context":"https://schema.org",
+  "@graph":[
+    {
+      "@type":"TechArticle",
+      "headline":"Quartz: Saient's native AI inference engine",
+      "description":"A high-level explanation of how Quartz runs language and image models locally without cloud inference or ONNX Runtime.",
+      "url":"https://saient.co.uk/quartz-engine",
+      "mainEntityOfPage":"https://saient.co.uk/quartz-engine",
+      "datePublished":"2026-07-17",
+      "dateModified":"2026-07-17",
+      "author":{"@type":"Organization","name":"Saient","url":"https://saient.co.uk/"},
+      "publisher":{"@type":"Organization","name":"Saient","url":"https://saient.co.uk/"}
+    },
+    {
+      "@type":"SoftwareApplication",
+      "name":"Quartz",
+      "applicationCategory":"DeveloperApplication",
+      "operatingSystem":"Android",
+      "isPartOf":{"@type":"SoftwareApplication","name":"Saient"},
+      "description":"Saient's native on-device AI inference runtime for local language and Vulkan image generation workflows."
+    },
+    {
+      "@type":"FAQPage",
+      "mainEntity":[
+        {
+          "@type":"Question",
+          "name":"Does Quartz use ONNX Runtime?",
+          "acceptedAnswer":{"@type":"Answer","text":"No. Quartz does not use Microsoft ONNX Runtime. Saient owns the native inference path used by Quartz."}
+        },
+        {
+          "@type":"Question",
+          "name":"Does Quartz send prompts or generated images to the cloud?",
+          "acceptedAnswer":{"@type":"Answer","text":"No cloud inference is used. A network connection may be needed to download a model, but model execution, prompts and generated output stay on the device."}
+        },
+        {
+          "@type":"Question",
+          "name":"Does Saient own the models that Quartz runs?",
+          "acceptedAnswer":{"@type":"Answer","text":"No. Quartz is Saient's runtime. Model weights remain separate third-party open-weight assets under their own licences."}
+        }
+      ]
+    }
+  ]
+}
+</script>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230d0d0f'/%3E%3Ctext x='16' y='21' font-family='monospace' font-size='12' fill='%236c8ef5' text-anchor='middle' font-weight='700'%3E%5B%3E_%3C%5D%3C/text%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Martian+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/assets/seo.css" />
+</head>
+<body>
+<nav>
+  <div class="wrap nav-inner">
+    <a class="brand" href="/"><span class="face">[&gt;_&lt;]</span><span>SAIENT</span></a>
+    <div class="nav-links">
+      <a class="link" href="/quartz-engine">Quartz</a>
+      <a class="link" href="/local-ai-agent">Agent</a>
+      <a class="link" href="/ai-image-generator">Image gen</a>
+      <a class="link" href="/help">Help</a>
+      <a class="btn btn-primary" href="/#download">Download</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <div class="eyebrow"><span class="dot"></span> Saient native runtime</div>
+      <h1>Quartz runs AI on your hardware.</h1>
+      <p class="lede"><b>Native image generation through Quartz — Saient’s own Vulkan inference runtime. No cloud. No ONNX.</b></p>
+      <p class="lede">Quartz is the model execution layer built for Saient. It keeps the inference path inside the app while model weights remain separate, replaceable assets.</p>
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="/#download">Download Saient</a>
+        <a class="btn" href="#how-it-runs">How it runs</a>
+      </div>
+    </div>
+    <aside class="signal" aria-label="High-level Quartz execution path">
+      <div class="label">Execution path</div>
+      <pre>model file
+    ↓
+Quartz validation
+    ↓
+native tensor execution
+    ↓
+Vulkan compute
+    ↓
+on-device output</pre>
+    </aside>
+  </div>
+</header>
+
+<div class="wrap article">
+  <main>
+    <section id="what-is-quartz">
+      <div class="sec-tag">The runtime</div>
+      <h2>What is the Quartz inference engine?</h2>
+      <p>Quartz is Saient’s native inference runtime. It is responsible for turning supported model files into useful on-device output without handing execution to a hosted API or a third-party inference runtime.</p>
+      <p>In Saient mobile, Quartz powers local GGUF language-model sessions and native SD1.5 image generation. The application owns the runtime; downloaded model weights remain independent files governed by their own licences.</p>
+      <div class="note">Quartz is not a model and Saient does not claim ownership of third-party model weights. It is the engine that validates, loads and executes supported models on the device.</div>
+    </section>
+
+    <section id="how-it-runs">
+      <div class="sec-tag">High-level architecture</div>
+      <h2>How Quartz runs a model locally</h2>
+      <ol class="steps">
+        <li><b>Validate the model.</b> Quartz checks the expected format, structure and tensor metadata before execution begins.</li>
+        <li><b>Prepare native inputs.</b> Tokenization and input preparation happen locally. The runtime maps model data without converting it through ONNX.</li>
+        <li><b>Execute Saient-owned operators.</b> Quartz performs the tensor operations, scheduling and memory coordination required by the supported model path.</li>
+        <li><b>Dispatch image work through Vulkan.</b> The mobile image pipeline uses Saient’s Vulkan compute path to run the supported SD1.5 workload on the phone GPU.</li>
+        <li><b>Write the result on-device.</b> Text responses and generated images are returned directly to Saient without a cloud inference round trip.</li>
+      </ol>
+    </section>
+
+    <section id="ownership">
+      <div class="sec-tag">Clear boundaries</div>
+      <h2>What Saient owns—and what it does not</h2>
+      <div class="grid">
+        <div class="card"><span class="k">QZ</span><h3>Saient-owned runtime</h3><p>Model parsing, supported tokenization, tensor execution, scheduling, memory coordination and Vulkan dispatch live in Quartz.</p></div>
+        <div class="card"><span class="k">AI</span><h3>Separate model weights</h3><p>GGUF language models and SD1.5 weights are downloaded separately and retain their original open-weight licences.</p></div>
+        <div class="card"><span class="k">0C</span><h3>No cloud inference</h3><p>The network is used for model delivery when needed. Inference itself runs on the user’s device.</p></div>
+      </div>
+    </section>
+
+    <section id="privacy">
+      <div class="sec-tag">Local by design</div>
+      <h2>No ONNX Runtime. No inference API.</h2>
+      <p>Quartz does not include Microsoft ONNX Runtime, and the signed Saient mobile application does not bundle an ONNX model or ONNX runtime library. The supported inference path is native to Saient.</p>
+      <p>After a model is downloaded, Quartz can run supported chat and image workflows without sending prompts, model tensors or generated images to an inference service.</p>
+    </section>
+
+    <section id="public-detail">
+      <div class="sec-tag">What we publish</div>
+      <h2>Enough detail to explain the system—not reproduce it</h2>
+      <p>This page describes the product boundary and execution stages so users can understand what runs on their hardware. Saient does not publish Quartz’s low-level kernel implementation, shader layouts, memory-planning heuristics, operator-fusion choices or optimisation formulas.</p>
+      <p>That distinction keeps the privacy and ownership claims verifiable without turning the engine’s implementation into a public blueprint.</p>
+    </section>
+
+    <section id="faq">
+      <div class="sec-tag">FAQ</div>
+      <h2>Quartz engine questions</h2>
+      <h3>Does Quartz use ONNX Runtime?</h3>
+      <p>No. Quartz uses Saient’s native inference implementation for its supported paths.</p>
+      <h3>Does Quartz need the internet?</h3>
+      <p>A connection is needed to download models from Saient or another model source. Once installed, supported inference runs locally.</p>
+      <h3>Does Quartz own the model weights?</h3>
+      <p>No. Quartz is the runtime. Model weights remain separate assets under their own licences.</p>
+    </section>
+
+    <section class="cta-band">
+      <h2>Run supported AI models through a runtime built for Saient.</h2>
+      <p>Start with Saient, download a model that fits your hardware, and keep inference on your device.</p>
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="/#download">Download Saient</a>
+        <a class="btn" href="/how-to-run-ai-locally">Read the local AI guide</a>
+      </div>
+    </section>
+  </main>
+
+  <aside class="toc">
+    <h4>On this page</h4>
+    <a href="#what-is-quartz">What is Quartz?</a>
+    <a href="#how-it-runs">How it runs</a>
+    <a href="#ownership">Ownership</a>
+    <a href="#privacy">No cloud / no ONNX</a>
+    <a href="#public-detail">Public detail</a>
+    <a href="#faq">FAQ</a>
+  </aside>
+</div>
+
+<footer>
+  <div class="wrap foot-inner">
+    <a class="brand" href="/"><span class="face">[&gt;_&lt;]</span><span>SAIENT</span></a>
+    <div class="foot-links">
+      <a href="/quartz-engine">Quartz</a>
+      <a href="/local-ai-agent">Agent</a>
+      <a href="/ai-image-generator">Image gen</a>
+      <a href="/ai-video-generator">Video gen</a>
+      <a href="/help">Help</a>
+    </div>
+    <div>saient.co.uk · Local-first AI</div>
+  </div>
+</footer>
+</body>
+</html>

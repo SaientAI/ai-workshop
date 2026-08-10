@@ -18,6 +18,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP="$ROOT/llm-inference"
 TAURI="$APP/src-tauri"
 SCRIPTS="$ROOT/scripts"
+DATA="${SAIENT_DATA_DIR:-$ROOT/data}"
+CONFIG="${SAIENT_CONFIG_DIR:-$DATA/config/saient}"
+CONFIG_DEV="$DATA/config/saient-dev"
+MODELS="${SAIENT_MODELS_DIR:-$DATA/models}"
+export SAIENT_DATA_DIR="$DATA"
+export SAIENT_CONFIG_DIR="$CONFIG"
+export SAIENT_MODELS_DIR="$MODELS"
 
 DEEP=0
 case "${1:-}" in
@@ -46,7 +53,9 @@ gate() {
   if [ $rc -eq 0 ]; then ok "$label"; else bad "$label"; detail "$out"; fi
 }
 
-PY="$HOME/.venvs/ltx/bin/python"; [ -x "$PY" ] || PY="$(command -v python3 || true)"
+PY="${PYTHON_PATH:-$CONFIG/venv/bin/python}"
+[ -x "$PY" ] || PY="$CONFIG_DEV/venv/bin/python"
+[ -x "$PY" ] || PY="$(command -v python3 || true)"
 
 printf "${B}Saient smoke-net${X}  (%s)\n" "$([ $DEEP = 1 ] && echo 'Tier 1 + deep' || echo 'Tier 1')"
 
@@ -68,8 +77,8 @@ else bad "Missing helper scripts:$missing"; fi
 hdr "Python integrity"
 if [ -n "$PY" ] && [ -x "$PY" ]; then
   gate "Helper scripts compile (py_compile)" "$PY" -m py_compile "$SCRIPTS"/*.py
-  gate "Gen env imports (torch/diffusers/transformers/peft)" "$PY" -c \
-       "import torch,diffusers,transformers,safetensors,peft"
+  gate "Gen env imports (torch/diffusers/transformers/peft/video export)" "$PY" -c \
+       "import torch,diffusers,transformers,safetensors,peft,imageio,imageio_ffmpeg"
 else
   bad "No Python interpreter found (set PYTHON_PATH or install python3)"
 fi
@@ -92,22 +101,23 @@ hdr "Environment (warn-only)"
 # venv (saient / saient-dev), or a pip install on PATH/.local/bin.
 if ls "$TAURI"/resources/engine/tinyq4-* >/dev/null 2>&1 \
    || ls "$TAURI"/target/*/resources/engine/tinyq4-* >/dev/null 2>&1 \
-   || [ -x "$HOME/.config/saient/venv/bin/tinyq4" ] \
-   || [ -x "$HOME/.config/saient-dev/venv/bin/tinyq4" ] \
+   || [ -x "$CONFIG/venv/bin/tinyq4" ] \
+   || [ -x "$CONFIG_DEV/venv/bin/tinyq4" ] \
    || command -v tinyq4 >/dev/null 2>&1 || [ -x "$HOME/.local/bin/tinyq4" ]; then
   ok "tinyq4 engine binary present"
 else warn "tinyq4 engine not found (chat needs bundled tinyq4-cuda/-cpu or a pip install)"; fi
-[ -f "$HOME/.config/saient/upscale/RealESRGAN_x2plus.pth" ] \
+[ -f "$CONFIG/upscale/RealESRGAN_x2plus.pth" ] \
   && ok "RealESRGAN upscale weights present" \
   || warn "Upscale weights missing (video Enhance ▸ Upscale)"
-ls -d "$HOME/projects/models" "$HOME/models" >/dev/null 2>&1 \
+[ -d "$MODELS" ] \
   && ok "Model directory present" || warn "No model directory found"
 
 # ── Deep tier: boot real components (GPU) ─────────────────────────────────────
 if [ "$DEEP" = 1 ]; then
   hdr "Deep — boots real components (GPU)"
   gate "CUDA visible to torch" "$PY" -c "import torch; assert torch.cuda.is_available()"
-  M="$HOME/projects/models/wan/Wan2.2-TI2V-5B-Diffusers"
+  M="$MODELS/projects-models/wan/Wan2.2-TI2V-5B-Diffusers"
+  [ -d "$M" ] || M="$MODELS/wan/Wan2.2-TI2V-5B-Diffusers"
   if [ -d "$M" ]; then
     printf "  ${B}…${X} booting video daemon (load-only, may take ~1 min)\n"
     out="$(printf '{"model_path":"%s","device":"cuda","precision":"fast"}\n' "$M" \

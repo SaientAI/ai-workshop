@@ -9,6 +9,9 @@
 # avoids the RAM-pinning offload that froze the box). CogVideoX-5b-I2V REQUIRES an
 # input image.
 import base64, gc, io, json, os, sys, tempfile, time, traceback
+from saient_paths import cache_dir, configure_hf_cache
+
+configure_hf_cache()
 
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
@@ -54,17 +57,7 @@ def _vram():
 
 
 def _cache_dir(name):
-    """Managed cache dir ~/.config/saient/<name>. Migrate a pre-rebrand
-    ~/.config/ai-workshop/<name> in place on first use so we never re-quantize."""
-    new = os.path.expanduser(f"~/.config/saient/{name}")
-    old = os.path.expanduser(f"~/.config/ai-workshop/{name}")
-    if not os.path.exists(new) and os.path.exists(old):
-        try:
-            os.makedirs(os.path.dirname(new), exist_ok=True)
-            os.rename(old, new)
-        except Exception:
-            return old
-    return new
+    return str(cache_dir(name))
 
 
 def load(cfg):

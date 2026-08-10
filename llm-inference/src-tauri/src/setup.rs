@@ -5,8 +5,7 @@
 //! starter model download) streaming progress to the frontend.
 //!
 //! Everything installs into a self-contained managed dir so we never touch the
-//! user's system Python:  ~/.config/saient/venv  (Linux/Mac)
-//!                        %APPDATA%\saient\venv   (Windows)
+//! user's system Python:  <repo>/data/config/saient/venv by default.
 
 use serde::Serialize;
 use std::path::PathBuf;
@@ -17,19 +16,7 @@ use tauri::{Emitter, WebviewWindow};
 // ── Paths ──────────────────────────────────────────────────────────────────────
 
 pub fn config_dir() -> PathBuf {
-    // Dev (debug) builds use a separate folder so local tinkering can't touch the
-    // installed/production app's settings, license, or launch password.
-    let name = if cfg!(debug_assertions) { "saient-dev" } else { "saient" };
-    #[cfg(target_os = "windows")]
-    {
-        if let Ok(appdata) = std::env::var("APPDATA") {
-            return PathBuf::from(appdata).join(name);
-        }
-    }
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".config").join(name)
+    crate::paths::config_dir()
 }
 
 pub fn managed_venv() -> PathBuf {
@@ -56,26 +43,36 @@ fn setup_marker() -> PathBuf {
     config_dir().join("setup_done.json")
 }
 
-/// One-time rename of the pre-rebrand dirs (ai-workshop → saient) so existing installs
-/// keep their venv, sessions, LoRAs, and settings. No-op on a fresh install. Run once at
-/// startup, before anything touches the config/data dirs.
+/// One-time migration of old platform dirs into the repo-local data tree so
+/// existing installs keep their venv, sessions, LoRAs, and settings.
 pub fn migrate_legacy_dirs() {
     let mut pairs: Vec<(PathBuf, PathBuf)> = Vec::new();
-    #[cfg(target_os = "windows")]
-    {
-        if let Ok(appdata) = std::env::var("APPDATA") {
-            let b = PathBuf::from(appdata);
-            pairs.push((b.join("ai-workshop"), b.join("saient")));
-        }
+    if let Some(old) = crate::paths::legacy_config_dir("ai-workshop") {
+        pairs.push((old, crate::paths::config_dir()));
     }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let h = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()));
-        pairs.push((h.join(".config/ai-workshop"),      h.join(".config/saient")));
-        pairs.push((h.join(".local/share/ai-workshop"), h.join(".local/share/saient")));
+    if let Some(old) = crate::paths::legacy_config_dir("saient") {
+        pairs.push((old, crate::paths::config_base_dir().join("saient")));
+    }
+    if let Some(old) = crate::paths::legacy_config_dir("saient-dev") {
+        pairs.push((old, crate::paths::config_base_dir().join("saient-dev")));
+    }
+    if let Some(old) = crate::paths::legacy_share_dir("ai-workshop") {
+        pairs.push((old, crate::paths::share_dir()));
+    }
+    if let Some(old) = crate::paths::legacy_share_dir("saient") {
+        pairs.push((old, crate::paths::share_dir()));
     }
     for (old, new) in pairs {
         if !old.exists() { continue; }
+        if std::fs::symlink_metadata(&old)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        if old.canonicalize().ok() == new.canonicalize().ok() {
+            continue;
+        }
         if !new.exists() {
             // Clean move — the new-brand dir doesn't exist yet.
             if let Some(parent) = new.parent() { let _ = std::fs::create_dir_all(parent); }
@@ -261,13 +258,13 @@ pub fn detect_system() -> SystemInfo {
 /// Python packages for the creative stack (Full setup). torch/torchvision are
 /// installed separately with the CUDA-matched index URL.
 const CREATIVE_PKGS: &[&str] = &[
-    "diffusers", "transformers", "peft", "safetensors",
-    "numpy", "pillow", "soundfile", "kokoro",
+    "diffusers", "transformers", "accelerate", "huggingface_hub", "peft", "safetensors",
+    "numpy", "pillow", "soundfile", "kokoro", "imageio", "imageio-ffmpeg",
     // Video enhancers: spandrel (RealESRGAN upscale) + face restoration (CodeFormer, registered
     // by spandrel_extra_arches; facexlib does detect/align/paste). NOTE before relying on this
     // for shipping: facexlib pulls scipy, which can drag numpy to 2.x — verify a FRESH managed
     // venv keeps the gen stack working (dev pinned numpy<2 by hand). CodeFormer weights live at
-    // ~/.config/saient/face/codeformer.pth; facexlib's detector auto-downloads on first use.
+    // Managed config dir / face / codeformer.pth; facexlib's detector auto-downloads on first use.
     "spandrel", "spandrel_extra_arches", "facexlib",
 ];
 
@@ -331,6 +328,9 @@ fn pip_install(window: &WebviewWindow, args: &[&str], label: &str) -> Result<(),
 pub async fn run_setup(window: WebviewWindow, profile: String) -> Result<(), String> {
     let info = detect_system();
     let full = profile == "full";
+    if full {
+        crate::internet::require_enabled("Full setup downloads")?;
+    }
     emit_log(&window, format!("Setup profile: {profile}"));
     emit_log(&window, format!("OS: {} · CUDA: {} · torch wheel: {}",
         info.os, info.cuda_version.clone().unwrap_or_else(|| "none".into()), info.torch_index));
@@ -364,6 +364,12 @@ pub async fn run_setup(window: WebviewWindow, profile: String) -> Result<(), Str
         let mut args = vec!["--upgrade"];
         args.extend_from_slice(CREATIVE_PKGS);
         pip_install(&window, &args, "pip install diffusers/transformers/…")?;
+        if info.cuda_version.is_some() && info.os != "macos" {
+            match pip_install(&window, &["--upgrade", "bitsandbytes"], "pip install bitsandbytes (optional SD3 quantization)") {
+                Ok(()) => emit_log(&window, "bitsandbytes ready for optional SD3 quantized paths"),
+                Err(e) => emit_log(&window, format!("bitsandbytes optional install skipped: {e}")),
+            }
+        }
         emit_step(&window, "creative", "done");
     }
 
@@ -400,10 +406,12 @@ pub async fn download_starter_model(
 ) -> Result<String, String> {
     use futures::StreamExt;
     use tokio::io::AsyncWriteExt;
+    crate::internet::require_enabled("Hugging Face downloads")?;
 
-    // Each model in its own folder so scan_models_dir uses the folder as the name.
+    // Text models live in Saient's dedicated LLM folder under the models root, in
+    // their own subfolder so scan_models_dir uses the folder as the name.
     let folder = file.strip_suffix(".gguf").unwrap_or(&file);
-    let dest_dir = PathBuf::from(&models_dir).join(folder);
+    let dest_dir = PathBuf::from(&models_dir).join("llm").join(folder);
     std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
     let dest = dest_dir.join(&file);
 
@@ -496,6 +504,8 @@ pub struct HfFile {
 /// `download_starter_model`, which drops them in the managed models dir.
 #[tauri::command]
 pub async fn hf_list_gguf(repo: String, token: Option<String>) -> Result<Vec<HfFile>, String> {
+    crate::internet::require_enabled("Hugging Face browsing")?;
+
     #[derive(serde::Deserialize)]
     struct Lfs {
         #[serde(default)]
@@ -575,6 +585,8 @@ pub struct HfRepo {
 /// "text-to-image" (img gen) — pass None for an unfiltered search.
 #[tauri::command]
 pub async fn hf_search(query: String, filter: Option<String>, token: Option<String>) -> Result<Vec<HfRepo>, String> {
+    crate::internet::require_enabled("Hugging Face search")?;
+
     #[derive(serde::Deserialize)]
     struct Raw { id: String, #[serde(default)] downloads: u64, #[serde(default)] likes: u64 }
 
@@ -605,6 +617,8 @@ pub async fn hf_search(query: String, filter: Option<String>, token: Option<Stri
 /// List files in a repo whose name ends with one of `exts` (e.g. [".safetensors"]).
 #[tauri::command]
 pub async fn hf_list_files(repo: String, exts: Vec<String>, token: Option<String>) -> Result<Vec<HfFile>, String> {
+    crate::internet::require_enabled("Hugging Face browsing")?;
+
     #[derive(serde::Deserialize)]
     struct Lfs { #[serde(default)] size: u64 }
     #[derive(serde::Deserialize)]
@@ -647,6 +661,7 @@ pub async fn download_hf_file(
 ) -> Result<String, String> {
     use futures::StreamExt;
     use tokio::io::AsyncWriteExt;
+    crate::internet::require_enabled("Hugging Face downloads")?;
 
     let dest_dir = match target.as_str() {
         "lora" => crate::resolve::loras_download_dir(),
@@ -707,6 +722,128 @@ pub async fn download_hf_file(
     let downloaded = match result { Ok(d) => d, Err(e) => { let _ = std::fs::remove_file(&part); return Err(e); } };
     let _ = window.emit("model-progress", serde_json::json!({"downloaded": downloaded, "total": total, "done": true}));
     Ok(dest.to_string_lossy().into_owned())
+}
+
+/// Download a full Hugging Face diffusers repository into the managed image-model
+/// folder so multi-file models such as SD3.5 and SDXL Turbo appear under [BASE].
+#[tauri::command]
+pub async fn download_hf_repo(
+    window: WebviewWindow,
+    repo: String,
+    target: String,
+    token: Option<String>,
+) -> Result<String, String> {
+    crate::internet::require_enabled("Hugging Face downloads")?;
+
+    let repo = repo.trim().trim_matches('/').to_string();
+    if repo.split('/').count() != 2 {
+        return Err("Enter a repo like \"owner/name\".".into());
+    }
+    if target != "model" {
+        return Err("Full repo downloads are only supported for image base models.".into());
+    }
+
+    let folder = repo.split('/').next_back().unwrap_or("model");
+    let dest = crate::resolve::models_download_dir().join(folder);
+    if dest.join("model_index.json").exists() {
+        let size = dir_size(&dest);
+        let _ = window.emit("model-progress", serde_json::json!({"downloaded": size, "total": size, "done": true}));
+        return Ok(dest.to_string_lossy().into_owned());
+    }
+    std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+
+    let python = crate::resolve::find_python().map_err(|e| e.to_string())?;
+    let script = r#"
+import json, os, sys
+try:
+    from huggingface_hub import snapshot_download
+except Exception as e:
+    print(json.dumps({"error": "huggingface_hub is not installed. Run Full setup, then retry. Details: " + str(e)}))
+    sys.exit(2)
+
+repo = os.environ["SAIENT_HF_REPO"]
+dest = os.environ["SAIENT_HF_DEST"]
+token = os.environ.get("HF_TOKEN") or None
+low = repo.lower()
+
+if "sdxl-turbo" in low:
+    # Turbo is the 16 GB fast path. Fetch fp16 weights only; the full safetensors
+    # duplicate the same model at roughly double the disk size.
+    base_allow = [
+        "model_index.json", "*.json", "*.txt", "*.model",
+        "*.fp16.safetensors", "*/*.fp16.safetensors",
+    ]
+else:
+    base_allow = [
+        "model_index.json", "*.json", "*.txt", "*.model",
+        "scheduler/*", "tokenizer/*", "tokenizer_2/*", "tokenizer_3/*",
+        "text_encoder/*", "text_encoder_2/*", "text_encoder_3/*",
+        "unet/*", "vae/*", "transformer/*",
+    ]
+ignore = ["*.bin", "*.ckpt", "*.pt", "*.pth", "*.onnx", "*.onnx_data", "*.msgpack", "*.h5", "*.gguf"]
+
+kwargs = dict(
+    repo_id=repo,
+    local_dir=dest,
+    token=token,
+    allow_patterns=base_allow,
+    ignore_patterns=ignore,
+    resume_download=True,
+)
+try:
+    snapshot_download(local_dir_use_symlinks=False, **kwargs)
+except TypeError:
+    snapshot_download(**kwargs)
+print(json.dumps({"ok": True, "dest": dest}))
+"#;
+
+    let window_for_task = window.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let _ = window_for_task.emit("model-progress", serde_json::json!({"downloaded": 0, "total": 0}));
+        let mut cmd = Command::new(python);
+        crate::paths::apply_child_env(&mut cmd);
+        cmd.arg("-c").arg(script)
+            .env("SAIENT_HF_REPO", &repo)
+            .env("SAIENT_HF_DEST", &dest);
+        if let Some(t) = token.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+            cmd.env("HF_TOKEN", t);
+        }
+        cmd.no_console();
+        let out = cmd.output().map_err(|e| format!("failed to start Hugging Face download: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() {
+            let msg = stdout.lines()
+                .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                .find_map(|v| v["error"].as_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| {
+                    let detail = stderr.trim();
+                    if detail.is_empty() { format!("Hugging Face download exited with {}", out.status.code().unwrap_or(-1)) }
+                    else { detail.to_string() }
+                });
+            return Err(msg);
+        }
+        if !dest.join("model_index.json").exists() {
+            return Err("Download finished but model_index.json was not found. This does not look like a diffusers image model.".into());
+        }
+        let size = dir_size(&dest);
+        let _ = window_for_task.emit("model-progress", serde_json::json!({"downloaded": size, "total": size, "done": true}));
+        Ok(dest.to_string_lossy().into_owned())
+    }).await.map_err(|e| format!("download task join: {e}"))?;
+
+    result
+}
+
+fn dir_size(path: &std::path::Path) -> u64 {
+    let Ok(rd) = std::fs::read_dir(path) else { return 0 };
+    rd.flatten().map(|e| {
+        let p = e.path();
+        if p.is_dir() {
+            dir_size(&p)
+        } else {
+            e.metadata().map(|m| m.len()).unwrap_or(0)
+        }
+    }).sum()
 }
 
 /// Minimal URL-encoder for query values (avoids pulling a crate).

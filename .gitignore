@@ -24,6 +24,7 @@ venv/
 *.bin
 *.onnx
 models/
+data/
 
 # ── Generated media / runs ──
 *.wav

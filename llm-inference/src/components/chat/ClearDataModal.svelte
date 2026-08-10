@@ -51,6 +51,7 @@
 
       // Preferences: sampling params, system prompt, UI toggles
       if (clearPrefs) {
+        await T.setInternetEnabled(false);
         params.maxTokens     = 2048;
         params.temperature   = 0.3;
         params.topP          = 0.95;
@@ -62,6 +63,7 @@
         ui.agentWriteMode    = false;
         localStorage.removeItem("saient_enabled");
         localStorage.removeItem("agent_write_mode");
+        localStorage.removeItem("hf_token");
       }
 
       done = true;
@@ -101,7 +103,7 @@
         <input type="checkbox" bind:checked={clearMemory} />
         <div class="item-text">
           <span class="item-label">Agent memory</span>
-          <span class="item-desc">Facts stored on disk by the agent (<code>~/agent-workspace/.agent/memory.json</code>)</span>
+          <span class="item-desc">Facts stored on disk by the agent (<code>data/agent-workspace/.agent/memory.json</code>)</span>
         </div>
       </label>
 
@@ -109,7 +111,7 @@
         <input type="checkbox" bind:checked={clearAudit} />
         <div class="item-text">
           <span class="item-label">Action log</span>
-          <span class="item-desc">Record of file writes and commands run by the agent (<code>~/.local/share/saient/audit.jsonl</code>)</span>
+          <span class="item-desc">Record of file writes and commands run by the agent (<code>data/share/saient/audit.jsonl</code>)</span>
         </div>
       </label>
 

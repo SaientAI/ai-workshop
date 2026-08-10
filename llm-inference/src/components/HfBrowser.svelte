@@ -3,7 +3,7 @@
   import { toast } from "../lib/state.svelte.js";
   import * as T from "../lib/tauri.js";
 
-  // target: where the file lands ("checkpoint" | "lora"); filter: HF pipeline tag
+  // target: where the download lands ("model" | "checkpoint" | "lora"); filter: HF pipeline tag
   // for search (e.g. "text-to-image"); exts: file types to offer.
   let {
     target,
@@ -31,9 +31,8 @@
   let error = $state("");
   let downloading = $state("");
   let prog = $state<{ downloaded: number; total: number }>({ downloaded: 0, total: 0 });
-  let token = $state(localStorage.getItem("hf_token") ?? "");
+  let token = $state("");
   let showToken = $state(false);
-  $effect(() => { localStorage.setItem("hf_token", token); });
 
   const pct = $derived(prog.total > 0 ? Math.round((prog.downloaded / prog.total) * 100) : 0);
   const fmtGB = (b: number) => (b / 1e9).toFixed(2) + " GB";
@@ -50,7 +49,11 @@
 
   async function go() {
     const r = parseRepo(query);
-    if (r) { await listFiles(r); return; }   // looks like a repo/URL → jump to files
+    if (r) {
+      if (target === "model") await downloadRepo(r);
+      else await listFiles(r);
+      return;
+    }   // looks like a repo/URL
     busy = true; error = ""; results = []; files = [];
     try {
       results = await T.hfSearch(query, filter, token);
@@ -85,6 +88,25 @@
     }
   }
 
+  async function downloadRepo(repoId: string) {
+    if (downloading) return;
+    repo = repoId;
+    downloading = `${repoId} snapshot`;
+    error = ""; prog = { downloaded: 0, total: 0 };
+    const un = await listen<{ downloaded: number; total: number }>("model-progress", (e) => { prog = e.payload; });
+    try {
+      await T.downloadHfRepo(repoId, target, token);
+      toast(`Installed ${repoId} — it's now in your base model list.`, "success");
+      onDone();
+      onClose();
+    } catch (e) {
+      error = String(e);
+      toast("Install failed — see the panel.", "error");
+    } finally {
+      un(); downloading = "";
+    }
+  }
+
   function backToResults() { files = []; repo = ""; }
 </script>
 
@@ -101,7 +123,9 @@
       <div class="hb-dl">
         <div class="hb-dl-name">{downloading}</div>
         <div class="hb-bar"><div class="hb-fill" style="width:{pct}%"></div></div>
-        <div class="hb-meta">{pct}% · {fmtGB(prog.downloaded)}{prog.total ? ` / ${fmtGB(prog.total)}` : ""}</div>
+        <div class="hb-meta">
+          {prog.total ? `${pct}% · ${fmtGB(prog.downloaded)} / ${fmtGB(prog.total)}` : "Downloading repository snapshot…"}
+        </div>
       </div>
     {:else}
       <div class="hb-search">
@@ -141,9 +165,9 @@
       {:else if results.length}
         <div class="hb-list">
           {#each results as r}
-            <button class="hb-item" onclick={() => listFiles(r.id)}>
+            <button class="hb-item" onclick={() => target === "model" ? downloadRepo(r.id) : listFiles(r.id)}>
               <span class="hb-item-name">{r.id}</span>
-              <span class="hb-item-size">↓{r.downloads.toLocaleString()} ♥{r.likes}</span>
+              <span class="hb-item-size">{target === "model" ? "Install" : "Files"} · ↓{r.downloads.toLocaleString()} ♥{r.likes}</span>
             </button>
           {/each}
         </div>
@@ -152,11 +176,15 @@
           <div class="hb-suggest-label">Suggested models — one click</div>
           <div class="hb-suggest">
             {#each suggestions as s}
-              <button class="hb-chip" onclick={() => listFiles(s.repo)}>{s.label}</button>
+              <button class="hb-chip" onclick={() => target === "model" ? downloadRepo(s.repo) : listFiles(s.repo)}>{s.label}</button>
             {/each}
           </div>
         {/if}
-        <div class="hb-hint">Or search by name (e.g. <b>anime</b>, <b>realistic</b>) and pick a model — it downloads straight into the right folder, no setup.</div>
+        <div class="hb-hint">
+          {target === "model"
+            ? "Paste a Hugging Face diffusers repo. Gated models need a token and accepted licence first."
+            : "Or search by name (e.g. anime, realistic) and pick a model — it downloads straight into the right folder, no setup."}
+        </div>
       {/if}
     {/if}
   </div>
@@ -182,7 +210,6 @@
   .hb-chip { padding: 7px 12px; border-radius: 8px; background: rgba(108,142,245,0.1); border: 1px solid #2a2f39; color: #cdd6f5; font-size: 12.5px; cursor: pointer; }
   .hb-chip:hover { border-color: #5b8cff; background: rgba(108,142,245,0.18); }
   .hb-hint { font-size: 12px; color: #8a93a3; line-height: 1.5; margin-top: 14px; }
-  .hb-hint b { color: #aeb6c2; }
   .hb-err { font-size: 12px; color: #ff8080; margin-top: 10px; line-height: 1.4; }
   .hb-sub { display: flex; align-items: center; gap: 10px; margin: 12px 0 6px; }
   .hb-back { background: none; border: 0; color: #5b8cff; cursor: pointer; font-size: 12px; padding: 0; }

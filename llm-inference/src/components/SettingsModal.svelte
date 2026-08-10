@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import QRCode from "qrcode";
   import * as T from "../lib/tauri.js";
 
@@ -11,8 +12,47 @@
   let localUrl = $state("");
   let error = $state("");
   let copied = $state(false);
+  let internetEnabled = $state(false);
+  let internetLoaded = $state(false);
+  let internetSaving = $state(false);
+  let bindingResetting = $state(false);
+
+  onMount(() => {
+    void loadInternetState();
+  });
+
+  async function loadInternetState() {
+    error = "";
+    try {
+      internetEnabled = await T.getInternetEnabled();
+    } catch (e) {
+      error = String(e);
+    } finally {
+      internetLoaded = true;
+    }
+  }
+
+  async function toggleInternet() {
+    const next = !internetEnabled;
+    internetSaving = true;
+    error = "";
+    try {
+      await T.setInternetEnabled(next);
+      internetEnabled = next;
+      qr = "";
+      url = "";
+      localUrl = "";
+      copied = false;
+      if (next) await loadPairing();
+    } catch (e) {
+      error = String(e);
+    } finally {
+      internetSaving = false;
+    }
+  }
 
   async function loadPairing() {
+    if (!internetEnabled) return;
     error = "";
     copied = false;
     try {
@@ -36,8 +76,29 @@
     setTimeout(() => (copied = false), 1800);
   }
 
+  async function resetBinding() {
+    if (!window.confirm("Reset the phone binding? The current phone connection will be revoked until the new code is scanned.")) return;
+    bindingResetting = true;
+    error = "";
+    copied = false;
+    try {
+      const info = await T.remoteResetPairing();
+      url = info.url;
+      localUrl = info.local_url;
+      qr = await QRCode.toDataURL(JSON.stringify(info.payload), {
+        width: 260,
+        margin: 1,
+        color: { dark: "#0d0d0f", light: "#ffffff" },
+      });
+    } catch (e) {
+      error = String(e);
+    } finally {
+      bindingResetting = false;
+    }
+  }
+
   $effect(() => {
-    if (tab === "internet" && !qr && !error) loadPairing();
+    if (tab === "internet" && internetLoaded && internetEnabled && !qr && !error) loadPairing();
   });
 </script>
 
@@ -59,7 +120,32 @@
 
       <section class="settings-panel">
         {#if tab === "internet"}
-          <div class="panel-kicker">Phone link</div>
+          <div class="panel-kicker">Network access</div>
+          <h2>Internet access</h2>
+          <p class="panel-copy">
+            Keep this off for fully local work. Turn it on only when you want Saient to reach Hugging Face,
+            check for updates, or accept Saient Mobile connections on your network.
+          </p>
+
+          <div class="internet-row">
+            <div>
+              <div class="field-label">Current state</div>
+              <div class:online={internetEnabled} class="internet-state">
+                {internetLoaded ? (internetEnabled ? "On" : "Off") : "Checking…"}
+              </div>
+            </div>
+            <button class:online={internetEnabled} class="internet-toggle" onclick={toggleInternet} disabled={!internetLoaded || internetSaving}>
+              {internetSaving ? "Saving…" : internetEnabled ? "Turn off" : "Turn on"}
+            </button>
+          </div>
+
+          {#if error}
+            <div class="net-error">{error}</div>
+          {/if}
+
+          <!-- Phone pairing is LAN-only (port 18788 on a private address), so it
+               stays available whether or not Internet access is switched on. -->
+          <div class="panel-kicker phone-kicker">Phone link</div>
           <h2>Scan to connect Saient Mobile</h2>
           <p class="panel-copy">
             Keep this desktop app open, then scan this code from the Studio tab on your phone.
@@ -70,8 +156,6 @@
             <div class="qr-box">
               {#if qr}
                 <img src={qr} alt="Saient phone pairing QR code" />
-              {:else if error}
-                <div class="qr-error">{error}</div>
               {:else}
                 <div class="qr-loading">Generating…</div>
               {/if}
@@ -83,14 +167,25 @@
                 <strong>{copied ? "Copied" : "Copy"}</strong>
               </button>
               <div class="hint">
-                If the phone cannot connect, make sure both devices are on the same Wi-Fi and that the desktop firewall allows port 18788.
+                Requests are accepted only from a phone holding this code's private binding key. Both devices must still be able to reach port 18788.
               </div>
               {#if localUrl && localUrl !== url}
                 <div class="local-note">Local: {localUrl}</div>
               {/if}
-              <button class="refresh" onclick={loadPairing}>Refresh code</button>
+              <div class="pairing-actions">
+                <button class="refresh" onclick={loadPairing}>Refresh code</button>
+                <button class="reset-binding" onclick={resetBinding} disabled={bindingResetting}>
+                  {bindingResetting ? "Resetting…" : "Reset binding"}
+                </button>
+              </div>
             </div>
           </div>
+
+          {#if !internetEnabled}
+            <div class="offline-note">
+              Hugging Face downloads are blocked while Internet access is off. Phone pairing still works — it never leaves your LAN.
+            </div>
+          {/if}
         {:else}
           <div class="panel-kicker">Access</div>
           <h2>Launch password</h2>
@@ -136,16 +231,41 @@
   .settings-nav button.active { background: rgba(108,142,245,0.14); border-color: rgba(108,142,245,0.35); color: #cdd6f5; }
   .settings-panel { padding: 22px; overflow: auto; }
   .panel-kicker { color: #6c8ef5; font-size: 11px; font-weight: 800; text-transform: uppercase; margin-bottom: 6px; }
+  .phone-kicker { margin-top: 22px; }
   h2 { color: #eef1f6; font-size: 20px; margin: 0 0 8px; }
   .panel-copy { color: #98a0ad; font-size: 13px; line-height: 1.5; margin: 0 0 18px; max-width: 430px; }
+  .internet-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    border: 1px solid #2a2f39; border-radius: 10px; background: #101319;
+    padding: 12px; margin-bottom: 14px;
+  }
+  .internet-state { color: #f5a623; font-size: 15px; font-weight: 800; margin-top: 4px; }
+  .internet-state.online { color: #00d68f; }
+  .internet-toggle {
+    min-width: 106px; height: 38px; padding: 0 14px; border-radius: 8px; cursor: pointer;
+    border: 1px solid rgba(0,214,143,0.28); background: rgba(0,214,143,0.12);
+    color: #b9f6dc; font-weight: 800;
+  }
+  .internet-toggle.online {
+    border-color: rgba(245,166,35,0.36); background: rgba(245,166,35,0.1); color: #f7d08a;
+  }
+  .internet-toggle:disabled { opacity: 0.55; cursor: not-allowed; }
+  .net-error {
+    color: #f87171; border: 1px solid rgba(248,113,113,0.35);
+    background: rgba(248,113,113,0.08); border-radius: 9px; padding: 10px 12px;
+    font-size: 12px; line-height: 1.4; margin-bottom: 14px;
+  }
+  .offline-note {
+    color: #98a0ad; border: 1px solid #2a2f39; background: #0e1116;
+    border-radius: 10px; padding: 14px; font-size: 13px; line-height: 1.5;
+  }
   .pairing-grid { display: grid; grid-template-columns: 280px 1fr; gap: 20px; align-items: start; }
   .qr-box {
     width: 280px; height: 280px; border-radius: 10px; border: 1px solid #2a2f39;
     background: #fff; display: flex; align-items: center; justify-content: center; padding: 10px;
   }
   .qr-box img { width: 260px; height: 260px; display: block; }
-  .qr-loading, .qr-error { color: #111827; font-size: 12px; text-align: center; }
-  .qr-error { color: #9b1c1c; padding: 16px; line-height: 1.4; }
+  .qr-loading { color: #111827; font-size: 12px; text-align: center; }
   .field-label { color: #707989; font-size: 11px; text-transform: uppercase; font-weight: 800; margin-bottom: 6px; }
   .url-chip {
     width: 100%; min-height: 42px; border-radius: 9px; border: 1px solid #2a2f39; cursor: pointer;
@@ -156,12 +276,16 @@
   .url-chip strong { color: #6c8ef5; font-size: 12px; }
   .hint { color: #8790a0; font-size: 12px; line-height: 1.5; margin-top: 12px; }
   .local-note { color: #606b7c; font-size: 11px; margin-top: 10px; font-family: var(--mono); overflow-wrap: anywhere; }
-  .refresh, .security-btn {
+  .refresh, .reset-binding, .security-btn {
     margin-top: 16px; height: 38px; padding: 0 14px; border-radius: 8px; cursor: pointer;
     border: 1px solid rgba(108,142,245,0.35); background: rgba(108,142,245,0.12);
     color: #cdd6f5; font-weight: 700;
   }
+  .pairing-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .reset-binding { border-color: rgba(248,113,113,0.35); background: rgba(248,113,113,0.08); color: #f5aaaa; }
+  .reset-binding:disabled { opacity: 0.55; cursor: not-allowed; }
   .refresh:hover, .security-btn:hover { background: rgba(108,142,245,0.2); }
+  .reset-binding:hover:not(:disabled) { background: rgba(248,113,113,0.14); }
   @media (max-width: 640px) {
     .settings-body { grid-template-columns: 1fr; }
     .settings-nav { flex-direction: row; border-right: 0; border-bottom: 1px solid #2a2f39; }

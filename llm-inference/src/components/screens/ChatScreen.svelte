@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { chat, model } from "../../lib/state.svelte.js";
+  import { chat, model, ui } from "../../lib/state.svelte.js";
+  import { SAIENT_REPLACES_SYSTEM_NOTE } from "../../lib/saientPersona.js";
   import Sidebar from "../chat/Sidebar.svelte";
   import InputBar from "../chat/InputBar.svelte";
   import Message from "../chat/Message.svelte";
@@ -37,10 +38,18 @@
   <!-- Tab bar -->
   <div class="tabbar">
     <button class="tab" class:active={chat.tab === "chat"} onclick={() => (chat.tab = "chat")}>Chat</button>
-    <button class="tab" class:active={chat.tab === "system"} onclick={() => (chat.tab = "system")}>System</button>
+    {#if !ui.saientEnabled}
+      <button class="tab" class:active={chat.tab === "system"} onclick={() => (chat.tab = "system")}>System</button>
+    {/if}
   </div>
 
-  {#if chat.tab === "chat"}
+  {#if chat.tab === "system" && ui.saientEnabled}
+    <!-- Saient took the system slot while this tab was open. -->
+    <div class="saient-owns-system">
+      {SAIENT_REPLACES_SYSTEM_NOTE}
+      <button class="tab-action" onclick={() => (chat.tab = "chat")}>Back to chat</button>
+    </div>
+  {:else if chat.tab === "chat"}
     <div class="panel-wrap">
       <div class="panel-chat">
         <!-- Messages -->
@@ -120,4 +129,8 @@
   .sys-header { display: flex; justify-content: space-between; align-items: center; }
   .preset-row { display: flex; gap: 4px; flex-wrap: wrap; }
   .sys-input { flex: 1; resize: none; font-size: 12px; font-family: var(--mono); line-height: 1.6; padding: 10px 12px; min-height: 200px; }
+  .saient-owns-system {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
+    padding: 16px; font-size: 12px; color: var(--text2); line-height: 1.6;
+  }
 </style>

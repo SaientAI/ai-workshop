@@ -87,7 +87,7 @@ impl PatchEngine {
         for group in diff.grouped_ops(3) {
             let mut hunk_lines = vec![];
             let first = &group[0];
-            let last = &group[group.len() - 1];
+            let _last = &group[group.len() - 1];
             let old_start = first.old_range().start + 1;
             let new_start = first.new_range().start + 1;
             let old_len: usize = group.iter().map(|op| op.old_range().len()).sum();

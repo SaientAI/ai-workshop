@@ -21,7 +21,10 @@
 #                 RAM stays flat), encode the prompt, then DELETE it + empty the
 #                 CUDA cache before denoising with the resident transformer.
 #   Peak VRAM ~8 GB (during encode), peak RAM < ~10 GB. No 27 GB CPU read, ever.
-import base64, gc, json, os, signal, sys, tempfile, time, traceback
+import base64, gc, io, json, os, re, signal, sys, tempfile, threading, time, traceback
+from saient_paths import cache_dir, configure_hf_cache
+
+configure_hf_cache()
 
 # Reduce CUDA fragmentation so the RESIDENT daemon survives many generations.
 # Without this, reserved-but-idle blocks from earlier denoise runs pile up and a
@@ -80,12 +83,17 @@ VRAM_CAP_FRACTION = None
 # clip that overflows VRAM (e.g. native 5s@720p on the 16 GB card) fits. Slow (~160s/step
 # vs ~69s), so it's opt-in per generation via req["block_offload"], NOT a launch env flag.
 BLOCK_OFFLOAD_REQ = False
+DENOISE_CACHE_MODE = "off"
+DENOISE_CACHE_THRESHOLD = 0.10
 VRAM_REPORT = {}
+EMIT_LOCK = threading.Lock()
 
 
 def emit(obj):
-    sys.stdout.write(json.dumps(obj) + "\n")
-    sys.stdout.flush()
+    # Preview workers emit alongside the denoise thread. Keep each JSON line atomic.
+    with EMIT_LOCK:
+        sys.stdout.write(json.dumps(obj) + "\n")
+        sys.stdout.flush()
 
 
 def _free_cuda():
@@ -176,6 +184,48 @@ def _set_attention_backend(model, low_vram):
     except Exception as e:
         if low_vram:
             emit({"loading_status": f"  ⚠ low-VRAM attention backend unavailable ({type(e).__name__}); using default"})
+
+
+def _configure_denoise_cache(model, label="transformer"):
+    """Enable Diffusers' native First Block Cache without consuming a LoRA slot."""
+    if model is None:
+        return False
+    try:
+        enabled = bool(getattr(model, "is_cache_enabled", False))
+        current = getattr(model, "_cache_config", None)
+        current_threshold = getattr(current, "threshold", None)
+        wanted = DENOISE_CACHE_MODE == "balanced"
+        if not wanted:
+            if enabled:
+                model.disable_cache()
+            return False
+        if enabled and current_threshold is not None and abs(float(current_threshold) - DENOISE_CACHE_THRESHOLD) < 1e-6:
+            model._reset_stateful_cache()
+            return True
+        if enabled:
+            model.disable_cache()
+        from diffusers.hooks import FirstBlockCacheConfig
+        model.enable_cache(FirstBlockCacheConfig(threshold=DENOISE_CACHE_THRESHOLD))
+        emit({"loading_status": (
+            f"denoise cache: First Block Cache on {label} · threshold {DENOISE_CACHE_THRESHOLD:g} "
+            "· uses no LoRA slot"
+        )})
+        return True
+    except Exception as e:
+        emit({"loading_status": (
+            f"  ⚠ denoise cache unavailable on {label} ({type(e).__name__}: {e}); running exact"
+        )})
+        return False
+
+
+def _release_denoise_cache(model):
+    """Drop cached block residuals before VAE decode so they do not hold VRAM."""
+    if model is None or not bool(getattr(model, "is_cache_enabled", False)):
+        return
+    try:
+        model.disable_cache()
+    except Exception as e:
+        emit({"loading_status": f"  ⚠ denoise cache cleanup failed ({type(e).__name__}: {e})"})
 
 
 def _env_flag(name, default=True):
@@ -462,9 +512,27 @@ def _b64_to_frames(video_b64: str):
             pass
 
 
+def _frame_to_uint8(frame, np):
+    """Normalize Diffusers float frames and decoded uint8 frames for ffmpeg."""
+    if hasattr(frame, "detach"):
+        frame = frame.detach().cpu().numpy()
+    arr = np.asarray(frame)
+    if arr.ndim != 3:
+        raise ValueError(f"video frame must be HxWxC, got shape {arr.shape}")
+    if arr.dtype == np.uint8:
+        return np.ascontiguousarray(arr)
+    if np.issubdtype(arr.dtype, np.floating):
+        arr = np.nan_to_num(arr, nan=0.0, posinf=1.0, neginf=0.0)
+        low = float(arr.min()) if arr.size else 0.0
+        high = float(arr.max()) if arr.size else 0.0
+        if low >= -1.01 and high <= 1.01:
+            arr = (arr + 1.0) * 127.5 if low < -0.01 else arr * 255.0
+    return np.ascontiguousarray(np.clip(np.rint(arr), 0, 255).astype(np.uint8))
+
+
 def _frames_to_b64(frames, fps: int) -> str:
-    """Encode list of RGB frames to base64 mp4 (libx264)."""
-    if not frames:
+    """Encode RGB frames as a high-quality H.264 MP4, then remove the temp file."""
+    if frames is None or len(frames) == 0:
         return ""
     import base64, tempfile, os
     try:
@@ -474,15 +542,28 @@ def _frames_to_b64(frames, fps: int) -> str:
         raise RuntimeError(f"imageio not available for video concat: {e}")
     tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
     tmp.close()
+    writer = None
     try:
-        # quality ~8 is a reasonable tradeoff for chained clips
-        w = imageio.get_writer(tmp.name, fps=fps, codec="libx264", quality=8, pixelformat="yuv420p")
+        writer = imageio.get_writer(
+            tmp.name,
+            fps=fps,
+            codec="libx264",
+            quality=9,
+            pixelformat="yuv420p",
+            ffmpeg_params=["-preset", "medium", "-movflags", "+faststart"],
+        )
         for f in frames:
-            w.append_data(f)
-        w.close()
+            writer.append_data(_frame_to_uint8(f, np))
+        writer.close()
+        writer = None
         with open(tmp.name, "rb") as fh:
             return base64.b64encode(fh.read()).decode("ascii")
     finally:
+        if writer is not None:
+            try:
+                writer.close()
+            except Exception:
+                pass
         try:
             os.unlink(tmp.name)
         except Exception:
@@ -547,8 +628,8 @@ def _ffmpeg_concat(prev_b64: str, new_frames, fps: int) -> str | None:
 
         new_tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
         new_tmp.close()
-        from diffusers.utils import export_to_video as _export_to_video
-        _export_to_video(new_frames, new_tmp.name, fps=fps)
+        with open(new_tmp.name, "wb") as f:
+            f.write(base64.b64decode(_frames_to_b64(new_frames, fps)))
 
         comb_tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
         comb_tmp.close()
@@ -665,6 +746,7 @@ def _reload_transformer():
         _apply_lora()
     _wrap_condition_embedder_offload(t, "high-noise expert" if DUAL_EXPERT else "transformer")
     _enable_transformer_group_offload(t, "high-noise expert" if DUAL_EXPERT else "transformer")
+    _configure_denoise_cache(t, "high-noise expert" if DUAL_EXPERT else "transformer")
 
 
 def _reload_transformer2():
@@ -685,6 +767,7 @@ def _reload_transformer2():
     _wrap_condition_embedder_offload(t, "low-noise expert")
     if _env_flag("SAIENT_WAN_GROUP_OFFLOAD_LOW", False):
         _enable_transformer_group_offload(t, "low-noise expert")
+    _configure_denoise_cache(t, "low-noise expert")
 
 
 def _lora_state_dict(path):
@@ -771,14 +854,21 @@ def _lora_state_dict(path):
     return out if out else sd
 
 
-def _expert_lora_path(for_low_expert):
-    """Wan2.2 distill LoRAs (e.g. Wan2.2-Lightning) ship as a PAIRED set: one file per
-    expert, named ...high.../...low... side by side. If the selected file is one half of
-    such a pair, return the half matching the expert being loaded; otherwise return the
-    selection unchanged (single-file LoRAs keep working exactly as before)."""
-    p = LORA_PATH
+def _lora_noise_marker(path):
+    """Return an explicit Wan2.2 expert marker from a LoRA filename, if present."""
+    name = os.path.basename(path).lower()
+    if re.search(r"(?:wan2[._-]?2|a14b)[._-]?low(?:[._-]|$)|low[._-]?noise|(?:^|[._-])low(?:[._-]|$)", name):
+        return "low"
+    if re.search(r"(?:wan2[._-]?2|a14b)[._-]?high(?:[._-]|$)|high[._-]?noise|(?:^|[._-])high(?:[._-]|$)", name):
+        return "high"
+    return None
+
+
+def _paired_lora_path(path, for_low_expert):
+    """Find the matching HIGH/LOW sibling for a paired Wan2.2 LoRA."""
+    p = path
     if not p:
-        return p
+        return None
     d, b = os.path.split(p)
     swaps = [("high", "low"), ("HIGH", "LOW"), ("High", "Low"),
              ("low", "high"), ("LOW", "HIGH"), ("Low", "High")]
@@ -788,11 +878,60 @@ def _expert_lora_path(for_low_expert):
             continue
         is_low_file = frm.lower() == "low"
         if is_low_file == want_low:
-            return p  # already the right half
+            opposite = os.path.join(d, b.replace(frm, to))
+            return p if os.path.exists(opposite) else None
         cand = os.path.join(d, b.replace(frm, to))
         if os.path.exists(cand):
             return cand
-    return p
+    return None
+
+
+def _expert_lora_path(for_low_expert, path=None):
+    """Route a LoRA to the Wan2.2 denoiser it was made for.
+
+    Diffusers loads an ordinary LoRA into Wan2.2's first (high-noise) denoiser by
+    default. Explicit LOW/HIGH files target only that expert, while a real sibling
+    pair supplies one file to each. Returning None means the live expert must stay
+    on its base weights.
+    """
+    p = LORA_PATH if path is None else path
+    if not p or not DUAL_EXPERT:
+        return p
+
+    paired = _paired_lora_path(p, for_low_expert)
+    if paired:
+        return paired
+
+    marker = _lora_noise_marker(p)
+    if marker == "low":
+        return p if for_low_expert else None
+    if marker == "high":
+        return None if for_low_expert else p
+
+    # Official Wan2.2/Diffusers behavior for an unscoped or Wan2.1 LoRA.
+    return None if for_low_expert else p
+
+
+def _lora_route_description(path=None):
+    p = LORA_PATH if path is None else path
+    if not p or not DUAL_EXPERT:
+        return "single denoiser"
+    if _paired_lora_path(p, False) and _paired_lora_path(p, True):
+        return "paired HIGH/LOW experts"
+    marker = _lora_noise_marker(p)
+    if marker == "low":
+        return "low-noise expert only"
+    if marker == "high":
+        return "high-noise expert only"
+    return "high-noise expert only (Diffusers default for single/Wan2.1 LoRAs)"
+
+
+def _low_noise_guidance(req, high_guidance):
+    """Use Wan2.2 A14B's reference low-expert CFG unless explicitly overridden."""
+    raw = req.get("cfg_scale_2")
+    if raw not in (None, ""):
+        return float(raw)
+    return min(float(high_guidance), 3.0) if DUAL_EXPERT else float(high_guidance)
 
 
 def _cast_lora_for_low_vram(sd, path):
@@ -897,7 +1036,11 @@ def _apply_lora(lora_path=None, lora_strength=None, load_into_transformer_2=Fals
     if load_into_transformer_2 and getattr(PIPE, "transformer_2", None) is None:
         raise RuntimeError("cannot apply LoRA to transformer_2: low-noise expert is not loaded")
     path = _expert_lora_path(load_into_transformer_2)
-    emit({"loading_status": f"applying LoRA {_os.path.basename(path)} @ {LORA_STRENGTH}…"})
+    expert = "low-noise" if load_into_transformer_2 else "high-noise"
+    if not path:
+        emit({"loading_status": f"LoRA routing: {expert} expert stays on base weights"})
+        return False
+    emit({"loading_status": f"applying LoRA {_os.path.basename(path)} @ {LORA_STRENGTH} to {expert} expert…"})
     sd = _lora_state_dict(path)
     sd = _cast_lora_for_low_vram(sd, path)
     ctx = torch.inference_mode(False) if torch.is_inference_mode_enabled() else contextlib.nullcontext()
@@ -912,8 +1055,9 @@ def _apply_lora(lora_path=None, lora_strength=None, load_into_transformer_2=Fals
         PIPE.transformer_2 if load_into_transformer_2 else PIPE.transformer,
         path,
     )
-    emit({"loading_status": f"  ✓ LoRA adapter active ({len(sd)} tensors)"})
+    emit({"loading_status": f"  ✓ LoRA adapter active on {expert} expert ({len(sd)} tensors)"})
     _free_cuda()
+    return True
 
 
 def _set_lora_strength(strength):
@@ -976,6 +1120,8 @@ def _ensure_lora_adapter(strength=None, load_into_transformer_2=False):
             load_into_transformer_2 = True
         else:
             return False
+    if _expert_lora_path(load_into_transformer_2) is None:
+        return False
     target = LORA_STRENGTH if strength is None else float(strength)
     try:
         _set_lora_strength(target)
@@ -1084,18 +1230,7 @@ def _load_transformer_cached(subfolder, cache_path, label, dev=0):
 
 
 def _cache_dir(name):
-    """Managed cache dir ~/.config/saient/<name>. If a pre-rebrand ~/.config/ai-workshop/<name>
-    exists and the new one doesn't, migrate it in place on first use (instant rename, same
-    filesystem) so we never re-quantize a cache the old brand already built."""
-    new = os.path.expanduser(f"~/.config/saient/{name}")
-    old = os.path.expanduser(f"~/.config/ai-workshop/{name}")
-    if not os.path.exists(new) and os.path.exists(old):
-        try:
-            os.makedirs(os.path.dirname(new), exist_ok=True)
-            os.rename(old, new)
-        except Exception:
-            return old
-    return new
+    return str(cache_dir(name))
 
 
 def _safetensors_gb(folder):
@@ -1261,12 +1396,14 @@ def load(cfg):
         try:
             PIPE.vae.enable_tiling(
                 tile_sample_min_height=256, tile_sample_min_width=256,
-                tile_sample_stride_height=224, tile_sample_stride_width=224)
+                tile_sample_stride_height=192, tile_sample_stride_width=192)
         except TypeError:
             PIPE.vae.enable_tiling()   # older diffusers without the kwargs
     PIPE.set_progress_bar_config(disable=True)
 
     if use_lora:
+        if DUAL_EXPERT:
+            emit({"loading_status": f"LoRA routing: {_lora_route_description(lora_path)}"})
         try:
             _apply_lora(lora_path, lora_strength)
         except Exception as le:
@@ -1417,6 +1554,18 @@ def _vae_to(device):
     return False
 
 
+def _use_untiled_vae_decode(z_dim, latent_frames, latent_height, latent_width):
+    """Use a seam-free full-frame decode only when its measured-size proxy is safe."""
+    if int(z_dim) >= 32:
+        return False
+    temporal_scale = max(1, int(getattr(PIPE, "vae_scale_factor_temporal", 4) or 4))
+    spatial_scale = max(1, int(getattr(PIPE, "vae_scale_factor_spatial", 8) or 8))
+    frames = max(1, (int(latent_frames) - 1) * temporal_scale + 1)
+    sample_pixels = frames * int(latent_height) * spatial_scale * int(latent_width) * spatial_scale
+    limit = int(os.environ.get("SAIENT_WAN_UNTILED_DECODE_PIXEL_FRAMES", "8000000"))
+    return sample_pixels <= max(limit, 0)
+
+
 def _decode_latents(latents):
     """Decode denoised latents → frames, OUTSIDE the pipeline — so two things are on us:
 
@@ -1440,7 +1589,27 @@ def _decode_latents(latents):
         vae.to("cuda:0")                      # was parked on CPU during denoise → back for decode
     zc = vae.config.z_dim
     global STREAM_TRANSFORMER
-    try:
+    original_tiling = bool(getattr(vae, "use_tiling", False))
+    original_tile_config = (
+        getattr(vae, "tile_sample_min_height", 256),
+        getattr(vae, "tile_sample_min_width", 256),
+        getattr(vae, "tile_sample_stride_height", 192),
+        getattr(vae, "tile_sample_stride_width", 192),
+    )
+    untiled = _use_untiled_vae_decode(zc, latents.shape[2], latents.shape[3], latents.shape[4])
+    if untiled:
+        vae.use_tiling = False
+        emit({"loading_status": "VAE decode: full-frame short-clip path (no spatial tile seams)"})
+    else:
+        vae.enable_tiling(
+            tile_sample_min_height=256,
+            tile_sample_min_width=256,
+            tile_sample_stride_height=192,
+            tile_sample_stride_width=192,
+        )
+        emit({"loading_status": "VAE decode: memory-safe 256px tiles with 64px overlap"})
+
+    def decode_once():
         with torch.inference_mode():
             lat = latents.to(vae.dtype)
             mean = torch.tensor(vae.config.latents_mean).view(1, zc, 1, 1, 1).to(lat.device, lat.dtype)
@@ -1448,26 +1617,242 @@ def _decode_latents(latents):
             lat = lat / std + mean
             video = vae.decode(lat, return_dict=False)[0]
         return PIPE.video_processor.postprocess_video(video, output_type="np")[0]
-    except RuntimeError as e:
-        msg = str(e).lower()
-        if ("out of memory" in msg or "cuda error" in msg or "cublas" in msg) and STREAM_TRANSFORMER:
-            try:
-                emit({"loading_status": "quality: decode needed more room — parking bf16 transformer temporarily…"})
-                if getattr(PIPE, "transformer", None) is not None:
-                    PIPE.transformer.to("cpu")
-                    _free_cuda()
-            except Exception:
-                pass
+
+    def decode_or_oom():
+        """Return after the OOM handler frame is gone, releasing its traceback tensors."""
+        try:
+            return decode_once(), None
+        except RuntimeError as error:
+            msg = str(error).lower()
+            memory_error = "out of memory" in msg or "cuda error" in msg or "cublas" in msg
+            if not memory_error:
+                raise
+            return None, str(error)
+
+    try:
+        decoded, oom_message = decode_or_oom()
+        if oom_message is None:
+            return decoded
+
+        if STREAM_TRANSFORMER and getattr(PIPE, "transformer", None) is not None:
+            emit({"loading_status": "quality: decode needed more room — parking bf16 transformer temporarily…"})
+            PIPE.transformer.to("cpu")
+            _free_cuda()
             if next(vae.parameters()).device.type != "cuda":
                 vae.to("cuda:0")
+            decoded, oom_message = decode_or_oom()
+            if oom_message is None:
+                return decoded
+
+        if untiled:
+            emit({"loading_status": "VAE full-frame decode exceeded headroom — retrying with 64px-overlap tiles…"})
+            _free_cuda()
+            vae.enable_tiling(
+                tile_sample_min_height=256,
+                tile_sample_min_width=256,
+                tile_sample_stride_height=192,
+                tile_sample_stride_width=192,
+            )
+            decoded, oom_message = decode_or_oom()
+            if oom_message is None:
+                return decoded
+
+        raise RuntimeError(f"VAE decode ran out of GPU memory: {oom_message}")
+    finally:
+        (
+            vae.tile_sample_min_height,
+            vae.tile_sample_min_width,
+            vae.tile_sample_stride_height,
+            vae.tile_sample_stride_width,
+        ) = original_tile_config
+        vae.use_tiling = original_tiling
+
+
+def _preview_positions(num_frames, latent_frames, count, temporal_scale):
+    """Return evenly spaced causal latent positions and approximate frame labels."""
+    if num_frames <= 0 or latent_frames <= 0:
+        return [], []
+    count = max(1, min(int(count), int(latent_frames)))
+    if count == 1:
+        latent_indices = [0]
+    else:
+        latent_indices = [
+            round(i * (latent_frames - 1) / (count - 1))
+            for i in range(count)
+        ]
+    latent_indices = list(dict.fromkeys(int(index) for index in latent_indices))
+    labels = [
+        1 if index == 0 else min(index * temporal_scale + 1, num_frames)
+        for index in latent_indices
+    ]
+    return labels, latent_indices
+
+
+def _preview_contact_sheet(images):
+    """Lay sparse 16:9 frames into a fixed 16:9 JPEG without touching disk."""
+    from PIL import Image
+
+    if not images:
+        raise ValueError("preview decoder returned no frames")
+    tile_w, tile_h = images[0].size
+    cols = 3
+    rows = 3 if len(images) > 6 else 2
+    canvas = Image.new("RGB", (tile_w * cols, tile_h * 3), (5, 6, 10))
+    y_gap = 0 if rows == 3 else tile_h // 3
+    positions = []
+    for index in range(len(images)):
+        row = index // cols
+        col = index % cols
+        row_count = min(cols, len(images) - row * cols)
+        x_offset = (cols - row_count) * tile_w // 2
+        positions.append((x_offset + col * tile_w, y_gap + row * (tile_h + y_gap)))
+    for frame, position in zip(images, positions):
+        canvas.paste(frame, position)
+
+    output = io.BytesIO()
+    canvas.save(output, format="JPEG", quality=76, optimize=True)
+    return base64.b64encode(output.getvalue()).decode("ascii")
+
+
+def _decode_preview_sample(sample, vae, max_width, frame_indices):
+    """Decode a spatially reduced full latent clip, then select preview frames."""
+    import torch
+    import torch.nn.functional as F
+    from PIL import Image
+
+    spatial_scale = max(1, int(getattr(PIPE, "vae_scale_factor_spatial", 8) or 8))
+    latent_h, latent_w = int(sample.shape[-2]), int(sample.shape[-1])
+    target_latent_w = min(latent_w, max(16, int(max_width) // spatial_scale))
+    target_latent_h = min(
+        latent_h,
+        max(9, round(latent_h * target_latent_w / max(latent_w, 1))),
+    )
+
+    sample = sample.to(device=next(vae.parameters()).device, dtype=vae.dtype)
+    if (target_latent_h, target_latent_w) != (latent_h, latent_w):
+        sample = F.interpolate(
+            sample,
+            size=(sample.shape[2], target_latent_h, target_latent_w),
+            mode="trilinear",
+            align_corners=False,
+        )
+
+    zc = int(vae.config.z_dim)
+    mean = torch.tensor(vae.config.latents_mean).view(1, zc, 1, 1, 1).to(sample.device, sample.dtype)
+    std = 1.0 / torch.tensor(vae.config.latents_std).view(1, zc, 1, 1, 1).to(sample.device, sample.dtype)
+    decoded = vae.decode(sample / std + mean, return_dict=False)[0]
+    indices = torch.tensor(
+        [max(0, min(int(index), decoded.shape[2] - 1)) for index in frame_indices],
+        device=decoded.device,
+        dtype=torch.long,
+    )
+    selected = decoded[0].index_select(1, indices)
+    rgb = (
+        selected
+        .add(1.0)
+        .mul(127.5)
+        .clamp(0, 255)
+        .byte()
+        .permute(1, 2, 3, 0)
+        .cpu()
+        .numpy()
+    )
+    del decoded, selected, indices, sample, mean, std
+    images = [Image.fromarray(frame, mode="RGB") for frame in rgb]
+    return _preview_contact_sheet(images)
+
+
+def _wait_for_preview(preview_state):
+    worker = preview_state.get("worker")
+    if worker is not None:
+        worker.join()
+        preview_state["worker"] = None
+
+
+def _start_latent_preview(preview_state, latents, step, total, num_frames):
+    """Clone sparse latent slices and decode them away from the denoise stream."""
+    import torch
+
+    if not preview_state.get("enabled") or preview_state.get("failed"):
+        return
+    worker = preview_state.get("worker")
+    if worker is not None:
+        if worker.is_alive():
+            return  # Never build a preview backlog that can slow the actual generation.
+        worker.join()
+        preview_state["worker"] = None
+
+    every = preview_state["every"]
+    if step != 1 and step != total and step % every != 0:
+        return
+
+    count = 9 if step / max(total, 1) >= 0.8 else 5
+    temporal_scale = max(1, int(getattr(PIPE, "vae_scale_factor_temporal", 4) or 4))
+    labels, latent_indices = _preview_positions(
+        num_frames,
+        int(latents.shape[2]),
+        count,
+        temporal_scale,
+    )
+    if not latent_indices:
+        return
+
+    # Wan's temporal VAE is causal, so isolated temporal latents decode as noise.
+    # Decode sparse positions together as one ordered sequence: this preserves
+    # enough causal context without making preview cost grow with clip duration.
+    # clone().detach() guarantees the scheduler's tensor remains read-only.
+    sample = latents[:, :, latent_indices, :, :].clone().detach()
+    frame_indices = [0 if index == 0 else index * temporal_scale for index in range(len(labels))]
+    vae = PIPE.vae
+    vae_device = next(vae.parameters()).device
+    if vae_device.type != "cuda":
+        preview_state["failed"] = True
+        emit({
+            "loading_status": (
+                "live preview paused: low-VRAM mode parked the VAE on CPU "
+                "(measured CPU decode is too slow for an in-progress preview)"
+            )
+        })
+        del sample
+        return
+    ready_event = None
+    ready_event = torch.cuda.Event()
+    ready_event.record(torch.cuda.current_stream(device=vae_device))
+
+    def run_preview():
+        try:
+            started = time.time()
             with torch.inference_mode():
-                lat = latents.to(vae.dtype)
-                mean = torch.tensor(vae.config.latents_mean).view(1, zc, 1, 1, 1).to(lat.device, lat.dtype)
-                std = 1.0 / torch.tensor(vae.config.latents_std).view(1, zc, 1, 1, 1).to(lat.device, lat.dtype)
-                lat = lat / std + mean
-                video = vae.decode(lat, return_dict=False)[0]
-            return PIPE.video_processor.postprocess_video(video, output_type="np")[0]
-        raise
+                stream = preview_state.get("stream")
+                if stream is None:
+                    stream = torch.cuda.Stream(device=vae_device)
+                    preview_state["stream"] = stream
+                stream.wait_event(ready_event)
+                with torch.cuda.stream(stream):
+                    jpeg = _decode_preview_sample(
+                        sample,
+                        vae,
+                        preview_state["max_width"],
+                        frame_indices,
+                    )
+                stream.synchronize()
+            emit({
+                "preview_base64_jpeg": jpeg,
+                "preview_step": step,
+                "preview_total": total,
+                "preview_frames": labels,
+                "preview_seconds": round(time.time() - started, 2),
+            })
+        except Exception as e:
+            preview_state["failed"] = True
+            emit({"loading_status": f"live preview disabled after decode error: {type(e).__name__}: {e}"})
+
+    if preview_state.get("async", False):
+        worker = threading.Thread(target=run_preview, name="saient-latent-preview", daemon=True)
+        preview_state["worker"] = worker
+        worker.start()
+    else:
+        run_preview()
 
 
 def _retrieve_latents_argmax(encoder_output):
@@ -1528,7 +1913,19 @@ def _frame_to_first_frame_condition(frame, height, width):
     return latent_condition.detach().to("cpu")
 
 
-def _denoise_dual_expert(pe, ne, total, cfg_scale, height, width, num_frames, generator, cb, first_frame_condition=None):
+def _denoise_dual_expert(
+    pe,
+    ne,
+    total,
+    cfg_scale,
+    cfg_scale_2,
+    height,
+    width,
+    num_frames,
+    generator,
+    cb,
+    first_frame_condition=None,
+):
     """Wan2.2 T2V-A14B staged denoise. Diffusers' normal WanPipeline keeps both
     experts addressable; on this 16 GB display GPU we keep only one expert live:
     high-noise first, then unload it and load the low-noise expert at boundary_ratio."""
@@ -1550,6 +1947,7 @@ def _denoise_dual_expert(pe, ne, total, cfg_scale, height, width, num_frames, ge
     _enable_transformer_group_offload(PIPE.transformer, "high-noise expert")
     if LORA_PATH:
         _ensure_lora_adapter(LORA_STRENGTH, load_into_transformer_2=False)
+    _configure_denoise_cache(PIPE.transformer, "high-noise expert")
 
     device = "cuda:0"
     high = PIPE.transformer
@@ -1606,7 +2004,7 @@ def _denoise_dual_expert(pe, ne, total, cfg_scale, height, width, num_frames, ge
         emit({"loading_status": f"Wan2.2 T2V: high-noise expert until t < {boundary:.0f}…"})
     switched = False
     PIPE._guidance_scale = cfg_scale
-    PIPE._guidance_scale_2 = cfg_scale
+    PIPE._guidance_scale_2 = cfg_scale_2
     PIPE._attention_kwargs = None
     PIPE._current_timestep = None
     PIPE._interrupt = False
@@ -1638,6 +2036,7 @@ def _denoise_dual_expert(pe, ne, total, cfg_scale, height, width, num_frames, ge
                 switched = True
 
             current_model = PIPE.transformer_2 if use_low else PIPE.transformer
+            current_cfg_scale = cfg_scale_2 if use_low else cfg_scale
             if current_model is None:
                 which = "low-noise (transformer_2)" if use_low else "high-noise (transformer)"
                 raise RuntimeError(f"Wan2.2 expert switch failed: {which} is missing")
@@ -1664,7 +2063,7 @@ def _denoise_dual_expert(pe, ne, total, cfg_scale, height, width, num_frames, ge
                     return_dict=False,
                 )[0]
 
-            if cfg_scale > 1.0:
+            if current_cfg_scale > 1.0:
                 with current_model.cache_context("uncond"):
                     noise_uncond = current_model(
                         hidden_states=latent_model_input,
@@ -1673,40 +2072,73 @@ def _denoise_dual_expert(pe, ne, total, cfg_scale, height, width, num_frames, ge
                         attention_kwargs=None,
                         return_dict=False,
                     )[0]
-                noise_pred.sub_(noise_uncond).mul_(cfg_scale).add_(noise_uncond)
+                noise_pred.sub_(noise_uncond).mul_(current_cfg_scale).add_(noise_uncond)
                 del noise_uncond
 
             latents = PIPE.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
+            preview_latents = None
+            if bool(getattr(PIPE.scheduler, "predict_x0", False)):
+                model_outputs = getattr(PIPE.scheduler, "model_outputs", None)
+                if model_outputs and torch.is_tensor(model_outputs[-1]):
+                    candidate = model_outputs[-1]
+                    if candidate.shape == latents.shape:
+                        preview_latents = candidate
             del noise_pred, latent_model_input, timestep
             # empty_cache every step was ~free on short runs but multi-chunk Lightning
             # was paying PCIe/sync tax 80×; only scrub mid-run on long non-distill loops.
             if LOW_VRAM_ACTIVE and total >= 12 and i % 4 == 3:
                 torch.cuda.empty_cache()
-            out = cb(PIPE, i, t, {"latents": latents})
+            callback_tensors = {"latents": latents}
+            if preview_latents is not None:
+                callback_tensors["_saient_preview_latents"] = preview_latents
+            out = cb(PIPE, i, t, callback_tensors)
             latents = out.pop("latents", latents)
 
     if first_frame_mask is not None:
         latents[:, :, :condition.shape[2]] = condition
         del condition, first_frame_mask
     PIPE._current_timestep = None
+    _release_denoise_cache(getattr(PIPE, "transformer", None))
+    _release_denoise_cache(getattr(PIPE, "transformer_2", None))
     return latents
 
 
 def generate(req):
     import torch
-    from diffusers.utils import export_to_video
     global LOW_VRAM_ACTIVE, LOW_VRAM_ATTN_BACKEND, LORA_STRENGTH, BLOCK_OFFLOAD_REQ
+    global DENOISE_CACHE_MODE, DENOISE_CACHE_THRESHOLD
 
     t0 = time.time()
     _free_cuda()  # release reserved blocks left over from the previous generation
     _vram()       # reset peak counter for this run
     total = int(req.get("steps", 30))
     cfg_scale = float(req.get("cfg_scale", 6.0))
-    do_cfg = cfg_scale > 1.0
+    cfg_scale_2 = _low_noise_guidance(req, cfg_scale)
+    cache_mode = str(req.get("denoise_cache") or "off").strip().lower()
+    DENOISE_CACHE_MODE = "balanced" if cache_mode in ("balanced", "cache", "cached", "first_block") else "off"
+    try:
+        DENOISE_CACHE_THRESHOLD = max(0.001, min(float(req.get("cache_threshold", 0.10)), 0.25))
+    except Exception:
+        DENOISE_CACHE_THRESHOLD = 0.10
+    do_cfg = max(cfg_scale, cfg_scale_2) > 1.0
     prompt = req.get("prompt", ""); neg = req.get("neg_prompt", "")
     height = int(req.get("height", 480)); width = int(req.get("width", 832))
     num_frames = int(req.get("num_frames", 49))
     fps = int(req.get("fps", 16))
+    if DUAL_EXPERT and num_frames != 81:
+        emit({"loading_status": (
+            f"  ⚠ Wan2.2 A14B reference length is 81 frames; requested {num_frames} "
+            f"({num_frames / max(fps, 1):.1f}s at {fps} FPS). Custom lengths can reduce temporal stability."
+        )})
+    preview_state = {
+        "enabled": bool(req.get("preview", False)),
+        "every": max(2, min(int(req.get("preview_every", 5)), max(total, 2))),
+        "max_width": max(128, min(int(req.get("preview_max_width", 256)), 384)),
+        "async": bool(DUAL_EXPERT),
+        "worker": None,
+        "stream": None,
+        "failed": False,
+    }
     image_b64 = (req.get("image_b64") or "").strip()
     wan_chunk_limit = 0
     if DUAL_EXPERT:
@@ -1767,6 +2199,8 @@ def generate(req):
     lora_low = float(req.get("lora_strength_low", LORA_STRENGTH))
     lora_switched = False
     _configure_scheduler(req)
+    if DUAL_EXPERT:
+        emit({"loading_status": f"Wan2.2 guidance: high CFG {cfg_scale:g} · low CFG {cfg_scale_2:g}"})
     if LORA_PATH and lora_profile == "high_low":
         if DUAL_EXPERT:
             LORA_STRENGTH = lora_high
@@ -1813,15 +2247,17 @@ def generate(req):
     _vram_stage("text encoding")
 
     # ── Denoise (time it via callback timestamps) ────────────────────────────────
-    marks = {"first": None, "last": None}
-    progress_state = {"offset": 0, "total": total}
+    marks = {"first": None, "last": None, "step": None}
+    progress_state = {"offset": 0, "total": total, "preview_frames": num_frames}
 
     def cb(_pipe, i, _t, kwargs):
         nonlocal lora_switched
         now = time.time()
         if marks["first"] is None:
             marks["first"] = now
+        step_started = marks["step"] if marks["step"] is not None else t_dn
         marks["last"] = now
+        marks["step"] = now
         if (
             LORA_PATH
             and lora_profile == "high_low"
@@ -1838,7 +2274,21 @@ def generate(req):
             )
             lora_switched = True
             emit({"loading_status": f"LoRA low-noise strength → {lora_low:g}"})
-        emit({"step": progress_state["offset"] + i + 1, "total": progress_state["total"]})
+        emit({
+            "step": progress_state["offset"] + i + 1,
+            "total": progress_state["total"],
+            "step_seconds": round(now - step_started, 1),
+            "elapsed_seconds": round(now - t_dn, 1),
+        })
+        preview_latents = kwargs.pop("_saient_preview_latents", kwargs.get("latents"))
+        if preview_latents is not None:
+            _start_latent_preview(
+                preview_state,
+                preview_latents,
+                progress_state["offset"] + i + 1,
+                progress_state["total"],
+                progress_state["preview_frames"],
+            )
         return kwargs
 
     generator = None
@@ -1953,12 +2403,14 @@ def generate(req):
                     continuation = " · continuing from previous frame" if next_condition is not None else ""
                     emit({"loading_status": f"low-VRAM: chunk {ci + 1}/{chunks} · {seg_frames} frames{continuation}"})
                     progress_state["offset"] = ci * total
+                    progress_state["preview_frames"] = seg_frames
                     if (LOW_VRAM_ACTIVE or _vae_is_heavy()) and _vae_to("cpu"):
                         emit({"loading_status": "headroom: VAE parked on CPU during chunk denoise…"})
                     seg_t0 = time.time()
                     seg_latents = _denoise_dual_expert(
-                        pe, ne, total, cfg_scale, height, width, seg_frames, generator, cb,
+                        pe, ne, total, cfg_scale, cfg_scale_2, height, width, seg_frames, generator, cb,
                         first_frame_condition=next_condition)
+                    _wait_for_preview(preview_state)
                     next_condition = None
                     denoise_elapsed += time.time() - seg_t0
                     denoise_stats = merge_stats(
@@ -2009,8 +2461,9 @@ def generate(req):
                 latents = None
             else:
                 latents = _denoise_dual_expert(
-                    pe, ne, total, cfg_scale, height, width, num_frames, generator, cb)
+                    pe, ne, total, cfg_scale, cfg_scale_2, height, width, num_frames, generator, cb)
         else:
+            _configure_denoise_cache(getattr(PIPE, "transformer", None), "transformer")
             latents = PIPE(
                 prompt_embeds=pe, negative_prompt_embeds=ne,
                 height=height, width=width, num_frames=num_frames,
@@ -2018,7 +2471,10 @@ def generate(req):
                 generator=generator, callback_on_step_end=cb,
                 output_type="latent",
             ).frames
+    _wait_for_preview(preview_state)
     t_dn_end = time.time()
+    _release_denoise_cache(getattr(PIPE, "transformer", None))
+    _release_denoise_cache(getattr(PIPE, "transformer_2", None))
     # For quality (STREAM_TRANSFORMER): leave the bf16 transformer on GPU for decode if it fits.
     # We park lazily (1) before the next prompt's text-encoder (to free headroom), or (2) inside
     # _decode_latents on OOM. This cuts one full ~10 GB PCIe roundtrip for single gens and when
@@ -2033,9 +2489,10 @@ def generate(req):
     if frames is None:
         _free_cuda()
         _vram_stage("denoising")
-        if LOW_VRAM_ACTIVE and not STREAM_TRANSFORMER:
+        if (DUAL_EXPERT or LOW_VRAM_ACTIVE) and not STREAM_TRANSFORMER:
             if getattr(PIPE, "transformer", None) is not None or getattr(PIPE, "transformer_2", None) is not None:
-                emit({"loading_status": "low-VRAM: freeing inactive transformer before VAE decode…"})
+                label = "finished dual expert" if DUAL_EXPERT else "inactive transformer"
+                emit({"loading_status": f"freeing {label} before VAE decode…"})
                 _unload_transformer()
         frames = _decode_latents(latents)
         del latents
@@ -2105,13 +2562,7 @@ def generate(req):
                         prev_frames[-join + i] = blended
                     emit({"loading_status": "seam: prompt-only T2V crossfade blend applied"})
                 combined_frames = prev_frames + ext
-                tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
-                tmp.close()
-                from diffusers.utils import export_to_video as _export_to_video
-                _export_to_video(combined_frames, tmp.name, fps=fps)
-                with open(tmp.name, "rb") as f:
-                    b64 = base64.b64encode(f.read()).decode("ascii")
-                os.unlink(tmp.name)
+                b64 = _frames_to_b64(combined_frames, fps)
                 _emit_video_result(b64, len(combined_frames), time.time() - t0, extended=True)
                 return
         except Exception as ce:
@@ -2147,25 +2598,15 @@ def generate(req):
                         blended = (p * (1.0 - alpha) + e * alpha).astype(_np.uint8)
                         prev_frames[-join + i] = blended
                     combined_frames = prev_frames + (ext if isinstance(ext, (list, tuple)) else list(ext))
-                    tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
-                    tmp.close()
-                    from diffusers.utils import export_to_video as _export_to_video
-                    _export_to_video(combined_frames, tmp.name, fps=fps)
-                    with open(tmp.name, "rb") as f:
-                        b64 = base64.b64encode(f.read()).decode("ascii")
-                    os.unlink(tmp.name)
+                    b64 = _frames_to_b64(combined_frames, fps)
                     _emit_video_result(b64, len(combined_frames), time.time() - t0, extended=True)
                     return
             except Exception as ce:
                 emit({"loading_status": f"⚠ frame concat fallback failed ({ce})"})
 
     # Normal path: just the clip we generated (or extend concat failed)
-    tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
-    tmp.close()
-    export_to_video(frames, tmp.name, fps=fps)
-    with open(tmp.name, "rb") as f:
-        b64 = base64.b64encode(f.read()).decode("ascii")
-    os.unlink(tmp.name)
+    emit({"loading_status": "video export: H.264/libx264 high quality…"})
+    b64 = _frames_to_b64(frames, fps)
     _emit_video_result(b64, len(frames), time.time() - t0)
 
 
