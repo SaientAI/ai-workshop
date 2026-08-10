@@ -23,14 +23,20 @@ cd "$TINYQ4_SRC"
 # CPU build (always — the universal fallback)
 echo "==> building tinyq4 (CPU)…"
 CARGO_TARGET_DIR=/tmp/tq4-cpu cargo build --release
-cp /tmp/tq4-cpu/release/tinyq4 "$DEST/tinyq4-cpu"
+# The engine crate was renamed tinyq4 -> quartz; CI checks out the renamed
+# repo while local copies may still be the old name. Accept either.
+TQ4_CPU_BIN="$(ls /tmp/tq4-cpu/release/quartz /tmp/tq4-cpu/release/tinyq4 2>/dev/null | head -1)"
+[ -n "$TQ4_CPU_BIN" ] || { echo "no engine binary in /tmp/tq4-cpu/release"; ls /tmp/tq4-cpu/release; exit 1; }
+cp "$TQ4_CPU_BIN" "$DEST/tinyq4-cpu"
 strip "$DEST/tinyq4-cpu" || true
 
 # CUDA build (skipped if no nvcc; the app then falls back to the CPU binary)
 if [ -x "$CUDA_HOME/bin/nvcc" ]; then
   echo "==> building tinyq4 (CUDA, $CUDA_HOME)…"
   CUDA_HOME="$CUDA_HOME" cargo build --release --features cuda
-  cp target/release/tinyq4 "$DEST/tinyq4-cuda"
+  TQ4_CUDA_BIN="$(ls target/release/quartz target/release/tinyq4 2>/dev/null | head -1)"
+  [ -n "$TQ4_CUDA_BIN" ] || { echo "no engine binary in target/release"; ls target/release; exit 1; }
+  cp "$TQ4_CUDA_BIN" "$DEST/tinyq4-cuda"
   strip "$DEST/tinyq4-cuda" || true
   # Bundle libcudart so the binary loads without a system CUDA install.
   CUDART="$(ldd "$DEST/tinyq4-cuda" | grep -oP '=> \K[^ ]*libcudart\.so\.12' | head -1)"
