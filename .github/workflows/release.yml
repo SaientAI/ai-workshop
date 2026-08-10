@@ -136,6 +136,11 @@ jobs:
           Remove-Item Env:\CARGO_TARGET_DIR
           # CUDA build (all-major) — CUDA_HOME from the toolkit action's CUDA_PATH
           $env:CUDA_HOME = $env:CUDA_PATH
+          # Linux sets this; Windows did not, so the engine fell back to its
+          # local-dev default of sm_120 and nvcc 12.6 rejected it outright
+          # ("Value 'sm_120' is not defined for option 'gpu-architecture'").
+          # all-major emits SASS for every major arch and JITs on Blackwell.
+          $env:TINYQ4_CUDA_ARCH = "${{ env.TINYQ4_CUDA_ARCH }}"
           cargo build --release --features cuda
           $cudaBin = @("target\release\quartz.exe","target\release\tinyq4.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $cudaBin) { Get-ChildItem "target\release"; throw "no engine binary (cuda)" }
