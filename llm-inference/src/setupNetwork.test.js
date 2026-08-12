@@ -24,10 +24,12 @@ assert.match(setup, /require_setup_enabled\("Full setup downloads"\)/,
 assert.match(setup, /require_setup_enabled\("Starter model download"\)/,
   "the in-wizard model download must enforce the same gate");
 assert.match(setup, /"moondream\/starmie-v1"/,
-  "Full Setup must prefetch Moondream's separate runtime tokenizer");
-assert.match(setup, /hf_hub_download\(repo_id=repo, filename=filename, local_files_only=True\)/,
-  "Full Setup must validate required vision assets from the offline cache");
+  "Full Setup must download Moondream's separate runtime tokenizer");
+assert.match(setup, /managed runtime asset missing after download/,
+  "Full Setup must validate required files in the managed assets directory");
+assert.match(setup, /This deliberately does not import huggingface_hub/,
+  "Full Setup must not use the shared Hugging Face cache downloader");
 assert.match(setup, /"transformers==4\.52\.4"/,
   "Full Setup must retain the Transformers version declared by the bundled Moondream revision");
 
-console.log("setupNetwork.test.js — 12 passed");
+console.log("setupNetwork.test.js — 13 passed");

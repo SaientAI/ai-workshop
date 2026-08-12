@@ -4,6 +4,7 @@ Reads JSON from stdin, writes WAV as base64 to stdout.
 Progress lines ({"progress": 0-100}) go to stderr.
 """
 import base64, io, json, os, sys
+from pathlib import Path
 
 # Force CPU if GPU is nearly full — TTS is fast on CPU anyway
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
@@ -46,13 +47,28 @@ def main():
             ) from exc
 
     from kokoro import KPipeline
+    from kokoro import KModel
     import soundfile as sf
     import numpy as np
 
     print(json.dumps({"progress": 30}), file=sys.stderr, flush=True)
 
-    pipe = KPipeline(lang_code=lang, repo_id='hexgrad/Kokoro-82M')
-    gen  = pipe(text, voice=voice, speed=speed)
+    assets = Path(os.environ.get("SAIENT_RUNTIME_ASSETS_DIR", "")) / "voice" / "kokoro-82m"
+    config_path = assets / "config.json"
+    model_path = assets / "kokoro-v1_0.pth"
+    voice_path = assets / "voices" / f"{voice}.pt"
+    missing = [p for p in (config_path, model_path, voice_path) if not p.is_file()]
+    if missing:
+        raise RuntimeError(
+            "Managed Kokoro assets are missing. Open Settings > Setup and run Full setup. "
+            + "Missing: " + ", ".join(str(p) for p in missing)
+        )
+
+    model = KModel(
+        repo_id=str(assets), config=str(config_path), model=str(model_path)
+    )
+    pipe = KPipeline(lang_code=lang, repo_id=str(assets), model=model)
+    gen  = pipe(text, voice=str(voice_path), speed=speed)
 
     print(json.dumps({"progress": 60}), file=sys.stderr, flush=True)
 

@@ -38,12 +38,12 @@ introduced.
 
 | Feature | Destination | Gate and offline behavior |
 | --- | --- | --- |
-| Full Setup | PyPI/PyTorch package indexes and Hugging Face model assets | Requires a visible, explicit, in-memory setup authorization. The capability is separate from the durable Internet preference and is revoked when setup finishes/closes. Downloads resume through the package/Hugging Face caches |
+| Full Setup | PyPI/PyTorch package indexes and pinned Hugging Face-hosted model files | Requires a visible, explicit, in-memory setup authorization. The capability is separate from the durable Internet preference and is revoked when setup finishes/closes. Voice/vision files are fetched directly into named `runtime-assets` folders with byte-size checks and `.part` cleanup; setup does not populate a Hugging Face cache |
 | Optional in-app model downloads | Hugging Face HTTPS | Requires the durable Internet switch, except the starter model while the first-run setup capability is active |
 | Update checks/install | `https://saient.co.uk` | Requires the durable Internet switch before constructing/sending a request; offline startup fails the gate before DNS or a socket syscall |
 | Optional RealESRGAN weight | fixed GitHub HTTPS release URL | Requires the durable Internet switch and verifies exact byte length and SHA-256 before installation |
 | Normal chat/agent/runtime | the selected numeric loopback model endpoint only | No external connection. The formal binding child clears proxy variables and sets `NO_PROXY` for loopback |
-| Vision/TTS/model execution | local files and the Saient-owned Hugging Face cache | Full Setup prefetches Kokoro, Moondream2, and Moondream's separate `moondream/starmie-v1` tokenizer, then validates the required vision files locally. The setup pins Transformers 4.52.4 because the selected Moondream revision declares that version and does not implement the changed Transformers 5.x tied-weight contract. Runtime loaders use offline/local-only mode and report missing assets instead of downloading |
+| Vision/TTS/model execution | named local files under Saient's `runtime-assets` folder | Full Setup directly downloads pinned Kokoro, Moondream2, and `moondream/starmie-v1` files, then validates them locally. The setup pins Transformers 4.52.4 because the selected Moondream revision declares that version and does not implement the changed Transformers 5.x tied-weight contract. Every runtime child forces Hub, Transformers, Diffusers, and Datasets offline even when the general Internet switch is on. Small dynamic-module state is run-only under `runtime-tmp` and is removed at app startup |
 
 There is no desktop telemetry, analytics, cloud authentication, licensing call,
 remote configuration, crash upload, remote font, or CDN asset path.

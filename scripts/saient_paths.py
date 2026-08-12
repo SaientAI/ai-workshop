@@ -52,7 +52,28 @@ def shared_cache_dir(name: str) -> Path:
     return root / name
 
 
-def configure_hf_cache() -> None:
-    hf_home = data_dir() / "huggingface"
+def configure_hf_cache(*, offline: bool = True) -> None:
+    """Contain library state and make inference local-only by default.
+
+    Bundled runtime scripts must never turn the general Internet switch into
+    Hugging Face access. Explicit downloader utilities may pass offline=False.
+    The temporary directory is cleared by the desktop app on its next start.
+    """
+    hf_home = data_dir() / "runtime-tmp" / "huggingface"
     os.environ.setdefault("HF_HOME", str(hf_home))
     os.environ.setdefault("HF_HUB_CACHE", str(hf_home / "hub"))
+    os.environ.setdefault("HF_DATASETS_CACHE", str(hf_home / "datasets"))
+    os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+    os.environ.setdefault("DO_NOT_TRACK", "1")
+    os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+    if offline:
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")
+        os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+        os.environ.setdefault("DIFFUSERS_OFFLINE", "1")
+        os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
+
+
+def runtime_assets_dir() -> Path:
+    return Path(
+        os.environ.get("SAIENT_RUNTIME_ASSETS_DIR", data_dir() / "runtime-assets")
+    ).expanduser()

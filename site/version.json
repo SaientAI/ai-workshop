@@ -1,5 +1,5 @@
 {
-  "version": "1.0.17",
+  "version": "1.0.18",
   "url": "https://saient.co.uk/#download",
-  "notes": "Manual update checks now use temporary update-only Internet access and report the real failure instead of falsely blaming the update server. Windows x64 and Debian/Ubuntu amd64 packages are hosted directly on saient.co.uk."
+  "notes": "Hugging Face libraries are now offline during runtime, voice and vision use pinned managed assets instead of a persistent cache, legacy cache cleanup is visible in Settings, and Windows packages include the creative helper scripts."
 }

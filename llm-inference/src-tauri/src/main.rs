@@ -2627,6 +2627,9 @@ fn main() {
             // Move old platform config/share dirs into the project-local data root before
             // anything reads them, so existing installs keep their data.
             setup::migrate_legacy_dirs();
+            if let Err(error) = setup::clear_ephemeral_hf_state() {
+                eprintln!("Could not clear temporary Hugging Face state: {error}");
+            }
             // Capture the resource dir so find_tinyq4 can locate the bundled engine.
             if let Ok(dir) = app.path().resource_dir() {
                 engine::set_resource_dir(dir.clone());
@@ -2709,6 +2712,7 @@ fn main() {
             pty::pty_spawn, pty::pty_write, pty::pty_resize, pty::pty_kill,
             // Setup wizard
             setup::detect_system, setup::run_setup, setup::skip_setup, setup::reset_setup,
+            setup::managed_storage_info, setup::clear_legacy_hf_cache,
             setup::download_starter_model, setup::hf_list_gguf,
             setup::hf_search, setup::hf_list_files, setup::download_hf_file, setup::download_hf_repo,
             // Signed Pi-hosted update check and platform installer

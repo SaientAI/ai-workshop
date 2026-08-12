@@ -48,7 +48,7 @@
     venv:     "Create Python environment",
     torch:    "Install PyTorch (CUDA-matched)",
     creative: "Install diffusers · transformers · kokoro",
-    assets:   "Cache voice & vision assets for offline use",
+    assets:   "Download managed voice & vision assets",
     done:     "Finish",
   };
   const stepsFor = $derived(
@@ -258,7 +258,7 @@
         <p class="wz-network-copy">
           {pendingNetwork?.kind === "model"
             ? "Downloading this starter model needs Hugging Face."
-            : "Full Setup needs to download Python packages and cache the vision and voice assets required for offline use."}
+            : "Full Setup downloads Python packages plus pinned voice and vision files into Saient's visible managed-assets folder. Runtime model libraries stay offline."}
         </p>
         <p class="wz-network-boundary">
           Access is limited to setup downloads. It does not change your Internet setting,
