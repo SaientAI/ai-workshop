@@ -22,7 +22,11 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # Several tests import the real TypeScript modules directly and use
+          # Node's built-in type stripping, which is available by default in
+          # Node 24. Keep CI aligned with the documented test runner and local
+          # verification environment.
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: llm-inference/package-lock.json
 
