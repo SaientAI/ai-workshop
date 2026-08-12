@@ -1,5 +1,5 @@
 {
-  "version": "1.0.15",
+  "version": "1.0.16",
   "url": "https://saient.co.uk/#download",
-  "notes": "Adds a dismissible autonomy dialog, formal local-model binding checks, stricter network controls, and setup/runtime reliability fixes. Windows x64 and Debian/Ubuntu amd64 packages are hosted directly on saient.co.uk."
+  "notes": "Adds an in-app Setup & repair action, safer setup skipping, and actionable Image Gen dependency diagnosis. Windows x64 and Debian/Ubuntu amd64 packages are hosted directly on saient.co.uk."
 }

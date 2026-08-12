@@ -24,6 +24,7 @@
   let pendingNetwork = $state<PendingNetwork | null>(null);
   let networkError = $state("");
   let authorizingNetwork = $state(false);
+  let confirmingSkip = $state(false);
 
   onMount(async () => {
     [info, configuredInternet] = await Promise.all([
@@ -103,8 +104,13 @@
 
   async function skip() {
     await releaseSetupNetwork();
-    await T.skipSetup().catch(() => {});
-    onDone();
+    error = "";
+    try {
+      await T.skipSetup();
+      onDone();
+    } catch (e) {
+      error = String(e);
+    }
   }
 
   async function authorizeSetupNetwork() {
@@ -177,7 +183,7 @@
   <div class="wz" role="dialog" aria-modal="true" aria-label="Setup">
     <div class="wz-head">
       <span class="wz-logo">Saient</span>
-      <span class="wz-sub">first-time setup</span>
+      <span class="wz-sub">setup &amp; repair</span>
     </div>
 
     {#if step === "choose"}
@@ -230,7 +236,18 @@
           <div class="wz-card-meta">instant · 0 deps</div>
         </button>
       </div>
-      <button class="wz-skip" onclick={skip}>I already have everything — skip setup</button>
+      {#if confirmingSkip}
+        <div class="wz-skip-warning">
+          Skipping does not create the managed Python environment. Image Gen, Video, Vision, TTS,
+          and LoRA will remain unavailable unless you configured their Python packages yourself.
+          <div class="wz-skip-actions">
+            <button class="wz-btn" onclick={() => (confirmingSkip = false)}>Go back</button>
+            <button class="wz-btn wz-skip-confirm" onclick={skip}>Skip without installing</button>
+          </div>
+        </div>
+      {:else}
+        <button class="wz-skip" onclick={() => (confirmingSkip = true)}>Skip setup…</button>
+      {/if}
 
     {:else if step === "network"}
       <!-- Explicit setup-scoped authority. This does not touch the durable
@@ -378,6 +395,14 @@
     align-self: center;
   }
   .wz-skip:hover { color: var(--text2); }
+  .wz-skip-warning {
+    margin-top: 4px; padding: 11px 12px; border-radius: var(--radius-sm);
+    border: 1px solid rgba(245,166,35,0.35); background: rgba(245,166,35,0.08);
+    color: var(--text2); font-size: 11.5px; line-height: 1.5;
+  }
+  .wz-skip-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+  .wz-skip-confirm { border-color: rgba(248,113,113,0.45); color: #fca5a5; }
+  .wz-skip-confirm:hover { border-color: #f87171; color: #fecaca; }
 
   .wz-steps { display: flex; flex-direction: column; gap: 7px; margin-bottom: 14px; }
   .wz-step { display: flex; align-items: center; gap: 10px; font-size: 13px; }

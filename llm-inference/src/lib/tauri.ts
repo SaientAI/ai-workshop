@@ -548,9 +548,11 @@ export interface SystemInfo {
   system_python: string | null;
   python_version: string | null;
   venv_ready: boolean;
+  creative_ready: boolean;
   tinyq4_ready: boolean;
   disk_free_gb: number;
   setup_done: boolean;
+  setup_profile: "full" | "fast" | "skipped" | null;
 }
 
 export const detectSystem = () => invoke<SystemInfo>("detect_system");

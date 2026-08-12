@@ -1,24 +1,36 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import * as T from "../lib/tauri.js";
+  import type { SystemInfo } from "../lib/tauri.js";
 
-  let { onClose, onSecurity }: { onClose: () => void; onSecurity: () => void } = $props();
+  let { onClose, onSecurity, onSetup }: {
+    onClose: () => void;
+    onSecurity: () => void;
+    onSetup: () => void | Promise<void>;
+  } = $props();
 
-  type Tab = "internet" | "security";
+  type Tab = "internet" | "setup" | "security";
   let tab = $state<Tab>("internet");
-  let error = $state("");
+  let internetError = $state("");
   let internetEnabled = $state(false);
   let internetLoaded = $state(false);
   let internetSaving = $state(false);
+  let setupInfo = $state<SystemInfo | null>(null);
+  let setupLoaded = $state(false);
+  let setupStarting = $state(false);
+  let setupError = $state("");
 
-  onMount(() => { void loadInternetState(); });
+  onMount(() => {
+    void loadInternetState();
+    void loadSetupState();
+  });
 
   async function loadInternetState() {
-    error = "";
+    internetError = "";
     try {
       internetEnabled = await T.getInternetEnabled();
     } catch (e) {
-      error = String(e);
+      internetError = String(e);
     } finally {
       internetLoaded = true;
     }
@@ -27,16 +39,48 @@
   async function toggleInternet() {
     const next = !internetEnabled;
     internetSaving = true;
-    error = "";
+    internetError = "";
     try {
       await T.setInternetEnabled(next);
       internetEnabled = next;
     } catch (e) {
-      error = String(e);
+      internetError = String(e);
     } finally {
       internetSaving = false;
     }
   }
+
+  async function loadSetupState() {
+    setupError = "";
+    try {
+      setupInfo = await T.detectSystem();
+    } catch (e) {
+      setupError = String(e);
+    } finally {
+      setupLoaded = true;
+    }
+  }
+
+  async function runSetupAgain() {
+    if (setupStarting) return;
+    setupStarting = true;
+    setupError = "";
+    try {
+      await onSetup();
+    } catch (e) {
+      setupError = String(e);
+      setupStarting = false;
+    }
+  }
+
+  const profileLabel = $derived.by(() => {
+    if (!setupLoaded) return "Checking…";
+    if (!setupInfo?.setup_done) return "Setup not completed";
+    if (setupInfo.setup_profile === "full") return "Full setup selected";
+    if (setupInfo.setup_profile === "fast") return "Fast setup selected";
+    if (setupInfo.setup_profile === "skipped") return "Setup was skipped";
+    return "Setup marker found";
+  });
 </script>
 
 <div class="settings-backdrop" role="dialog" aria-modal="true" aria-label="Settings">
@@ -52,6 +96,7 @@
     <div class="settings-body">
       <nav class="settings-nav" aria-label="Settings sections">
         <button class:active={tab === "internet"} onclick={() => (tab = "internet")}>Internet</button>
+        <button class:active={tab === "setup"} onclick={() => (tab = "setup")}>Setup</button>
         <button class:active={tab === "security"} onclick={() => (tab = "security")}>Security</button>
       </nav>
 
@@ -76,7 +121,7 @@
             </button>
           </div>
 
-          {#if error}<div class="net-error">{error}</div>{/if}
+          {#if internetError}<div class="panel-error">{internetError}</div>{/if}
 
           {#if !internetEnabled}
             <div class="offline-note">
@@ -84,6 +129,43 @@
               Local models and normal Saient runtime remain available.
             </div>
           {/if}
+        {:else if tab === "setup"}
+          <div class="panel-kicker">Runtime repair</div>
+          <h2>Setup &amp; repair</h2>
+          <p class="panel-copy">
+            Reopen the setup wizard to install or repair the managed Python environment used by
+            Image Gen, Video, Vision, TTS, and LoRA.
+          </p>
+
+          <div class="setup-status">
+            <div class="setup-status-row">
+              <span>Setup state</span>
+              <strong class:ready={setupInfo?.setup_done}>{profileLabel}</strong>
+            </div>
+            <div class="setup-status-row">
+              <span>Creative tools</span>
+              <strong class:ready={setupInfo?.creative_ready}>
+                {setupLoaded ? (setupInfo?.creative_ready ? "Ready" : "Not installed") : "Checking…"}
+              </strong>
+            </div>
+            <div class="setup-status-row">
+              <span>Managed Python</span>
+              <strong class:ready={setupInfo?.venv_ready}>
+                {setupLoaded ? (setupInfo?.venv_ready ? "Found" : "Not found") : "Checking…"}
+              </strong>
+            </div>
+          </div>
+
+          <div class="setup-note">
+            This keeps existing models, settings, downloads, and environment files. It only clears
+            the saved setup choice and lets you run Full setup again.
+          </div>
+
+          {#if setupError}<div class="panel-error">{setupError}</div>{/if}
+
+          <button class="setup-btn" onclick={runSetupAgain} disabled={!setupLoaded || setupStarting}>
+            {setupStarting ? "Opening setup…" : "Run setup again"}
+          </button>
         {:else}
           <div class="panel-kicker">Access</div>
           <h2>Launch password</h2>
@@ -146,7 +228,7 @@
     border-color: rgba(245,166,35,0.36); background: rgba(245,166,35,0.1); color: #f7d08a;
   }
   .internet-toggle:disabled { opacity: 0.55; cursor: not-allowed; }
-  .net-error {
+  .panel-error {
     color: #f87171; border: 1px solid rgba(248,113,113,0.35);
     background: rgba(248,113,113,0.08); border-radius: 9px; padding: 10px 12px;
     font-size: 12px; line-height: 1.4; margin-bottom: 14px;
@@ -155,6 +237,28 @@
     color: #98a0ad; border: 1px solid #2a2f39; background: #0e1116;
     border-radius: 10px; padding: 14px; font-size: 13px; line-height: 1.5;
   }
+  .setup-status {
+    border: 1px solid #2a2f39; border-radius: 10px; background: #101319;
+    padding: 4px 12px; margin-bottom: 14px;
+  }
+  .setup-status-row {
+    min-height: 42px; display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    border-bottom: 1px solid #242a33; color: #98a0ad; font-size: 12px;
+  }
+  .setup-status-row:last-child { border-bottom: 0; }
+  .setup-status-row strong { color: #f5a623; font-size: 12px; text-align: right; }
+  .setup-status-row strong.ready { color: #00d68f; }
+  .setup-note {
+    color: #98a0ad; border: 1px solid #2a2f39; background: #0e1116;
+    border-radius: 10px; padding: 12px; font-size: 12px; line-height: 1.5; margin-bottom: 14px;
+  }
+  .setup-btn {
+    height: 40px; padding: 0 16px; border-radius: 8px; cursor: pointer;
+    border: 1px solid rgba(108,142,245,0.45); background: rgba(108,142,245,0.16);
+    color: #dce4ff; font-weight: 800;
+  }
+  .setup-btn:hover { background: rgba(108,142,245,0.24); }
+  .setup-btn:disabled { opacity: 0.55; cursor: not-allowed; }
   .security-btn {
     margin-top: 16px; height: 38px; padding: 0 14px; border-radius: 8px; cursor: pointer;
     border: 1px solid rgba(108,142,245,0.35); background: rgba(108,142,245,0.12);
