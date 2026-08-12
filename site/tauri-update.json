@@ -1,11 +1,11 @@
 {
-  "version": "1.0.17",
-  "notes": "Manual update checks now use temporary update-only Internet access and show the real backend error instead of falsely blaming the update server. This Windows x64 package is a cross-compiled test build pending real Windows installation/runtime verification.",
-  "pub_date": "2026-08-12T20:22:45Z",
+  "version": "1.0.18",
+  "notes": "Setup and repair now restores the creative Python environment, uses visible managed voice and vision assets without a persistent Hugging Face cache, removes failed partial downloads, keeps setup controls reachable, and bundles all Image Gen helper scripts on Windows. This Windows x64 package is a cross-compiled build pending real Windows installation/runtime verification and SignPath Authenticode approval.",
+  "pub_date": "2026-08-12T22:08:02Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTcmZ5RU1kUFBPUHRudmc4OXpna0hBNTZ2RTZJZUlwQ2ZtT0FKUlU1REpGakNmeGxRZTZlSC9MdDFMTEF2ejgrRHFBNW83blhFMmdNRWpWS3dDNkNKR3VkL2VPTTJaK3cwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NTY2MTY1CWZpbGU6U2FpZW50XzEuMC4xN194NjQtc2V0dXAuZXhlCkI2WFZHSzdNVUxjYXduRFFXMTJrTGpYeUZMTG9FQTN6STViNWEvSGJuR2hKc3lydnFxZHZxT2pzTVAwaStJei9tNVlFR3kyR2xSM0tXa1J6cThyaEN3PT0K",
-      "url": "https://saient.co.uk/downloads/Saient_1.0.17_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTcmZ5RU1kUFBPUHRiN004dVpkaHd1VXNqZmtxcHlYVGxpUzgwNHZqSTF1RkZVMzFzOENEcWNiMW1BN0hjUzl3eUhic2ZydDZtZ3k0djl0SWxNWXdoV3lENVptUVZVNVFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NTcyMzE0CWZpbGU6U2FpZW50XzEuMC4xOF94NjQtc2V0dXAuZXhlClNBN0lvd3JhS1VUL3NnUGFlQWNxd0xpL1JIR2gzRWdzWnB5a1JjV1gyUE5Ka2JNK0kzZWVVWERSK0w3T01lRm5nZ3JIRmVMMFFkNnJsYVVpajVZdUFBPT0K",
+      "url": "https://saient.co.uk/downloads/Saient_1.0.18_x64-setup.exe"
     }
   }
 }
