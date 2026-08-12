@@ -35,6 +35,7 @@
   // Session-scoped: re-confirming autonomy is a reminder, not a gate to
   // pass on every turn.
   let autonomyConfirmed = $state(false);
+  let autonomyDialogRequested = $state(false);
   let locked = $state(false);
 
   onMount(async () => {
@@ -102,7 +103,7 @@
       agent.sandboxRoot = await T.getSandboxRoot().catch(() => "");
     }
     await T.saientSetEnabled(
-      needsLoop(effectiveAgiLevel(ui.saientEnabled, projects.active?.agi_level)),
+      !showSetup && needsLoop(effectiveAgiLevel(ui.saientEnabled, projects.active?.agi_level)),
     ).catch(() => {});
 
     // GPU poll
@@ -146,7 +147,7 @@
 
 <!-- Always mounted, showing "Idle" at rest, so the bar never appears or vanishes
      under the screen it sits beneath. -->
-<SaientPulse />
+<SaientPulse onLevelRequest={() => (autonomyDialogRequested = true)} />
 
 <!-- Ctrl+S and the end-of-turn save prompt. App level so the shortcut works
      everywhere and a prompt cannot be dismissed by navigating away. -->
@@ -169,13 +170,25 @@
      this project has been running "autonomous" ever since with nothing saying
      so. Re-confirm at the levels that give something up; stay quiet at the ones
      that do not. Once per session, not once per turn. -->
-{#if ui.screen === "agent" && projects.active && !showSetup && !locked
-     && ui.saientEnabled
-     && needsConfirm(projects.active.agi_level) && !autonomyConfirmed}
+{#if projects.active && !showSetup && !locked && (
+       autonomyDialogRequested || (
+         ui.screen === "agent" && ui.saientEnabled
+         && needsConfirm(projects.active.agi_level) && !autonomyConfirmed
+       )
+     )}
   <AutonomyConfirm
     level={effectiveAgiLevel(ui.saientEnabled, projects.active.agi_level)}
     project={projects.active.name}
-    onConfirm={() => (autonomyConfirmed = true)}
+    onConfirm={() => {
+      autonomyConfirmed = true;
+      autonomyDialogRequested = false;
+    }}
+    onDismiss={() => {
+      // Closing is deliberately non-mutating: an accidental visit to Agent
+      // should not silently change this project's saved autonomy level.
+      autonomyConfirmed = true;
+      autonomyDialogRequested = false;
+    }}
     onChange={async (level) => {
       const name = projects.active?.name;
       if (name) projects.active = await T.projectSetLevel(name, level);
@@ -183,6 +196,7 @@
         needsLoop(effectiveAgiLevel(ui.saientEnabled, projects.active?.agi_level)),
       ).catch(() => {});
       autonomyConfirmed = true;
+      autonomyDialogRequested = false;
     }} />
 {/if}
 
@@ -193,6 +207,9 @@
     model.modelsDir = await T.getModelsDir().catch(() => model.modelsDir);
     model.models = await T.scanModelsDir().catch(() => model.models);
     model.depReport = await T.checkDependencies().catch(() => model.depReport);
+    await T.saientSetEnabled(
+      needsLoop(effectiveAgiLevel(ui.saientEnabled, projects.active?.agi_level)),
+    ).catch(() => {});
   }} />
 {/if}
 

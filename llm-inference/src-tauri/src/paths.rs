@@ -6,6 +6,20 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Resolve an existing directory once before it becomes a process or tool root.
+/// Callers keep this returned path; display names and persisted labels must never
+/// be used to reconstruct it downstream.
+pub fn canonical_existing_dir(path: &Path, label: &str) -> Result<PathBuf, String> {
+    if path.as_os_str().is_empty() {
+        return Err(format!("{label} path is empty"));
+    }
+    if !path.is_dir() {
+        return Err(format!("{label} is not a directory: {}", path.display()));
+    }
+    std::fs::canonicalize(path)
+        .map_err(|e| format!("could not resolve {label} '{}': {e}", path.display()))
+}
+
 pub const DATA_DIR_ENV: &str = "SAIENT_DATA_DIR";
 pub const CONFIG_DIR_ENV: &str = "SAIENT_CONFIG_DIR";
 pub const SHARE_DIR_ENV: &str = "SAIENT_SHARE_DIR";

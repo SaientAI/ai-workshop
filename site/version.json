@@ -1,5 +1,5 @@
 {
-  "version": "1.0.3",
+  "version": "1.0.15",
   "url": "https://saient.co.uk/#download",
-  "notes": "Image generator no longer lists video models (which caused a load error) and shows clearer messages when a model can't be used for images. The NSFW safety checker is fully disabled so generations are never blacked out."
+  "notes": "Adds a dismissible autonomy dialog, formal local-model binding checks, stricter network controls, and setup/runtime reliability fixes. Windows x64 and Debian/Ubuntu amd64 packages are hosted directly on saient.co.uk."
 }

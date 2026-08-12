@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { model, projects, ui, update } from "../lib/state.svelte.js";
+  import { model, projects, toast, ui, update } from "../lib/state.svelte.js";
   import * as T from "../lib/tauri.js";
+  import { bindSaientModel, resetModelBinding } from "../lib/binding.js";
   import { effectiveAgiLevel, needsLoop } from "../lib/agiLevel.js";
 
   let { aw }: { aw: (a: "min" | "max" | "close") => void } = $props();
@@ -14,6 +15,15 @@
     await T.saientSetEnabled(
       needsLoop(effectiveAgiLevel(ui.saientEnabled, projects.active?.agi_level)),
     ).catch(() => {});
+    if (ui.saientEnabled && model.loaded) {
+      toast("Binding Saient to the loaded model. Chat will unlock when the formal checks pass.", "info", 7000);
+      await bindSaientModel();
+    } else if (!ui.saientEnabled) {
+      // Disabling Saient also revokes an in-flight explicit bind. Otherwise the
+      // UI says she is off while the profiler continues consuming the model.
+      await T.stopGenerate().catch(() => {});
+      resetModelBinding();
+    }
   }
 
   async function stopModel() {
@@ -27,6 +37,7 @@
       model.loaded = false;
       model.summary = null;
       model.activeServerPort = null;
+      resetModelBinding();
       model.loadStatus = "";
     } catch (e) {
       model.loadError = String(e);
@@ -39,13 +50,13 @@
 
 <div class="titlebar" data-tauri-drag-region>
   <div class="left">
-    <div class="dot" class:green={model.loaded} class:amber={model.loading}></div>
+    <div class="dot" class:green={model.loaded && model.bindingStatus !== "binding"} class:amber={model.loading || model.bindingStatus === "binding"}></div>
     <span class="logo">Saient</span>
   </div>
   <div class="right">
     <div class="info">
       {#if model.summary}
-        {model.summary.architecture} · {model.summary.quant}{model.activeServerPort ? ` · :${model.activeServerPort}` : ""}
+        {model.summary.architecture} · {model.summary.quant}{model.activeServerPort ? ` · :${model.activeServerPort}` : ""}{model.bindingStatus === "binding" ? " · binding Saient…" : ""}
       {:else}
         no model
       {/if}

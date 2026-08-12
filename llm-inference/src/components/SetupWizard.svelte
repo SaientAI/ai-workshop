@@ -1,12 +1,17 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { listen } from "@tauri-apps/api/event";
   import * as T from "../lib/tauri.js";
   import type { SystemInfo } from "../lib/tauri.js";
+  import { STARTER_MODELS as MODELS } from "../lib/models.js";
 
   let { onDone }: { onDone: () => void } = $props();
 
-  type Step = "choose" | "installing" | "model" | "done";
+  type Step = "choose" | "network" | "installing" | "model" | "done";
+  type StarterModel = typeof MODELS[number];
+  type PendingNetwork =
+    | { kind: "install"; profile: "full" }
+    | { kind: "model"; model: StarterModel };
   let step = $state<Step>("choose");
   let info = $state<SystemInfo | null>(null);
   let profile = $state<"full" | "fast">("full");
@@ -14,10 +19,22 @@
   let steps = $state<Record<string, string>>({});  // name → "running"|"done"
   let error = $state("");
   let logEl = $state<HTMLDivElement | null>(null);
+  let configuredInternet = $state(false);
+  let setupNetworkGranted = $state(false);
+  let pendingNetwork = $state<PendingNetwork | null>(null);
+  let networkError = $state("");
+  let authorizingNetwork = $state(false);
 
   onMount(async () => {
-    info = await T.detectSystem().catch(() => null);
+    [info, configuredInternet] = await Promise.all([
+      T.detectSystem().catch(() => null),
+      T.getInternetEnabled().catch(() => false),
+    ]);
   });
+
+  // Backend authority is in-memory too, but revoke eagerly when the wizard is
+  // removed so a completed/skipped setup cannot leave a live setup capability.
+  onDestroy(() => { void T.setSetupInternetAuthorized(false); });
 
   // Auto-scroll the install log.
   $effect(() => {
@@ -30,11 +47,14 @@
     venv:     "Create Python environment",
     torch:    "Install PyTorch (CUDA-matched)",
     creative: "Install diffusers · transformers · kokoro",
+    assets:   "Cache voice & vision assets for offline use",
     done:     "Finish",
   };
   const stepsFor = $derived(
-    profile === "full" ? ["engine", "venv", "torch", "creative"] : ["engine"]
+    profile === "full" ? ["engine", "venv", "torch", "creative", "assets"] : ["engine"]
   );
+
+  const setupCanReachNetwork = () => configuredInternet || setupNetworkGranted;
 
   async function start(p: "full" | "fast") {
     profile = p;
@@ -44,6 +64,17 @@
       error = "Full setup needs Python 3.10+ for the creative tools. Install Python 3 (and reopen), or pick Fast.";
       return;
     }
+    if (p === "full" && !setupCanReachNetwork()) {
+      pendingNetwork = { kind: "install", profile: p };
+      networkError = "";
+      step = "network";
+      return;
+    }
+    await runInstall(p);
+  }
+
+  async function runInstall(p: "full" | "fast") {
+    profile = p;
     step = "installing";
     log = []; steps = {}; error = "";
     const unlistenLog = await listen<string>("setup-log", (e) => { log = [...log, e.payload]; });
@@ -59,17 +90,70 @@
     }
   }
 
-  async function skip() { await T.skipSetup().catch(() => {}); onDone(); }
+  async function releaseSetupNetwork() {
+    if (!setupNetworkGranted) return;
+    setupNetworkGranted = false;
+    await T.setSetupInternetAuthorized(false).catch(() => {});
+  }
+
+  async function finish() {
+    await releaseSetupNetwork();
+    onDone();
+  }
+
+  async function skip() {
+    await releaseSetupNetwork();
+    await T.skipSetup().catch(() => {});
+    onDone();
+  }
+
+  async function authorizeSetupNetwork() {
+    if (!pendingNetwork || authorizingNetwork) return;
+    authorizingNetwork = true;
+    networkError = "";
+    try {
+      await T.setSetupInternetAuthorized(true);
+      setupNetworkGranted = true;
+      const pending = pendingNetwork;
+      pendingNetwork = null;
+      if (pending.kind === "install") {
+        await runInstall(pending.profile);
+      } else {
+        step = "model";
+        await performDownload(pending.model);
+      }
+    } catch (e) {
+      networkError = String(e);
+    } finally {
+      authorizingNetwork = false;
+    }
+  }
+
+  function cancelNetworkRequest() {
+    const pending = pendingNetwork;
+    pendingNetwork = null;
+    networkError = "";
+    step = pending?.kind === "model" ? "model" : "choose";
+  }
 
   // ── Starter model download ───────────────────────────────────────────────
-  import { STARTER_MODELS as MODELS } from "../lib/models.js";
   let downloading = $state("");
   let dlProgress = $state<{ downloaded: number; total: number; done?: boolean }>({ downloaded: 0, total: 0 });
   let dlError = $state("");
   const dlPct = $derived(dlProgress.total > 0 ? Math.round((dlProgress.downloaded / dlProgress.total) * 100) : 0);
   const fmtGB = (b: number) => (b / 1e9).toFixed(2) + " GB";
 
-  async function downloadModel(m: typeof MODELS[number]) {
+  async function downloadModel(m: StarterModel) {
+    if (!setupCanReachNetwork()) {
+      pendingNetwork = { kind: "model", model: m };
+      networkError = "";
+      step = "network";
+      return;
+    }
+    await performDownload(m);
+  }
+
+  async function performDownload(m: StarterModel) {
     downloading = m.file; dlError = ""; dlProgress = { downloaded: 0, total: 0 };
     const dir = await T.getModelsDir().catch(() => "");
     const unlisten = await listen<{ downloaded: number; total: number; done?: boolean }>(
@@ -148,6 +232,30 @@
       </div>
       <button class="wz-skip" onclick={skip}>I already have everything — skip setup</button>
 
+    {:else if step === "network"}
+      <!-- Explicit setup-scoped authority. This does not touch the durable
+           Internet setting and therefore cannot silently take Saient online. -->
+      <div class="wz-network">
+        <div class="wz-network-ic">↗</div>
+        <div class="wz-done-title">Temporary Internet access required</div>
+        <p class="wz-network-copy">
+          {pendingNetwork?.kind === "model"
+            ? "Downloading this starter model needs Hugging Face."
+            : "Full Setup needs to download Python packages and cache the vision and voice assets required for offline use."}
+        </p>
+        <p class="wz-network-boundary">
+          Access is limited to setup downloads. It does not change your Internet setting,
+          does not authorize the agent, and is revoked when this setup wizard finishes or closes.
+        </p>
+        {#if networkError}<div class="wz-err">{networkError}</div>{/if}
+        <div class="wz-actions wz-network-actions">
+          <button class="wz-btn" onclick={cancelNetworkRequest} disabled={authorizingNetwork}>← Back</button>
+          <button class="wz-btn wz-btn-primary" onclick={authorizeSetupNetwork} disabled={authorizingNetwork}>
+            {authorizingNetwork ? "Authorizing…" : "Allow for setup and continue"}
+          </button>
+        </div>
+      </div>
+
     {:else if step === "installing"}
       <!-- ── Install progress ─────────────────────────────────────────── -->
       <div class="wz-steps">
@@ -169,6 +277,7 @@
         <div class="wz-err">{error}</div>
         <div class="wz-actions">
           <button class="wz-btn" onclick={() => (step = "choose")}>← Back</button>
+          <button class="wz-btn wz-btn-primary" onclick={() => runInstall(profile)}>Retry setup</button>
         </div>
       {/if}
 
@@ -211,7 +320,7 @@
           <li><b>🔒</b> in the title bar sets a launch password for shared machines.</li>
           <li><b>⬆</b> checks for updates.</li>
         </ul>
-        <button class="wz-btn wz-btn-primary" onclick={onDone}>Get started →</button>
+        <button class="wz-btn wz-btn-primary" onclick={finish}>Get started →</button>
       </div>
     {/if}
   </div>
@@ -294,6 +403,24 @@
     color: var(--red); font-size: 12px; padding: 10px 12px;
     border-radius: var(--radius-sm); margin: 12px 0; line-height: 1.5;
   }
+
+  .wz-network { text-align: center; padding: 12px 4px 4px; }
+  .wz-network-ic {
+    width: 48px; height: 48px; margin: 0 auto 14px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; color: var(--accent);
+    background: rgba(108,142,245,0.12); border: 1px solid rgba(108,142,245,0.3);
+  }
+  .wz-network-copy {
+    max-width: 440px; margin: 0 auto 12px; color: var(--text2);
+    font-size: 12px; line-height: 1.55;
+  }
+  .wz-network-boundary {
+    max-width: 440px; margin: 0 auto 16px; padding: 10px 12px;
+    color: var(--text2); background: var(--bg3); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); font-size: 11px; line-height: 1.55; text-align: left;
+  }
+  .wz-network-actions { justify-content: center; }
 
   /* Starter model step */
   .wz-model-intro { font-size: 12px; color: var(--text2); margin-bottom: 14px; }

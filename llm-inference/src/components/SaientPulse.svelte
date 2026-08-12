@@ -11,11 +11,11 @@
   // animates on its own — if the robot moves, work is happening.
 
   import { agent, pulse, projects, ui } from "../lib/state.svelte.js";
-  import AutonomyConfirm from "./AutonomyConfirm.svelte";
-  import * as T from "../lib/tauri.js";
   import { animationFor, activityLine, flavourFor, formatElapsed } from "../lib/pulse.js";
   import { restingText, isWorking } from "../lib/turnState.js";
   import { AGI_LEVEL_INFO, effectiveAgiLevel, needsLoop } from "../lib/agiLevel.js";
+
+  let { onLevelRequest }: { onLevelRequest: () => void } = $props();
 
   const anim = $derived(animationFor(agent.turn, pulse.step ?? undefined));
   const working = $derived(isWorking(agent.turn) || agent.continuing);
@@ -55,8 +55,6 @@
   const level = $derived(effectiveAgiLevel(ui.saientEnabled, projects.active?.agi_level));
   const levelInfo = $derived(AGI_LEVEL_INFO[level]);
   const levelIsHigh = $derived(level === "autonomous" || level === "companion");
-
-  let showLevel = $state(false);
 
   function togglePause() {
     agent.paused = !agent.paused;
@@ -139,7 +137,7 @@
         class="pulse-level"
         class:pulse-level-high={levelIsHigh}
         title={levelInfo.summary}
-        onclick={() => (showLevel = true)}
+        onclick={onLevelRequest}
       >{levelInfo.title}</button>
     {/if}
   </div>
@@ -288,18 +286,3 @@
     .bot *, .pulse * { animation: none !important; }
   }
 </style>
-
-{#if showLevel && projects.active}
-  <AutonomyConfirm
-    level={level}
-    project={projects.active.name}
-    onConfirm={() => (showLevel = false)}
-    onChange={async (next) => {
-      // Captured before the await: `projects.active` cannot be narrowed across
-      // the suspension, and it really could be cleared while the call is in
-      // flight.
-      const name = projects.active?.name;
-      if (name) projects.active = await T.projectSetLevel(name, next);
-      showLevel = false;
-    }} />
-{/if}

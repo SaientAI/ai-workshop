@@ -395,8 +395,8 @@ def stage_slow(frames, req):
 # with seamless blending, leaving the rest of the image untouched. Sidesteps the dead
 # basicsr/gfpgan stack: spandrel runs the model, spandrel_extra_arches registers the
 # CodeFormer arch. Per-frame, so mild temporal flicker is possible; the dramatic de-melt is
-# worth it. Weights: <SAIENT_CONFIG_DIR>/face/codeformer.pth (+ facexlib auto-downloads its
-# detector on first use).
+# worth it. Weights: <SAIENT_CONFIG_DIR>/face/codeformer.pth plus the facexlib
+# detector/parser files. Runtime enhancement never auto-downloads either file.
 def stage_face(frames, req):
     import torch, numpy as np
     try:
@@ -410,11 +410,21 @@ def stage_face(frames, req):
     if not os.path.exists(model_path):
         emit({"loading_status": "face: codeformer.pth not found — skipping"})
         return frames
+    face_weights = config_dir() / "face" / "facexlib"
+    required = [
+        face_weights / "detection_Resnet50_Final.pth",
+        face_weights / "parsing_parsenet.pth",
+    ]
+    missing = [path.name for path in required if not path.is_file()]
+    if missing:
+        emit({"loading_status": "face: local facexlib weights missing (" + ", ".join(missing) + ") — skipping"})
+        return frames
     emit({"loading_status": "face: loading CodeFormer + face detector…"})
     m = spandrel.ModelLoader().load_from_file(model_path)
     m.cuda().eval()
     helper = FaceRestoreHelper(1, face_size=512, crop_ratio=(1, 1),
-                               det_model="retinaface_resnet50", save_ext="png", device="cuda")
+                               det_model="retinaface_resnet50", save_ext="png", device="cuda",
+                               model_rootpath=str(face_weights))
     n = len(frames)
     out, restored = [], 0
     with torch.no_grad():

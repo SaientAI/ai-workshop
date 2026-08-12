@@ -227,6 +227,12 @@ class TickRecord:
     #: The objective she is working on, if any, and whether its verifier closed
     #: it this tick. `None` means she is on her own business.
     objective: Mapping[str, Any] | None = None
+    #: Explicit typed fields exported from authoritative persisted state for
+    #: exact expression queries.  Related provenance stays inside one bounded
+    #: action record so stage 12 cannot attach the current requester's origin to
+    #: a preceding autonomous action.  This is a snapshot, not a store handle:
+    #: stage 12 can read it but still cannot reach or mutate state.
+    state_fields: Mapping[str, Any] = field(default_factory=dict)
     utterance: str | None = None
 
     @property
@@ -560,6 +566,7 @@ def tick(
             "checkable": pursuing.checkable,
             "closed": objective_closed,
         }),
+        state_fields=_expression_state(st),
     )
 
     _append_history(st, record_tick)
@@ -879,6 +886,76 @@ def _commitments(st: Mapping[str, Any]) -> tuple[str, ...]:
         if isinstance(sub, dict) and sub.get("type") and not sub.get("done"):
             out.append(f"subgoal: {sub['type']}")
     return tuple(out)
+
+
+def _expression_state(st: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Return the bounded state facts stage 12 is explicitly allowed to see.
+
+    State used to reach expression only as prose assembled for other purposes.
+    A field such as ``last_action`` could therefore sit beside ``ACTION:
+    respond`` and the host could choose the wrong one while every existing
+    integrity check still passed.  A later scalar-field repair still separated
+    ``last_action`` from its provenance while exposing
+    ``current_action_initiated_by`` next to it; the host then truthfully read
+    both values but falsely attached the current chat requester to the previous
+    autonomous action.  Action identity, provenance, and outcome therefore
+    cross this boundary only as one atomic record.
+
+    This is intentionally an allow-list, not a generic mapping.  A generic
+    string-valued mapping would create a prompt-injection surface.  The probe is
+    test/diagnostic state; action recency is derived from the canonical history
+    rather than copied from a label supplied alongside it.
+    """
+    out: dict[str, Any] = {}
+    probe = st.get("grounding_probe")
+    if (isinstance(probe, str) and 8 <= len(probe) <= 64
+            and all(ch in "0123456789ABCDEFabcdef" for ch in probe)):
+        out["grounding_probe"] = probe
+
+    actions = []
+    for event in list(st.get("history") or []):
+        record = _action_expression_record(event)
+        if record:
+            actions.append(record)
+    if actions:
+        out["last_completed_action"] = actions[-1]
+    if len(actions) >= 2:
+        out["previous_completed_action"] = actions[-2]
+    return out
+
+
+def _safe_action_token(value: Any) -> str | None:
+    if (isinstance(value, str) and 1 <= len(value) <= 64
+            and all(ch.isalnum() or ch in "_.-" for ch in value)):
+        return value
+    return None
+
+
+def _action_expression_record(event: Any) -> Mapping[str, Any]:
+    """Sanitise one persisted history event without separating its relations."""
+    if not isinstance(event, Mapping):
+        return {}
+    action = event.get("action")
+    result = event.get("result")
+    if not isinstance(action, Mapping):
+        return {}
+    action_type = _safe_action_token(action.get("type"))
+    if not action_type:
+        return {}
+    out: dict[str, Any] = {"type": action_type}
+    tick_number = event.get("tick")
+    if isinstance(tick_number, int) and not isinstance(tick_number, bool):
+        out["tick"] = tick_number
+    for field in ("initiated_by", "selected_by"):
+        value = _safe_action_token(action.get(field))
+        if value:
+            out[field] = value
+    if isinstance(result, Mapping):
+        for field in ("success", "verified", "simulated"):
+            value = result.get(field)
+            if isinstance(value, bool):
+                out[field] = value
+    return out
 
 
 def _replace(rec: TickRecord, **kw) -> TickRecord:

@@ -185,7 +185,13 @@ fn disk_free_gb(dir: &std::path::Path) -> f64 {
     {
         use std::ffi::CString;
         use std::os::unix::ffi::OsStrExt;
-        let path = CString::new(dir.as_os_str().as_bytes()).ok();
+        // On an actual first launch neither data/config nor its Saient child
+        // necessarily exists yet. statvfs rejects that path and the wizard used
+        // to claim the fresh machine had 0 GB free. The containing filesystem is
+        // the same, so ask the nearest existing ancestor without creating state
+        // during a read-only system probe.
+        let probe = dir.ancestors().find(|path| path.exists()).unwrap_or(dir);
+        let path = CString::new(probe.as_os_str().as_bytes()).ok();
         if let Some(path) = path {
             unsafe {
                 let mut stat: libc::statvfs = std::mem::zeroed();
@@ -215,6 +221,21 @@ fn disk_free_gb(dir: &std::path::Path) -> f64 {
     }
     #[cfg(not(any(unix, windows)))]
     { 0.0 }
+}
+
+#[cfg(test)]
+mod disk_tests {
+    use super::disk_free_gb;
+
+    #[test]
+    fn fresh_nonexistent_config_path_uses_its_existing_filesystem() {
+        let missing = std::env::temp_dir()
+            .join(format!("saient-disk-probe-{}", std::process::id()))
+            .join("not-created")
+            .join("config");
+        assert!(!missing.exists());
+        assert!(disk_free_gb(&missing) > 0.0);
+    }
 }
 
 #[tauri::command]
@@ -258,13 +279,16 @@ pub fn detect_system() -> SystemInfo {
 /// Python packages for the creative stack (Full setup). torch/torchvision are
 /// installed separately with the CUDA-matched index URL.
 const CREATIVE_PKGS: &[&str] = &[
-    "diffusers", "transformers", "accelerate", "huggingface_hub", "peft", "safetensors",
+    // The bundled Moondream revision declares transformers 4.52.4 in its
+    // config. Transformers 5.x changed PreTrainedModel's tied-weight contract
+    // and fails after loading the real weights, so this compatibility pin is a
+    // runtime requirement rather than a best-effort package preference.
+    "diffusers", "transformers==4.52.4", "accelerate", "huggingface_hub", "peft", "safetensors",
     "numpy", "pillow", "soundfile", "kokoro", "imageio", "imageio-ffmpeg",
     // Video enhancers: spandrel (RealESRGAN upscale) + face restoration (CodeFormer, registered
-    // by spandrel_extra_arches; facexlib does detect/align/paste). NOTE before relying on this
-    // for shipping: facexlib pulls scipy, which can drag numpy to 2.x — verify a FRESH managed
-    // venv keeps the gen stack working (dev pinned numpy<2 by hand). CodeFormer weights live at
-    // Managed config dir / face / codeformer.pth; facexlib's detector auto-downloads on first use.
+    // by spandrel_extra_arches; facexlib does detect/align/paste). CodeFormer and facexlib
+    // detector/parser weights are checked locally by enhance_video.py before those APIs are
+    // constructed, so a missing optional asset is an explicit error rather than a runtime download.
     "spandrel", "spandrel_extra_arches", "facexlib",
 ];
 
@@ -323,13 +347,59 @@ fn pip_install(window: &WebviewWindow, args: &[&str], label: &str) -> Result<(),
     run_streamed(window, cmd, label)
 }
 
+fn prefetch_runtime_assets(window: &WebviewWindow) -> Result<(), String> {
+    crate::internet::require_setup_enabled("Offline runtime asset download")?;
+
+    // Kokoro otherwise asks Hugging Face for its model/voice files on first
+    // speech. Moondream's trusted model code also loads its tokenizer from the
+    // separate moondream/starmie-v1 repository. Cache that transitive runtime
+    // dependency explicitly rather than assuming the top-level snapshot is
+    // self-contained.
+    let code = r#"
+from pathlib import Path
+from huggingface_hub import hf_hub_download, snapshot_download
+
+for repo in (
+    "hexgrad/Kokoro-82M",
+    "vikhyatk/moondream2",
+    "moondream/starmie-v1",
+):
+    print(f"prefetching {repo}", flush=True)
+    snapshot_download(repo_id=repo)
+
+# Fail setup here, while its visible temporary network grant is still active,
+# if the two files needed by Moondream's offline construction are not local.
+for repo, filename in (
+    ("vikhyatk/moondream2", "model.safetensors"),
+    ("moondream/starmie-v1", "tokenizer.json"),
+):
+    cached = hf_hub_download(repo_id=repo, filename=filename, local_files_only=True)
+    if not Path(cached).is_file():
+        raise RuntimeError(f"offline runtime asset missing after prefetch: {repo}/{filename}")
+"#;
+    let mut assets = Command::new(venv_python());
+    assets.arg("-c").arg(code)
+        .env(crate::paths::HF_HOME_ENV, crate::paths::hf_home())
+        .env(crate::paths::HF_HUB_CACHE_ENV, crate::paths::hf_hub_cache())
+        .env_remove("HF_HUB_OFFLINE")
+        .env_remove("TRANSFORMERS_OFFLINE")
+        .env_remove("DIFFUSERS_OFFLINE");
+    run_streamed(window, assets, "prefetch Kokoro and Moondream for offline use")?;
+
+    // misaki/spaCy otherwise starts a pip subprocess from the first TTS call.
+    // Install it while the setup-scoped capability is visibly active instead.
+    let mut language = Command::new(venv_python());
+    language.args(["-m", "spacy", "download", "en_core_web_sm"]);
+    run_streamed(window, language, "install Kokoro English language data")
+}
+
 /// Full = creative + core. Fast = core only (just tinyq4).
 #[tauri::command]
 pub async fn run_setup(window: WebviewWindow, profile: String) -> Result<(), String> {
     let info = detect_system();
     let full = profile == "full";
     if full {
-        crate::internet::require_enabled("Full setup downloads")?;
+        crate::internet::require_setup_enabled("Full setup downloads")?;
     }
     emit_log(&window, format!("Setup profile: {profile}"));
     emit_log(&window, format!("OS: {} · CUDA: {} · torch wheel: {}",
@@ -371,6 +441,10 @@ pub async fn run_setup(window: WebviewWindow, profile: String) -> Result<(), Str
             }
         }
         emit_step(&window, "creative", "done");
+
+        emit_step(&window, "assets", "running");
+        prefetch_runtime_assets(&window)?;
+        emit_step(&window, "assets", "done");
     }
 
     // Persist the marker so the wizard doesn't reappear, recording what we did.
@@ -406,7 +480,7 @@ pub async fn download_starter_model(
 ) -> Result<String, String> {
     use futures::StreamExt;
     use tokio::io::AsyncWriteExt;
-    crate::internet::require_enabled("Hugging Face downloads")?;
+    crate::internet::require_setup_enabled("Starter model download")?;
 
     // Text models live in Saient's dedicated LLM folder under the models root, in
     // their own subfolder so scan_models_dir uses the folder as the name.

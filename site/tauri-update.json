@@ -1,0 +1,11 @@
+{
+  "version": "1.0.15",
+  "notes": "Adds a dismissible autonomy dialog, formal local-model binding checks, stricter network controls, and setup/runtime reliability fixes. This Windows x64 package is a cross-compiled test build pending real Windows installation/runtime verification.",
+  "pub_date": "2026-08-12T16:39:10Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTcmZ5RU1kUFBPUGh2K05VWHdDL0VMeFR3ZzhXZU8vMGFxZkdReHF5RlpWWVRQVzBSU0d1SzBsVDdxeGRIekg2MWd6Uk16WHhCZE1CR2ZDSHMrdFcwYnphdGtuQnJBWVE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NTUyNTcyCWZpbGU6U2FpZW50XzEuMC4xNV94NjQtc2V0dXAuZXhlCkJIUFBKLytkWUpQbXVPNjBoU2F2cFVFcVpEck5lUVo3MU9hNS9zcmxCT2d2V2s5R3lYbFdUNE85TkpTNXpOSVRZMFpMdWUxZ1BVNjZBUDdBZ3lPdUFnPT0K",
+      "url": "https://saient.co.uk/downloads/Saient_1.0.15_x64-setup.exe"
+    }
+  }
+}

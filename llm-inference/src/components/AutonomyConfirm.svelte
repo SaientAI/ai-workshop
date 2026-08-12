@@ -11,22 +11,27 @@
    *
    * Shown once per session, and only for the levels that give something up.
    */
+  import { untrack } from "svelte";
   import { AGI_LEVELS, AGI_LEVEL_INFO, type AgiLevel } from "../lib/agiLevel.js";
 
-  let { level, project, onConfirm, onChange }: {
+  let { level, project, onConfirm, onChange, onDismiss }: {
     level: AgiLevel;
     project: string;
     onConfirm: () => void;
     onChange: (level: AgiLevel) => void;
+    onDismiss: () => void;
   } = $props();
 
-  let picked = $state<AgiLevel>(level);
+  // This is intentionally the opening value. The dialog is unmounted after a
+  // keep/change/dismiss action, so a later opening starts with a fresh value.
+  let picked = $state<AgiLevel>(untrack(() => level));
   const info = $derived(AGI_LEVEL_INFO[picked]);
   const changed = $derived(picked !== level);
 </script>
 
 <div class="ac-scrim" role="presentation">
   <div class="ac" role="dialog" aria-modal="true" aria-labelledby="ac-title">
+    <button class="ac-close" onclick={onDismiss} aria-label="Close autonomy settings" title="Close">×</button>
     <h2 id="ac-title">Saient is set to “{AGI_LEVEL_INFO[level].title}” in {project}</h2>
     <p class="ac-sub">{AGI_LEVEL_INFO[level].summary}</p>
 

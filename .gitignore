@@ -54,6 +54,7 @@ id_rsa*
 **/resources/engine/tinyq4-cpu.exe
 **/resources/engine/libcudart.so.12
 **/resources/engine/cudart64_12.dll
+**/resources/engine/*.pre-*-backup
 
 # ── Local python envs / vendored tools / test media (machine-local, not source) ──
 llm-inference/.venvs/

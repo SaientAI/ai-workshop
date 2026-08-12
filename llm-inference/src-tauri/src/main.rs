@@ -7,6 +7,7 @@
 )]
 
 mod auth;
+mod binding;
 mod engine;
 mod gguf;
 mod imggen;
@@ -14,7 +15,6 @@ mod internet;
 mod lora;
 mod merge;
 mod pty;
-mod remote;
 mod resolve;
 mod setup;
 mod update;
@@ -258,8 +258,10 @@ mod agent_safety_tests {
 fn make_state() -> AppState {
     internet::init_from_disk();
 
-    let root = load_sandbox_root_pref().unwrap_or_else(paths::agent_workspace_dir);
-    std::fs::create_dir_all(&root).ok();
+    let requested_root = load_sandbox_root_pref().unwrap_or_else(paths::agent_workspace_dir);
+    std::fs::create_dir_all(&requested_root).ok();
+    let root = paths::canonical_existing_dir(&requested_root, "agent workspace")
+        .expect("canonical agent workspace");
 
     // Managed models directory — one repo-local folder by default. A persisted
     // override is only honored if it is still inside Saient's data root, unless
@@ -352,12 +354,18 @@ fn set_internet_enabled(enabled: bool) -> Result<(), String> {
     internet::set_enabled(enabled)
 }
 
+#[command]
+fn set_setup_internet_authorized(authorized: bool) {
+    internet::set_setup_authorized(authorized);
+}
+
 // ── Inference: Load model ─────────────────────────────────────────────────────
 
 #[command]
 async fn load_model(
     window: WebviewWindow,
     state: State<'_, AppState>,
+    binding: State<'_, binding::BindingHandle>,
     model_path: String,
     gpu_layers: i32,       // 999 = full GPU, 0 = CPU only, N = partial
     ctx_size: u32,
@@ -369,6 +377,7 @@ async fn load_model(
     }
 
     phase!("stopping", "Stopping previous server…");
+    binding.stop();
 
     // Kill any existing server we own
     *state.engine.lock().await = None;
@@ -411,7 +420,11 @@ async fn load_model(
 }
 
 #[command]
-async fn unload_model(state: State<'_, AppState>) -> Result<(), String> {
+async fn unload_model(
+    state: State<'_, AppState>,
+    binding: State<'_, binding::BindingHandle>,
+) -> Result<(), String> {
+    binding.stop();
     *state.engine.lock().await = None;
     Ok(())
 }
@@ -424,8 +437,10 @@ async fn current_model_port(state: State<'_, AppState>) -> Result<Option<u16>, S
 #[command]
 async fn stop_model_server(
     state: State<'_, AppState>,
+    binding: State<'_, binding::BindingHandle>,
     port: Option<u16>,
 ) -> Result<(), String> {
+    binding.stop();
     let target_port = {
         let mut engine = state.engine.lock().await;
         let active_port = engine.as_ref().map(|engine| engine.port);
@@ -451,10 +466,12 @@ async fn stop_model_server(
 async fn attach_model(
     window: WebviewWindow,
     state: State<'_, AppState>,
+    binding: State<'_, binding::BindingHandle>,
     model_path: String,
     port: u16,
 ) -> Result<ModelSummary, String> {
     window.emit("model-loading", format!("Attaching to port {}…", port)).ok();
+    binding.stop();
     *state.engine.lock().await = None;
 
     let result = Engine::attach(port, Path::new(&model_path))
@@ -738,9 +755,48 @@ async fn generate(
     Ok(result)
 }
 
+/// Establish the formal host profile without sending a user turn.
 #[command]
-fn stop_generate(state: State<'_, AppState>) {
+async fn saient_bind(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    binding: State<'_, binding::BindingHandle>,
+) -> Result<serde_json::Value, String> {
+    let port = state
+        .engine
+        .lock()
+        .await
+        .as_ref()
+        .map(|engine| engine.port)
+        .ok_or("No model loaded — pick a GGUF file first")?;
+    binding.bind(port, Some(window)).await
+}
+
+/// Run one stateful Saient tick through a formally bound loopback host. An
+/// unavailable/rejected host is an error and never falls through to `generate`.
+#[command]
+async fn saient_chat(
+    state: State<'_, AppState>,
+    binding: State<'_, binding::BindingHandle>,
+    message: String,
+) -> Result<binding::BindingReply, String> {
+    let port = state
+        .engine
+        .lock()
+        .await
+        .as_ref()
+        .map(|engine| engine.port)
+        .ok_or("No model loaded — pick a GGUF file first")?;
+    binding.chat(port, message).await
+}
+
+#[command]
+fn stop_generate(
+    state: State<'_, AppState>,
+    binding: State<'_, binding::BindingHandle>,
+) {
     state.stop_flag.store(true, Ordering::Relaxed);
+    binding.stop();
 }
 
 // ── Inference: GPU stats / session ────────────────────────────────────────────
@@ -847,6 +903,7 @@ fn completion_from_verified_plan(plan: &Plan) -> Option<serde_json::Value> {
 #[command]
 async fn check_goal_completion(
     state: State<'_, AppState>,
+    binding: State<'_, binding::BindingHandle>,
     goal: String,
 ) -> Result<serde_json::Value, String> {
     {
@@ -873,6 +930,11 @@ async fn check_goal_completion(
         let eng = guard.as_ref().ok_or("No model loaded")?;
         (eng.port, eng.client.clone())
     };
+
+    // This model is a verdict host, not Saient's speaker, but it is still part
+    // of the Saient agent path. Refuse to use it unless the exact host/runtime
+    // pair has passed the formal profile.
+    binding.require(port).await?;
 
     let messages = vec![serde_json::json!({"role": "user", "content": prompt})];
     let params = SamplingParams {
@@ -1069,8 +1131,9 @@ fn set_sandbox_root_impl(
     path: String,
     remember_external_workspace: bool,
 ) -> Result<(), String> {
-    let new_root = PathBuf::from(&path);
-    std::fs::create_dir_all(&new_root).map_err(|e| e.to_string())?;
+    let requested_root = PathBuf::from(&path);
+    std::fs::create_dir_all(&requested_root).map_err(|e| e.to_string())?;
+    let new_root = paths::canonical_existing_dir(&requested_root, "agent workspace")?;
     // FsTool
     let new_fs = FsTool::new(&new_root).map_err(|e| e.to_string())?;
     if remember_external_workspace {
@@ -1469,6 +1532,7 @@ async fn warm_agent_cache(state: State<'_, AppState>) -> Result<bool, String> {
 async fn agent_run(
     window: WebviewWindow,
     state: State<'_, AppState>,
+    binding: State<'_, binding::BindingHandle>,
     goal: String,
 ) -> Result<PlanSummary, String> {
     // Clear any stop left set by an earlier run, matching the other generating
@@ -1476,18 +1540,27 @@ async fn agent_run(
     // (or any previous generation) makes the next planning call abort instantly.
     state.stop_flag.store(false, Ordering::Relaxed);
 
-    // Build the planning prompt
-    let mem_ctx = state.memory.lock().unwrap().context_for_prompt(10);
-    let plan_prompt_text = planner::plan_prompt(&goal, &mem_ctx, AGENT_TOOLS);
-
-    window.emit("agent-planning", &goal).ok();
-
     // Get port + client without holding lock across the stream
     let (port, client) = {
         let guard = state.engine.lock().await;
         let eng = guard.as_ref().ok_or("No model loaded — load a GGUF model first")?;
         (eng.port, eng.client.clone())
     };
+
+    // The planner is a proposal host, not Saient's user-facing voice. It may
+    // produce plans only after formal binding, and receives a bounded snapshot
+    // of the actual persisted Saient state. Failure stops here; there is no raw
+    // planner fallback.
+    let bound = binding.context(port).await?;
+    let memory = state.memory.lock().unwrap().context_for_prompt(10);
+    let mem_ctx = if memory.trim().is_empty() {
+        bound.context
+    } else {
+        format!("{memory}\n\n{}", bound.context)
+    };
+    let plan_prompt_text = planner::plan_prompt(&goal, &mem_ctx, AGENT_TOOLS);
+
+    window.emit("agent-planning", &goal).ok();
 
     let messages = vec![serde_json::json!({"role": "user", "content": plan_prompt_text})];
 
@@ -2552,7 +2625,8 @@ fn main() {
             // Capture the resource dir so find_tinyq4 can locate the bundled engine.
             if let Ok(dir) = app.path().resource_dir() {
                 engine::set_resource_dir(dir.clone());
-                saient_loop::set_resource_dir(dir);
+                saient_loop::set_resource_dir(dir.clone());
+                resolve::set_resource_dir(dir);
             }
             // Kill any server left over from a previous session (crash or force-quit).
             engine::kill_our_stale_servers();
@@ -2570,13 +2644,6 @@ fn main() {
                     eprintln!("Saient's loop did not start: {e}");
                 }
             }
-            // Phone pairing removed. It existed only to run tests during the
-            // build and was never meant to ship: it opened a listener on
-            // 0.0.0.0:18788, reachable by anything on the LAN, which
-            // contradicts the product's "no internet needed / fully local"
-            // claim. The server is not started. `remote.rs` still compiles and
-            // its bind is loopback-only, so nothing is exposed even if some
-            // future path calls it.
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -2593,13 +2660,14 @@ fn main() {
         .manage(video::new_video_handle())
         .manage(vision::new_vision_handle())
         .manage(pty::new_handle())
+        .manage(binding::BindingHandle::default())
         .manage(saient_loop::LoopHandle::default())
         .invoke_handler(tauri::generate_handler![
             saient_set_enabled, saient_is_enabled, saient_loop_running,
             // Inference — single
             load_model, unload_model, current_model_port, stop_model_server,
             attach_model, scan_running_servers,
-            inspect_gguf, generate, stop_generate,
+            inspect_gguf, generate, saient_bind, saient_chat, stop_generate,
             get_gpu_stats, save_session, load_session, write_binary_b64,
             clear_user_data,
             // Inference — dual agent
@@ -2608,7 +2676,7 @@ fn main() {
             scan_models_dir, get_models_dir, set_models_dir, open_models_dir, diagnostics, os_name,
             check_dependencies,
             // Internet/network access gate
-            get_internet_enabled, set_internet_enabled,
+            get_internet_enabled, set_internet_enabled, set_setup_internet_authorized,
             // Game asset builder
             asset_builder_scan, asset_builder_open_dir, asset_builder_run,
             // Agent write mode
@@ -2639,8 +2707,6 @@ fn main() {
             setup::hf_search, setup::hf_list_files, setup::download_hf_file, setup::download_hf_repo,
             // Signed Pi-hosted update check and platform installer
             update::check_update, update::install_update, update::relaunch_after_update,
-            // Remote phone pairing
-            remote::remote_pairing_info, remote::remote_reset_pairing,
             // Launch password
             auth::password_is_set, auth::password_set, auth::password_verify, auth::password_clear,
             // Image Gen

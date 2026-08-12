@@ -9,7 +9,8 @@ Mirrors the generate_sdxl.py daemon protocol (newline-delimited JSON on stdin/st
           (empty/blank question → a general caption)
   stdout: {"answer":"...","elapsed":1.4}                    OR  {"error":"..."}  (daemon keeps running)
 
-The model downloads from HuggingFace on first use, then caches. Subsequent loads are local.
+Full Setup downloads the model into Saient's cache. Runtime loading is strictly
+local; it never starts an implicit download.
 """
 import base64, io, json, os, sys, time
 
@@ -41,9 +42,11 @@ def main():
         dtype = torch.float16 if device == "cuda" else torch.float32
 
         model = AutoModelForCausalLM.from_pretrained(
-            repo, trust_remote_code=True, torch_dtype=dtype,
+            repo, trust_remote_code=True, torch_dtype=dtype, local_files_only=True,
         ).to(device).eval()
-        tokenizer = AutoTokenizer.from_pretrained(repo, trust_remote_code=True)
+        tokenizer = AutoTokenizer.from_pretrained(
+            repo, trust_remote_code=True, local_files_only=True,
+        )
     except Exception as e:
         emit({"error": f"load failed: {e}"}); return
 

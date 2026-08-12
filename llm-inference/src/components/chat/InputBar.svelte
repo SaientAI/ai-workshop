@@ -112,7 +112,9 @@ Forms/tools:
       return;
     }
 
-    const canSend = dual.enabled ? (dual.drafterSummary && dual.criticSummary) : model.loaded;
+    const canSend = ui.saientEnabled
+      ? model.loaded && model.bindingStatus === "bound"
+      : dual.enabled ? (dual.drafterSummary && dual.criticSummary) : model.loaded;
     if (!rawText || chat.streaming || !canSend) return;
 
     const hasSlashCmd = /^\/\w/.test(rawText);
@@ -126,12 +128,21 @@ Forms/tools:
 
     const wantsArtifact =
       chat.artifactMode && (hasSlashCmd || chat.artifact.active || isArtifactRequest(rawText));
+
+    // Saient-enabled chat has one route: the persisted twelve-stage tick and a
+    // formally profiled host. A rejected/unavailable binding is surfaced as an
+    // error; it must never fall through to the plain generate/persona path.
+    if (ui.saientEnabled) {
+      await sendBoundSaientTurn(text);
+      return;
+    }
+
     // With Saient on, its identity takes the system slot instead of the custom
     // prompt. Both are read with the same authority, so keeping both would let
     // the custom prompt simply override the persona — the toggle would look on
     // while doing nothing. The OS hint and artifact instructions still apply:
     // they describe the environment, not who is speaking.
-    const effectiveSystem = chatSystemPrompt(ui.saientEnabled, chat.systemPrompt, [
+    const effectiveSystem = chatSystemPrompt(false, chat.systemPrompt, [
       osHint,
       wantsArtifact ? ARTIFACT_SYSTEM_PROMPT : "",
     ]);
@@ -166,6 +177,54 @@ Forms/tools:
       } else {
         chat.messages.push({ role: "assistant", content: errorText, ts: Date.now(), error: true });
       }
+    }
+  }
+
+  async function sendBoundSaientTurn(text: string) {
+    chat.pendingUserText = text;
+    chat.streaming = true;
+    chat.streamBuffer = "";
+    chat.reasoningBuffer = "";
+    const index = chat.messages.length;
+    chat.messages.push({
+      role: "assistant",
+      content: "",
+      ts: Date.now(),
+      streaming: true,
+      sourceUser: text,
+      streamStart: Date.now(),
+      saientTurn: true,
+    });
+    try {
+      const reply = await T.saientChat(text);
+      const message = chat.messages[index];
+      if (!message) return;
+      message.content = reply.text;
+      message.streaming = false;
+      message.ts = Date.now();
+      message.binding = {
+        status: reply.binding_status,
+        model: reply.model,
+        minimumInterface: reply.minimum_interface,
+        tick: reply.tick,
+        stateContextSha256: reply.state_context_sha256,
+        recordBoundaryClean: reply.record_boundary_clean,
+        identityBoundaryClean: reply.identity_boundary_clean,
+        usedIntegrityFallback: reply.used_integrity_fallback,
+      };
+    } catch (e) {
+      const message = chat.messages[index];
+      if (message?.stopped) return;
+      if (message) {
+        message.content = "Saient binding failed: " + friendlyGenerateError(String(e))
+          + "\n\nNo plain-LLM fallback was used.";
+        message.streaming = false;
+        message.error = true;
+        message.ts = Date.now();
+      }
+    } finally {
+      chat.streaming = false;
+      chat.pendingUserText = "";
     }
   }
 
@@ -215,7 +274,9 @@ Forms/tools:
     if (last?.streaming) {
       last.streaming = false;
       last.ts = Date.now();
-      last.content = chat.streamBuffer + " [stopped]";
+      last.content = ui.saientEnabled && !chat.streamBuffer
+        ? "Saient request stopped before a response was returned."
+        : chat.streamBuffer + " [stopped]";
       last.stopped = true;
     }
   }
@@ -279,8 +340,16 @@ Forms/tools:
       bind:value={inputValue}
       onkeydown={handleKey}
       oninput={autoResize}
-      placeholder={attachedImage ? "Ask about the image… (blank = describe it)" : model.loaded ? "Message… (/ for artifact mode)" : "Load a model first"}
-      disabled={!model.loaded && !dual.enabled && !attachedImage}
+      placeholder={attachedImage
+        ? "Ask about the image… (blank = describe it)"
+        : !model.loaded
+          ? "Load a model first"
+          : ui.saientEnabled && model.bindingStatus === "binding"
+            ? "Binding Saient to this model…"
+            : ui.saientEnabled && model.bindingStatus !== "bound"
+              ? "Bind Saient before chatting"
+              : "Message… (/ for artifact mode)"}
+      disabled={(!model.loaded || (ui.saientEnabled && model.bindingStatus !== "bound")) && !dual.enabled && !attachedImage}
       rows="1"
       class="chat-input"
     ></textarea>
@@ -288,7 +357,7 @@ Forms/tools:
       class="send-btn"
       class:stop={chat.streaming}
       onclick={chat.streaming ? stopGen : () => sendMessage()}
-      disabled={chat.streaming ? false : (!model.loaded && !dual.enabled && !attachedImage)}
+      disabled={chat.streaming ? false : ((!model.loaded || (ui.saientEnabled && model.bindingStatus !== "bound")) && !dual.enabled && !attachedImage)}
     >
       {chat.streaming ? "■" : "▶"}
     </button>

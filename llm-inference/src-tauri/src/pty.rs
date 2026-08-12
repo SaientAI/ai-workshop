@@ -22,6 +22,20 @@ pub fn new_handle() -> PtyHandle {
     Arc::new(Mutex::new(None))
 }
 
+/// Resolve the one workspace root used by the shell and every generated tool.
+///
+/// The frontend supplies a path, never a display name. Resolve it once in the
+/// backend, fail closed if it is not a directory, then pass this exact value as
+/// both the process cwd and `SAIENT_WORKSPACE`. Nothing downstream is allowed to
+/// rebuild a path from project metadata.
+fn canonical_workspace(cwd: &str) -> Result<std::path::PathBuf, String> {
+    if cwd.trim().is_empty() {
+        return Err("terminal workspace path is empty".to_string());
+    }
+    crate::paths::canonical_existing_dir(
+        std::path::Path::new(cwd), "terminal workspace")
+}
+
 fn kill_session(mut session: PtySession) {
     session.stop.store(true, Ordering::Relaxed);
     let _ = session.child.kill();
@@ -59,6 +73,7 @@ const SAIENT_CLI_PY: &str = r####"#!/usr/bin/env python3
 # act on the workspace via a ReAct-style tool loop (read/ls/write/edit/bash).
 # Pure standard library: no pip installs required.
 import sys, os, json, queue, re, signal, shutil, subprocess, tempfile, threading, urllib.request, platform
+from pathlib import Path
 
 A = "\033[38;2;108;142;245m"   # accent blue
 D = "\033[2m"                  # dim
@@ -78,7 +93,12 @@ BANNER = r"""
 """
 
 PORTS = [18081, 18082, 33115, 18080]
-WORKSPACE = os.path.realpath(os.getcwd())
+WORKSPACE_ENV = "SAIENT_WORKSPACE"
+if not os.environ.get(WORKSPACE_ENV):
+    raise RuntimeError("SAIENT_WORKSPACE is missing; refusing an unbound terminal root")
+WORKSPACE = os.path.realpath(os.environ[WORKSPACE_ENV])
+if not os.path.isdir(WORKSPACE):
+    raise RuntimeError("SAIENT_WORKSPACE is not a directory: " + WORKSPACE)
 TEMP_ROOTS = []         # only directories created by the tempdir tool
 INPUT_QUEUE = queue.Queue()
 INPUT_READER_STARTED = False
@@ -90,15 +110,35 @@ if RUNTIME_DIR and RUNTIME_DIR not in sys.path:
     sys.path.insert(0, RUNTIME_DIR)
 
 BINDING_ERROR = None
+BINDING_MANIFEST = None
 try:
+    import binding_bridge as SAIENT_BINDING
     import desktop_bridge as SAIENT_BRIDGE
     import orchestrator as SAIENT_RUNTIME
     from expression import ModelExpresser
 except Exception as exc:
+    SAIENT_BINDING = None
     SAIENT_BRIDGE = None
     SAIENT_RUNTIME = None
     ModelExpresser = None
     BINDING_ERROR = "%s: %s" % (type(exc).__name__, exc)
+
+def ensure_formal_binding(port):
+    """Prove this exact host/runtime pair before any agent inference."""
+    global BINDING_ERROR, BINDING_MANIFEST
+    if BINDING_MANIFEST is not None:
+        return True
+    if BINDING_ERROR:
+        return False
+    try:
+        config = Path(os.environ.get("SAIENT_CONFIG_DIR", ".")).expanduser().resolve()
+        manifest, _ = SAIENT_BINDING.ensure_binding(
+            "http://127.0.0.1:%d" % port, config / "bindings")
+        BINDING_MANIFEST = manifest
+        return True
+    except Exception as exc:
+        BINDING_ERROR = "%s: %s" % (type(exc).__name__, exc)
+        return False
 
 SYSTEM = """You are the proposal host inside Saient's local terminal. You are not
 Saient and you are not the user-facing speaker. You may propose one tool call at
@@ -670,7 +710,12 @@ def header(port, model, yolo):
     else:
         print("   %s●%s no tinyq4 server %s· start a model in Saient%s" % (R, X, D, X))
     mode = (Y + "yolo" + X) if yolo else (D + "confirm" + X)
-    binding = (G + "architecture bound" + X) if not BINDING_ERROR else (R + "binding failed" + X)
+    if BINDING_ERROR:
+        binding = R + "binding failed" + X
+    elif BINDING_MANIFEST is not None:
+        binding = G + "formally bound" + X
+    else:
+        binding = Y + "binding pending" + X
     print("   %sagent%s · env tempdir read ls write edit bash · %s · %s · %s/yolo /tools /clear /exit%s" % (D, X, binding, mode, D, X))
     print("   %scwd %s%s\n" % (D, WORKSPACE, X))
     if BINDING_ERROR:
@@ -881,6 +926,13 @@ def main():
             print("   %sSaient runtime binding failed; no host fallback was used: %s%s\n" %
                   (R, BINDING_ERROR, X))
             continue
+        if not ensure_formal_binding(port):
+            print("   %sSaient host did not pass formal binding; no host fallback was used: %s%s\n" %
+                  (R, BINDING_ERROR, X))
+            continue
+        if BINDING_MANIFEST is not None:
+            print("   %sformal binding %s · %s%s\n" %
+                  (G, BINDING_MANIFEST["minimum_interface"], model, X))
         messages = [sys_msg, {"role": "user", "content": user}]
         journal = []
         controller_events = []
@@ -1032,7 +1084,56 @@ def main():
             print("\n   %sreached step limit (%d) — type to continue%s" % (Y, MAX_STEPS, X))
         print("\n")
 
+def workspace_contract_check():
+    """Exercise production path resolution without a model or a mock filesystem."""
+    cwd = os.path.realpath(os.getcwd())
+    expected = os.path.realpath(os.environ[WORKSPACE_ENV])
+    if WORKSPACE != expected or cwd != expected:
+        raise AssertionError("cwd, SAIENT_WORKSPACE and tool root are not identical")
+
+    parent = ".saient/path contract begining with spaces"
+    rel = parent + "/round trip.txt"
+    resolved = safe_path(rel)
+    operations = []
+
+    label, result, ok, shown = run_tool(
+        {"name": "write", "path": rel, "content": "alpha"}, True)
+    verified, _ = verify_tool(
+        {"name": "write", "path": rel, "content": "alpha"}, result, ok)
+    operations.append({"name": label, "ok": ok, "verified": verified})
+
+    label, result, ok, shown = run_tool({"name": "ls", "path": parent}, True)
+    verified, _ = verify_tool({"name": "ls", "path": parent}, result, ok)
+    operations.append({"name": label, "ok": ok, "verified": verified})
+    if "round trip.txt" not in result:
+        raise AssertionError("the written file was absent from the next listing")
+
+    label, result, ok, shown = run_tool({"name": "read", "path": rel}, True)
+    verified, _ = verify_tool({"name": "read", "path": rel}, result, ok)
+    operations.append({"name": label, "ok": ok, "verified": verified})
+    if result != "alpha":
+        raise AssertionError("the next read did not use the same canonical root")
+
+    edit = {"name": "edit", "path": rel, "old": "alpha", "new": "beta"}
+    label, result, ok, shown = run_tool(edit, True)
+    verified, _ = verify_tool(edit, result, ok, before="alpha")
+    operations.append({"name": label, "ok": ok, "verified": verified})
+    if not all(row["ok"] and row["verified"] for row in operations):
+        raise AssertionError("one or more canonical workspace operations failed")
+    if safe_path(rel) != resolved:
+        raise AssertionError("a later action resolved the same path differently")
+
+    print(json.dumps({
+        "result": "PASS",
+        "workspace": WORKSPACE,
+        "resolved_path": resolved,
+        "operations": operations,
+    }, separators=(",", ":")))
+    return 0
+
 if __name__ == "__main__":
+    if "--workspace-contract-check" in sys.argv:
+        raise SystemExit(workspace_contract_check())
     main()
 "####;
 
@@ -1080,6 +1181,8 @@ pub async fn pty_spawn(
     rows: u16,
     server_port: Option<u16>,
 ) -> Result<(), String> {
+    let workspace = canonical_workspace(&cwd)?;
+
     // Kill any existing session before spawning a new one.
     if let Some(old) = handle.lock().map_err(|e| e.to_string())?.take() {
         kill_session(old);
@@ -1132,9 +1235,8 @@ pub async fn pty_spawn(
         c
     };
 
-    if !cwd.is_empty() && std::path::Path::new(&cwd).is_dir() {
-        cmd.cwd(&cwd);
-    }
+    cmd.cwd(&workspace);
+    cmd.env("SAIENT_WORKSPACE", workspace.as_os_str());
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
     cmd.env(crate::paths::DATA_DIR_ENV, crate::paths::data_dir().to_string_lossy().into_owned());
@@ -1148,6 +1250,13 @@ pub async fn pty_spawn(
     cmd.env(crate::saient_loop::STATE_DIR_ENV,
             crate::saient_loop::state_dir().to_string_lossy().into_owned());
     cmd.env("PYTHONDONTWRITEBYTECODE", "1");
+    // The terminal agent is allowed to reach only the selected numeric
+    // loopback model endpoint. Never inherit a proxy that could redirect it.
+    cmd.env("NO_PROXY", "127.0.0.1,::1");
+    cmd.env("no_proxy", "127.0.0.1,::1");
+    for key in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"] {
+        cmd.env(key, "");
+    }
     // Tell the agent CLI exactly which port the model server is on, so it doesn't
     // have to scan /proc (which is Linux-only and misses dynamic ports anyway).
     if let Some(port) = server_port {
@@ -1222,7 +1331,7 @@ pub fn pty_kill(handle: tauri::State<'_, PtyHandle>) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::SAIENT_CLI_PY;
+    use super::{canonical_workspace, SAIENT_CLI_PY};
 
     #[test]
     fn generated_cli_keeps_multiline_pastes_in_one_turn() {
@@ -1249,7 +1358,9 @@ mod tests {
     fn generated_cli_enters_saient_instead_of_impersonating_her() {
         assert!(SAIENT_CLI_PY.contains("SAIENT_BRIDGE.do"));
         assert!(SAIENT_CLI_PY.contains("SAIENT_BRIDGE.say"));
-        assert!(SAIENT_CLI_PY.contains("architecture bound"));
+        assert!(SAIENT_CLI_PY.contains("ensure_formal_binding(port)"));
+        assert!(SAIENT_CLI_PY.contains("formally bound"));
+        assert!(SAIENT_CLI_PY.contains("no host fallback was used"));
         assert!(!SAIENT_CLI_PY.contains("You are Saient, a local coding agent"));
     }
 
@@ -1257,5 +1368,40 @@ mod tests {
     fn generated_cli_keeps_random_temp_paths_out_of_host_context() {
         assert!(SAIENT_CLI_PY.contains("return \"tempdir\", \"handle=@temp\", True, True"));
         assert!(SAIENT_CLI_PY.contains("never the random absolute path"));
+    }
+
+    #[test]
+    fn canonical_workspace_survives_unusual_spelling_spaces_and_later_actions() {
+        let temporary = tempfile::tempdir().unwrap();
+        let workspace = temporary.path().join("Saient begining  odd spelling");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let canonical = canonical_workspace(workspace.to_str().unwrap()).unwrap();
+        assert_eq!(canonical, std::fs::canonicalize(&workspace).unwrap());
+
+        let script = temporary.path().join("saient_cli.py");
+        std::fs::write(&script, SAIENT_CLI_PY).unwrap();
+        let python = crate::resolve::find_python().unwrap();
+        let output = std::process::Command::new(python)
+            .arg(&script)
+            .arg("--workspace-contract-check")
+            .current_dir(&workspace)
+            .env("SAIENT_WORKSPACE", &canonical)
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let payload: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(payload["result"], "PASS");
+        assert_eq!(payload["workspace"], canonical.to_string_lossy().as_ref());
+        assert_eq!(payload["operations"].as_array().unwrap().len(), 4);
+        assert!(payload["operations"].as_array().unwrap().iter().all(|row| {
+            row["ok"] == true && row["verified"] == true
+        }));
+        assert_eq!(
+            std::fs::read_to_string(
+                workspace.join(".saient/path contract begining with spaces/round trip.txt")
+            ).unwrap(),
+            "beta"
+        );
     }
 }

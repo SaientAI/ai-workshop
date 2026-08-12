@@ -5,9 +5,10 @@
 // call stopImmediatePropagation() so the terminal never receives it; unclaimed
 // keys fall through untouched, so typing and the shell keep working normally.
 
-import { ui, chat, agent } from "./state.svelte.js";
+import { ui, chat, agent, projects } from "./state.svelte.js";
 import type { Screen, AgentTab, ChatTab } from "./types.js";
 import * as T from "./tauri.js";
+import { effectiveAgiLevel, needsLoop } from "./agiLevel.js";
 
 const SCREENS: Screen[]       = ["chat", "agent", "imggen", "assets", "video", "tts", "lora", "merge"];
 const AGENT_TABS: AgentTab[]  = ["files", "terminal", "planner", "memory"];
@@ -63,6 +64,12 @@ export function handleKey(e: KeyboardEvent) {
   if (ctrl && e.shiftKey && (k === "K" || k === "k")) {
     ui.saientEnabled = !ui.saientEnabled;
     localStorage.setItem("saient_enabled", String(ui.saientEnabled));
+    // This shortcut is the same master control as the title-bar button. Keep
+    // the persistent backend loop in lockstep instead of changing only the
+    // visual flag and leaving companion/autonomous behavior behind.
+    void T.saientSetEnabled(
+      needsLoop(effectiveAgiLevel(ui.saientEnabled, projects.active?.agi_level)),
+    ).catch(() => {});
     claim(); return;
   }
 

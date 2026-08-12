@@ -7,6 +7,10 @@ import base64, io, json, os, sys
 
 # Force CPU if GPU is nearly full — TTS is fast on CPU anyway
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
+# Runtime synthesis is local-only. Full Setup prefetches the model, voices and
+# language model; a missing asset must be reported instead of quietly fetching.
+os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
 # stdout is our JSON channel and must stay clean. Third-party code writes to it:
 # misaki/en.py calls spacy.cli.download(), which spawns pip as a SUBPROCESS.
@@ -32,6 +36,14 @@ def main():
         raise RuntimeError("No text provided")
 
     print(json.dumps({"progress": 10}), file=sys.stderr, flush=True)
+
+    if lang in ("a", "b"):
+        try:
+            import en_core_web_sm  # noqa: F401 - availability check only
+        except ImportError as exc:
+            raise RuntimeError(
+                "Kokoro's English language data is not installed. Run Full Setup while temporary Internet access is authorized."
+            ) from exc
 
     from kokoro import KPipeline
     import soundfile as sf

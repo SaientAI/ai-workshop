@@ -311,13 +311,16 @@
 
 {#if lightbox}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div class="lightbox-backdrop" onclick={closeLightbox} role="presentation">
+  <div
+    class="lightbox-backdrop"
+    onclick={(e) => { if (e.target === e.currentTarget) closeLightbox(); }}
+    role="presentation"
+  >
     <button class="lightbox-close" onclick={closeLightbox}>✕</button>
     <img
       src="data:image/png;base64,{ig.resultB64}"
       alt="Generated fullscreen"
       class="lightbox-img"
-      onclick={(e) => e.stopPropagation()}
     />
   </div>
 {/if}

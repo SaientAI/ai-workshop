@@ -1,13 +1,16 @@
 {
   "schema_version": 1,
   "source_repository": "../agi",
-  "source_commit": "6b702dfd044547fcdf50d6285b3b4730e187e734",
-  "captured_at": "2026-08-09",
-  "runtime_file_count": 44,
-  "purpose": "Minimal complete Python dependency closure for run_saient.py and the desktop terminal bridge, bundled with Saient Desktop.",
+  "source_commit": "1123cf3de3fa6005981e6069a3695b90eb92aa3b",
+  "captured_with_local_changes": true,
+  "captured_at": "2026-08-11",
+  "runtime_file_count": 47,
+  "purpose": "Minimal complete Python dependency closure for run_saient.py, formal local-host binding, and the desktop terminal bridge, bundled with Saient Desktop.",
   "intentional_bundle_changes": [
     "Mutable state, conscience identity, audit logs, Choice Lab input, and v3 self-memory resolve through SAIENT_STATE_DIR.",
-    "Loaded conscience profiles always save back to the path actually loaded, not a stale absolute memory_path."
+    "Loaded conscience profiles always save back to the path actually loaded, not a stale absolute memory_path.",
+    "host_profile.py, expression.py, and voice_guard.py are copied byte-for-byte from the AGI source; binding_bridge.py is the desktop-only fail-closed stdio adapter.",
+    "The desktop expression boundary applies the source voice guard before any model text can leave stage 12."
   ],
   "files": {
     "arc_gremlin/__init__.py": {
@@ -70,6 +73,11 @@
       "source_sha256": "4a6f23cfdf04abbf4c8a3510ab2a0552a40804b03e7aabffac706fa89328912f",
       "bundled_sha256": "4a6f23cfdf04abbf4c8a3510ab2a0552a40804b03e7aabffac706fa89328912f"
     },
+    "binding_bridge.py": {
+      "source_sha256": "9c8f72cf61d4e4885a9c7d57f2883bdea7022bb80181cad67e532e7846de4718",
+      "bundled_sha256": "9c8f72cf61d4e4885a9c7d57f2883bdea7022bb80181cad67e532e7846de4718",
+      "source": "Saient Desktop formal-binding stdio adapter"
+    },
     "bridge.py": {
       "source_sha256": "341e2691a7d32adbf632e77c5772ffe4af1bee2a699fa504af5688362ec0e063",
       "bundled_sha256": "341e2691a7d32adbf632e77c5772ffe4af1bee2a699fa504af5688362ec0e063"
@@ -91,8 +99,8 @@
       "bundled_sha256": "00d6370ad625516b4ff33cd1e8eca28d103ea6bc10a1d247fc635eab4241ffb9"
     },
     "expression.py": {
-      "source_sha256": "7bd63fec9a7fc96b08d4dc0adb62f907ca717b8e5afb8c615f82c05970644ada",
-      "bundled_sha256": "7bd63fec9a7fc96b08d4dc0adb62f907ca717b8e5afb8c615f82c05970644ada"
+      "source_sha256": "c91394c8856d9452ed6552cbba8ae4664a30ccaaf62613c41febeaaa295ded96",
+      "bundled_sha256": "c91394c8856d9452ed6552cbba8ae4664a30ccaaf62613c41febeaaa295ded96"
     },
     "gate.py": {
       "source_sha256": "6a03e6adf4ab19e2c47ba7a759db16060562480b85dd1e947cb3452a18de6637",
@@ -106,9 +114,13 @@
       "source_sha256": "c117c925c3dfcbea768510c323c517cc07a2449e08fb73f49bf5c238d84ea34e",
       "bundled_sha256": "c117c925c3dfcbea768510c323c517cc07a2449e08fb73f49bf5c238d84ea34e"
     },
+    "host_profile.py": {
+      "source_sha256": "bccd4585008860bb6d0456064c8e5540d87876a2373068c49bda328b3f0a82f1",
+      "bundled_sha256": "bccd4585008860bb6d0456064c8e5540d87876a2373068c49bda328b3f0a82f1"
+    },
     "integrity.py": {
-      "source_sha256": "8effb8f465cb0eeb9b1a21b621f8094fcc9cb0d0aa6c3ab8c364ffc2527f7422",
-      "bundled_sha256": "8effb8f465cb0eeb9b1a21b621f8094fcc9cb0d0aa6c3ab8c364ffc2527f7422"
+      "source_sha256": "f649d81e07f1f48b393e2656339c8f2b4be29298b35c15422efc882c91e9f6bf",
+      "bundled_sha256": "f649d81e07f1f48b393e2656339c8f2b4be29298b35c15422efc882c91e9f6bf"
     },
     "loop.py": {
       "source_sha256": "454dd96891fd7b5ce591e575841e745593221c7875ee83d4a9609950828d6602",
@@ -127,8 +139,8 @@
       "bundled_sha256": "65b277adaf11b4f42e0b136cb4a30beee011f7827383ce1b3440257b65015d19"
     },
     "orchestrator.py": {
-      "source_sha256": "ef5d48127a2a8963482efe538b7c65efb25ff8f20b5d23d774196bd8677f40e4",
-      "bundled_sha256": "ef5d48127a2a8963482efe538b7c65efb25ff8f20b5d23d774196bd8677f40e4"
+      "source_sha256": "a5279f8e294003db84dbc5080e3d9c9d8e7f8ebc4348d8d8cd5b95a63a90fbf2",
+      "bundled_sha256": "a5279f8e294003db84dbc5080e3d9c9d8e7f8ebc4348d8d8cd5b95a63a90fbf2"
     },
     "proposer.py": {
       "source_sha256": "5b22066d357e3910b55e54663715d0224e00f3bb128608c50798e2f0cf288e68",
@@ -185,6 +197,10 @@
     "trend.py": {
       "source_sha256": "a04adce8935cb1e8387d6b66c506bd0757da6514381e78e435028c78bb2880a1",
       "bundled_sha256": "a04adce8935cb1e8387d6b66c506bd0757da6514381e78e435028c78bb2880a1"
+    },
+    "voice_guard.py": {
+      "source_sha256": "d7c2fd0ddff3dbd7c7b1c4574837fd3ad66e96a2c26b8df97ecb7ac44de8f905",
+      "bundled_sha256": "d7c2fd0ddff3dbd7c7b1c4574837fd3ad66e96a2c26b8df97ecb7ac44de8f905"
     }
   }
 }
