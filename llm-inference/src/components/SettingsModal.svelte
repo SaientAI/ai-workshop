@@ -267,6 +267,7 @@
     width: 680px; max-width: 94vw; max-height: 90vh;
     background: #15181e; border: 1px solid #2a2f39; border-radius: 12px;
     box-shadow: 0 24px 60px rgba(0,0,0,0.55); overflow: hidden;
+    display: flex; flex-direction: column;
   }
   .settings-head {
     display: flex; align-items: center; justify-content: space-between;
@@ -276,7 +277,10 @@
   .settings-sub { color: #8790a0; font-size: 12px; margin-top: 3px; }
   .settings-x { background: none; border: 0; color: #6b7280; font-size: 22px; cursor: pointer; line-height: 1; }
   .settings-x:hover { color: #cdd3df; }
-  .settings-body { display: grid; grid-template-columns: 150px 1fr; min-height: 390px; }
+  .settings-body {
+    display: grid; grid-template-columns: 150px 1fr; min-height: 0;
+    flex: 1; overflow: hidden;
+  }
   .settings-nav {
     background: #101319; border-right: 1px solid #2a2f39; padding: 12px;
     display: flex; flex-direction: column; gap: 6px;

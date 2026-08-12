@@ -28,5 +28,9 @@ assert.match(imggen, /resolve::find_image_python\(\)/,
   "Image Gen must preflight its creative Python modules");
 assert.match(settings, /keeps existing models, settings, downloads, and environment files/,
   "Settings must accurately state that recovery is non-destructive");
+assert.match(settings, /\.settings-card\s*\{[\s\S]*display:\s*flex;\s*flex-direction:\s*column/,
+  "the Settings card must constrain its body within the viewport");
+assert.match(settings, /\.settings-body\s*\{[\s\S]*min-height:\s*0;[\s\S]*overflow:\s*hidden/,
+  "the Settings body must allow the panel to shrink and scroll");
 
-console.log("setupRecovery.test.js — 10 passed");
+console.log("setupRecovery.test.js — 12 passed");
