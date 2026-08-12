@@ -311,6 +311,10 @@ export const setInternetEnabled = (enabled: boolean) =>
 export const setSetupInternetAuthorized = (authorized: boolean) =>
   invoke<void>("set_setup_internet_authorized", { authorized });
 
+/** One-request network authority for the signed updater. Never changes Settings. */
+export const setUpdateInternetAuthorized = (authorized: boolean) =>
+  invoke<void>("set_update_internet_authorized", { authorized });
+
 // ── Dep check ─────────────────────────────────────────────────────────────────
 
 export const checkDependencies = () => invoke<DepReport>("check_dependencies");
