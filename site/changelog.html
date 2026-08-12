@@ -6,7 +6,10 @@
 <title>Changelog — Saient</title>
 <meta name="description" content="Saient release notes — what's new in each version of the local AI desktop app." />
 <link rel="canonical" href="https://saient.co.uk/changelog" />
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230d0d0f'/%3E%3Ctext x='16' y='21' font-family='monospace' font-size='12' fill='%236c8ef5' text-anchor='middle' font-weight='700'%3E%5B%3E_%3C%5D%3C/text%3E%3C/svg%3E" />
+<link rel="icon" href="/favicon.ico" sizes="any" />
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/images/favicon-32.png" />
+<link rel="icon" type="image/png" sizes="192x192" href="/assets/images/favicon-192.png" />
+<link rel="apple-touch-icon" href="/assets/images/apple-touch-icon.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Martian+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
@@ -50,6 +53,7 @@
     <a class="brand" href="/"><span class="face">[&gt;_&lt;]</span><span>SAIENT</span></a>
     <div class="nav-links">
       <a class="link" href="/#features">Features</a>
+      <a class="link" href="/#download">Free download</a>
       <a class="link" href="/help">Help</a>
       <a class="link" href="/changelog">Changelog</a>
     </div>
@@ -78,6 +82,60 @@
       <li><b>Network controls:</b> normal model traffic stays on numeric loopback endpoints and setup/download authorization is explicit and temporary</li>
       <li><b>Cleaner interface checks:</b> the strict Svelte gate passes with no errors or warnings, including corrected image-lightbox click handling</li>
       <li><b>Direct Pi hosting:</b> Windows x64 and Debian/Ubuntu amd64 packages and signed update metadata are served from <code>saient.co.uk</code>, not Vercel</li>
+    </ul>
+  </div>
+
+  <div class="rel">
+    <h2>1.0.9 <span class="date">9 August 2026</span></h2>
+    <ul>
+      <li><b>Multiline terminal tasks:</b> pasted prompts are coalesced into one agent turn instead of being submitted one line at a time</li>
+      <li><b>Correct project context:</b> the terminal agent reports and works from the accepted workspace; the release test used <code>/home/tiny/projects/saient/desktop</code></li>
+      <li><b>Isolated diagnostics:</b> new <code>env</code> and <code>tempdir</code> tools let the agent inspect its environment and create a managed <code>@temp</code> workspace without writing diagnostic files into the project</li>
+      <li><b>Loop protection:</b> repeated identical tool calls are bounded and interrupted generations return to the prompt without a Python traceback</li>
+      <li><b>Release evidence:</b> the exact diagnostic task completed end to end on the Linux release host; the Windows x64 package passed cross-build, content and updater-signature checks but still awaits a real Windows runtime test</li>
+    </ul>
+  </div>
+
+  <div class="rel">
+    <h2>1.0.8 <span class="date">9 August 2026</span></h2>
+    <ul>
+      <li><b>Workspace switch fix:</b> changing the accepted project now restarts the Agent terminal in that project instead of leaving it in the previous workspace</li>
+      <li><b>Windows x64 test installer:</b> the first published free no-key current-user NSIS package is hosted directly on <code>saient.co.uk</code> with the CPU GGUF engine</li>
+      <li><b>Signed future Windows updates:</b> the Windows app uses Tauri's signed updater and direct Saient-hosted release endpoint; installation from older builds is manual once</li>
+      <li><b>Honest Windows boundary:</b> the cross-built package passed compile, package-content and updater-signature checks, but installation/runtime and GPU/Python-studio behaviour still require a real Windows machine</li>
+      <li><b>Clean platform packages:</b> the Linux package contains only Linux CPU/CUDA engines, while the Windows package contains only the Windows CPU engine</li>
+    </ul>
+  </div>
+
+  <div class="rel">
+    <h2>1.0.7 <span class="date">9 August 2026</span></h2>
+    <ul>
+      <li><b>One-click Linux updates:</b> after the signed package is downloaded and verified, Saient installs it and restarts the desktop app</li>
+      <li><b>Existing administrator policy:</b> machines already configured for passwordless administrator commands update without another prompt</li>
+      <li><b>Normal Linux fallback:</b> when passwordless approval is unavailable, Saient asks through the operating system's standard administrator dialog</li>
+      <li><b>No GitHub detour:</b> release metadata and Debian packages continue to come directly from <code>saient.co.uk</code></li>
+    </ul>
+  </div>
+
+  <div class="rel">
+    <h2>1.0.6 <span class="date">9 August 2026</span></h2>
+    <ul>
+      <li><b>Signed in-app Linux updates:</b> Saient can download the Debian package, verify its Ed25519 signature, size and SHA-256, request normal administrator approval, install it and restart</li>
+      <li><b>Direct Saient hosting:</b> update metadata and packages are served from <code>saient.co.uk</code>; the update button no longer detours through GitHub</li>
+      <li><b>Safe package rename:</b> the Debian package declares its replacement of the historical <code>ai-workshop</code> package instead of forcing file overwrites</li>
+      <li><b>One-time bootstrap:</b> v1.0.3 users still need to install this package manually once because v1.0.3 only opened a download page</li>
+      <li>Local inference remains free and requires no Saient licence key or hosted-inference key</li>
+    </ul>
+  </div>
+
+  <div class="rel">
+    <h2>1.0.4 <span class="date">9 August 2026</span></h2>
+    <ul>
+      <li><b>Free, no-key release:</b> removed the former trial and product-key gate; no Saient account or hosted-inference key is required for local inference</li>
+      <li><b>Persistent agent runtime:</b> project modes, checkpoints, memory/provenance and the Saient loop are bundled with the desktop application</li>
+      <li><b>Separate safety controls:</b> project write permission and Internet permission are distinct</li>
+      <li><b>Distribution at release:</b> the audited Debian/Ubuntu amd64 package shipped first; the replacement Windows test build was first published with v1.0.8 and AppImage remains pending</li>
+      <li>The historical v1.0.3 release remains available only as an explicitly labelled obsolete licensed build</li>
     </ul>
   </div>
 
@@ -118,7 +176,7 @@
       <li><b>Vision analyzer</b> — ask questions about any image (Moondream2)</li>
       <li><b>Text-to-speech</b> and <b>LoRA training</b> + checkpoint merge</li>
       <li><b>One-click model downloads</b> from any Hugging Face GGUF repo, straight into your models folder</li>
-      <li><b>Launch password</b> protection and a 30-day free trial</li>
+      <li><b>Launch password</b> protection; this historical release still used the former trial/product-key gate and is now obsolete</li>
       <li>Runs 100% offline on Linux &amp; Windows — bundled CUDA engine, no setup</li>
     </ul>
   </div>
@@ -128,6 +186,7 @@
   <div class="wrap foot-inner">
     <a class="brand" href="/"><span class="face">[&gt;_&lt;]</span><span>SAIENT</span></a>
     <div class="foot-links">
+      <a href="/#download">Free download</a>
       <a href="/help">Help</a>
       <a href="/changelog">Changelog</a>
       <a href="/terms">Terms</a>

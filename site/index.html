@@ -3,24 +3,87 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Saient — Local AI workshop for your machine</title>
-<meta name="description" content="Saient is a local AI desktop app: chat, a real coding agent, image &amp; video generation, a vision analyzer, text-to-speech, and LoRA training — all running on your own machine. No cloud, no API keys, no data leaving your computer." />
+<title>Saient — Free All-in-One Local AI Platform</title>
+<meta name="description" content="Run GGUF LLMs, the Saient agent, SDXL images, Wan video, Kokoro speech and SDXL LoRA training on your own hardware. Free; no Saient key or hosted-inference key." />
 <link rel="canonical" href="https://saient.co.uk/" />
 <meta property="og:type" content="website" />
-<meta property="og:title" content="Saient — Local AI workshop for your machine" />
-<meta property="og:description" content="Chat, a real coding agent, image generation, TTS and LoRA training — all running 100% on your own machine. 30 days free, then £20 once." />
+<meta property="og:title" content="Saient — Free All-in-One Local AI Platform" />
+<meta property="og:description" content="Local LLMs, an agent, SDXL images, Wan video, Kokoro TTS and SDXL LoRA training. Free, with no Saient licence key." />
 <meta property="og:url" content="https://saient.co.uk/" />
 <meta name="twitter:card" content="summary_large_image" />
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
-  "@type": "SoftwareApplication",
-  "name": "Saient",
-  "applicationCategory": "DeveloperApplication",
-  "operatingSystem": "Linux, Windows",
-  "description": "Local AI desktop app: chat, a coding agent, image and video generation, a vision analyzer, text-to-speech and LoRA training — all running on your own machine."}
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://saient.co.uk/#organization",
+      "name": "Saient",
+      "alternateName": ["Saient AI", "SaientAI"],
+      "url": "https://saient.co.uk/",
+      "logo": {
+        "@type": "ImageObject",
+        "url": "https://saient.co.uk/assets/images/saient-logo-mark.png"
+      },
+      "description": "Saient builds local-first AI software: a desktop app and an Android app that run large language models, image generation and video generation on your own hardware, plus Quartz, the open-source Rust inference engine behind them.",
+      "email": "chrishall@staticplay.co.uk",
+      "sameAs": [
+        "https://github.com/SaientAI",
+        "https://github.com/SaientAI/saient-quartz",
+        "https://github.com/SaientAI/saient",
+        "https://github.com/SaientAI/saient-releases",
+        "https://crates.io/crates/saient-quartz"
+      ],
+      "knowsAbout": [
+        "local AI inference",
+        "on-device text-to-video generation",
+        "Wan2.1",
+        "GGUF quantization",
+        "Vulkan compute",
+        "Rust inference engines"
+      ]
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://saient.co.uk/#website",
+      "name": "Saient",
+      "alternateName": "Saient AI",
+      "url": "https://saient.co.uk/",
+      "publisher": {"@id": "https://saient.co.uk/#organization"},
+      "inLanguage": "en-GB"
+    },
+    {
+      "@type": "SoftwareApplication",
+      "name": "Saient",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "Linux",
+      "description": "Local AI desktop app: chat, a coding agent, image and video generation, a vision analyzer, text-to-speech and LoRA training — all running on your own machine.",
+      "publisher": {"@id": "https://saient.co.uk/#organization"},
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "GBP",
+        "availability": "https://schema.org/InStock"
+      }
+    },
+    {
+      "@type": "SoftwareSourceCode",
+      "name": "Quartz",
+      "alternateName": "saient-quartz",
+      "description": "Quartz is Saient's open-source inference engine: a from-scratch Rust runtime that runs GGUF-quantised language, image and video models on CPU, CUDA or hand-written Vulkan compute shaders, with no llama.cpp, ggml, Candle or PyTorch underneath.",
+      "programmingLanguage": "Rust",
+      "license": "https://opensource.org/licenses/MIT",
+      "codeRepository": "https://github.com/SaientAI/saient-quartz",
+      "url": "https://saient.co.uk/quartz-engine",
+      "author": {"@id": "https://saient.co.uk/#organization"}
+    }
+  ]
+}
 </script>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230d0d0f'/%3E%3Ctext x='16' y='21' font-family='monospace' font-size='12' fill='%236c8ef5' text-anchor='middle' font-weight='700'%3E%5B%3E_%3C%5D%3C/text%3E%3C/svg%3E" />
+<link rel="icon" href="/favicon.ico" sizes="any" />
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/images/favicon-32.png" />
+<link rel="icon" type="image/png" sizes="192x192" href="/assets/images/favicon-192.png" />
+<link rel="apple-touch-icon" href="/assets/images/apple-touch-icon.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Martian+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -279,8 +342,9 @@
       <a class="link" href="#features">Features</a>
       <a class="link" href="#guides">Guides</a>
       <a class="link" href="#agent">Agent</a>
+      <a class="link" href="/comfyui-alternative">Compare</a>
       <a class="link" href="/help">Help</a>
-      <a class="btn btn-primary" href="#download">Download</a>
+      <a class="btn btn-primary" href="#download">Free download</a>
     </div>
   </div>
 </nav>
@@ -289,15 +353,15 @@
 <header class="hero" id="top">
   <div class="wrap hero-grid">
     <div>
-      <div class="eyebrow reveal" style="--d:0ms"><span class="dot"></span> Runs 100% on your machine · no cloud</div>
+      <div class="eyebrow reveal" style="--d:0ms"><span class="dot"></span> Free local AI inference · no Saient key</div>
       <h1 class="reveal" style="--d:90ms">Your machine.<br>Your model.<br><span class="stroke">Your AI workshop.</span></h1>
       <p class="lede reveal" style="--d:180ms">
         Saient is a local AI desktop app — <b>chat</b>, a real <b>coding agent</b>,
         <b>image &amp; video generation</b>, a <b>vision analyzer</b>, <b>text-to-speech</b>, and <b>LoRA training</b>,
-        all running on your own GPU. No API keys, no subscriptions, nothing leaves your computer.
+        running on your own hardware. Local inference needs no Saient account, licence key or hosted-inference key.
       </p>
       <div class="hero-cta reveal" style="--d:270ms">
-        <a class="btn btn-primary" href="#download">↓ Download for Linux &amp; Windows</a>
+        <a class="btn btn-primary" href="#download">↓ Download Saient</a>
         <a class="btn" href="#features">Explore features</a>
       </div>
       <div class="hero-meta reveal" style="--d:360ms">
@@ -334,8 +398,8 @@
 <section class="section" id="features">
   <div class="wrap">
     <div class="sec-tag">What's inside</div>
-    <h2>One app. Seven studios. Zero cloud.</h2>
-    <p class="sec-lede">Everything a local AI workstation needs, in a single native window — each tool talks to the same on-device model.</p>
+    <h2>One app. Seven studios. No required cloud inference.</h2>
+    <p class="sec-lede">Task-focused local AI tools in a single native window. Language, image, video and speech use model-specific local runtimes.</p>
 
     <div class="features">
       <div class="card reveal">
@@ -352,14 +416,14 @@
         <div class="kbd">Ctrl · Shift · K — toggle Saient</div>
       </div>
 
-      <a class="card reveal" href="/ai-image-generator" aria-label="Open the Saient AI image generator page">
+      <a class="card reveal" href="/run-sdxl-locally" aria-label="Open the guide to running SDXL locally">
         <div class="ic">◐</div>
         <h3>Image Gen</h3>
         <p>SDXL text-to-image with LoRA support, schedulers, live progress, and an optional face-detail pass.</p>
         <div class="tags"><span class="tag">SDXL</span><span class="tag">LoRA</span></div>
       </a>
 
-      <a class="card reveal" href="/ai-video-generator" aria-label="Open the Saient AI video generator page">
+      <a class="card reveal" href="/run-wan-locally" aria-label="Open the guide to running Wan locally">
         <div class="ic">▷</div>
         <h3>Video Gen</h3>
         <p>Text-to-video and image-to-video with Wan &amp; CogVideoX — frame control, live progress, and an optional refine &amp; upscale pass.</p>
@@ -373,19 +437,19 @@
         <div class="tags"><span class="tag">Moondream2</span><span class="tag">local</span></div>
       </div>
 
-      <div class="card reveal">
+      <a class="card reveal" href="/local-text-to-speech">
         <div class="ic">♪</div>
         <h3>Text-to-Speech</h3>
-        <p>Natural, expressive speech via Kokoro voices — generated entirely offline.</p>
+        <p>Kokoro American and British voices with speed control and local 24&nbsp;kHz WAV output.</p>
         <div class="tags"><span class="tag">Kokoro</span></div>
-      </div>
+      </a>
 
-      <div class="card reveal">
+      <a class="card reveal" href="/train-lora-locally">
         <div class="ic">⊞</div>
         <h3>LoRA &amp; Merge</h3>
-        <p>Train your own SDXL LoRAs and merge checkpoints, with a built-in dataset cleaner.</p>
+        <p>Train SDXL LoRAs with a dataset cleaner. A local checkpoint merge worker exists; the v1.0.10 picker limitation is documented.</p>
         <div class="tags"><span class="tag">train</span><span class="tag">merge</span></div>
-      </div>
+      </a>
 
       <a class="card reveal" href="/quartz-engine">
         <div class="ic">⚡</div>
@@ -402,50 +466,17 @@
   <div class="wrap">
     <div class="sec-tag">Guides and use cases</div>
     <h2>Practical local AI pages.</h2>
-    <p class="sec-lede">Useful pages for people searching for prompt makers, local AI agents, image generation, video generation, and private AI setup.</p>
+    <p class="sec-lede">Step-by-step pages with real screenshots, exact model boundaries, hardware notes, proof status, downloads and source links.</p>
 
     <div class="features">
-      <a class="card reveal" href="/ai-prompt-maker">
-        <div class="ic">Pr</div>
-        <h3>AI prompt maker</h3>
-        <p>Prompt templates for image generation, video generation, chat and agent workflows.</p>
-        <div class="tags"><span class="tag">how to prompt</span><span class="tag">templates</span></div>
-      </a>
-
-      <a class="card reveal" href="/ai-image-generator">
-        <div class="ic">◐</div>
-        <h3>Local AI image generator</h3>
-        <p>SDXL and LoRA image generation on your own machine, with no cloud API keys.</p>
-        <div class="tags"><span class="tag">SDXL</span><span class="tag">LoRA</span></div>
-      </a>
-
-      <a class="card reveal" href="/ai-video-generator">
-        <div class="ic">▷</div>
-        <h3>Local AI video generator</h3>
-        <p>Text-to-video and image-to-video workflows with practical prompt guidance.</p>
-        <div class="tags"><span class="tag">t2v</span><span class="tag">i2v</span></div>
-      </a>
-
-      <a class="card reveal" href="/local-ai-agent">
-        <div class="ic">⌘</div>
-        <h3>Local AI agent</h3>
-        <p>A guide to Saient's coding agent for files, terminal tasks and verified changes.</p>
-        <div class="tags"><span class="tag">coding agent</span><span class="tag">offline</span></div>
-      </a>
-
-      <a class="card reveal" href="/quartz-engine">
-        <div class="ic">Qz</div>
-        <h3>Quartz inference engine</h3>
-        <p>How Saient runs supported language and image models locally without cloud inference or ONNX Runtime.</p>
-        <div class="tags"><span class="tag">Vulkan</span><span class="tag">on-device</span></div>
-      </a>
-
-      <a class="card reveal" href="/how-to-run-ai-locally">
-        <div class="ic">&gt;_</div>
-        <h3>How to run AI locally</h3>
-        <p>Install Saient, choose a GGUF model, load it, and use chat, agent, image and video tools offline.</p>
-        <div class="tags"><span class="tag">GGUF</span><span class="tag">privacy</span><span class="tag">local setup</span></div>
-      </a>
+      <a class="card reveal" href="/run-sdxl-locally"><div class="ic">SD</div><h3>Run SDXL locally</h3><p>Install, add a model, choose CUDA or CPU, tune settings and inspect a real image output.</p><div class="tags"><span class="tag">SDXL</span><span class="tag">how-to</span></div></a>
+      <a class="card reveal" href="/run-wan-locally"><div class="ic">Wn</div><h3>Run Wan locally</h3><p>Text-to-video, image-to-video, actual model routes, memory boundaries and MP4 proof.</p><div class="tags"><span class="tag">Wan2.1</span><span class="tag">Wan2.2</span></div></a>
+      <a class="card reveal" href="/run-llm-locally"><div class="ic">LLM</div><h3>Run an LLM locally</h3><p>GGUF setup, architecture support, RAM/VRAM sizing and a live local response check.</p><div class="tags"><span class="tag">GGUF</span><span class="tag">tinyq4</span></div></a>
+      <a class="card reveal" href="/local-ai-agent"><div class="ic">⌘</div><h3>Saient agent</h3><p>The direct boundary between host-model proposals and Saient's tools, state, memory and control loop.</p><div class="tags"><span class="tag">terminal</span><span class="tag">memory</span></div></a>
+      <a class="card reveal" href="/train-lora-locally"><div class="ic">Lo</div><h3>Train an SDXL LoRA</h3><p>Dataset preparation, exact trainer scope, hardware unknowns and the current proof boundary.</p><div class="tags"><span class="tag">SDXL</span><span class="tag">training</span></div></a>
+      <a class="card reveal" href="/merge-ai-models"><div class="ic">Σ</div><h3>Merge AI models</h3><p>Weighted and add-difference checkpoint merges, memory behavior and the confirmed v1.0.10 picker defect.</p><div class="tags"><span class="tag">honest status</span><span class="tag">safetensors</span></div></a>
+      <a class="card reveal" href="/local-text-to-speech"><div class="ic">♪</div><h3>Local text-to-speech</h3><p>Kokoro voices, CPU execution, WAV output and current evidence status.</p><div class="tags"><span class="tag">Kokoro</span><span class="tag">WAV</span></div></a>
+      <a class="card reveal" href="/comfyui-alternative"><div class="ic">vs</div><h3>Saient vs ComfyUI</h3><p>A direct comparison: focused studios and agent versus node graphs, custom nodes and wider model coverage.</p><div class="tags"><span class="tag">comparison</span><span class="tag">no spin</span></div></a>
     </div>
   </div>
 </section>
@@ -457,12 +488,12 @@
       <div>
         <div class="sec-tag">The agent</div>
         <h2>It doesn't just answer.<br>It does the work.</h2>
-        <p class="sec-lede">Open the Agent screen, type <span class="mono accent">saient</span>, and hand it a goal. It runs an autonomous plan→act→verify loop until the job is done.</p>
+        <p class="sec-lede">Open the Agent screen, choose a project and local model, then give it a scoped goal. Saient can run a plan→act→verify loop within the permissions you grant.</p>
         <ul class="loop-list">
           <li><span class="step">plan</span><span><strong>Breaks the goal down</strong> into concrete steps and a JSON plan you can edit.</span></li>
           <li><span class="step">act</span><span><strong>Reads, writes, edits and runs</strong> inside a sandboxed workspace.</span></li>
-          <li><span class="step">verify</span><span><strong>Checks its own output</strong>, catches errors, and re-plans until it succeeds.</span></li>
-          <li><span class="step">safe</span><span><strong>Write mode is off by default</strong>; destructive tools ask before running. Every action is logged to an audit trail.</span></li>
+          <li><span class="step">verify</span><span><strong>Runs explicit checks</strong>, records feedback, and can re-plan after an error.</span></li>
+          <li><span class="step">safe</span><span><strong>Write mode is off by default</strong>; project level, sandbox and confirmation settings control what it may do.</span></li>
         </ul>
       </div>
       <div class="window reveal">
@@ -489,13 +520,13 @@
 <section class="section" id="private" style="padding-top:24px">
   <div class="wrap">
     <div class="sec-tag">Local-first, by design</div>
-    <h2>Your data never leaves the building.</h2>
+    <h2>Local inference data stays on your machine.</h2>
     <div class="privacy reveal" style="margin-top:30px">
       <div class="privacy-grid">
-        <div class="pv"><div class="n green">0</div><div class="l">bytes sent to the cloud</div></div>
-        <div class="pv"><div class="n green">0</div><div class="l">API keys required</div></div>
-        <div class="pv"><div class="n blue">100%</div><div class="l">offline after setup</div></div>
-        <div class="pv"><div class="n blue">∞</div><div class="l">generations, no metering</div></div>
+        <div class="pv"><div class="n green">0</div><div class="l">Saient licence keys required</div></div>
+        <div class="pv"><div class="n green">0</div><div class="l">hosted-inference keys required</div></div>
+        <div class="pv"><div class="n blue">local</div><div class="l">prompts and model execution</div></div>
+        <div class="pv"><div class="n blue">free</div><div class="l">no Saient inference metering</div></div>
       </div>
     </div>
   </div>
@@ -508,13 +539,13 @@
 /|#|\
 /   \</pre>
     <h2 class="reveal">Saient is ready.</h2>
-    <p class="reveal">Download the desktop app, point it at a GGUF model, and you've got a full AI workshop that answers to nobody but you.</p>
+    <p class="reveal">Download the free desktop app, add the models you choose, and run supported AI workflows on your own hardware.</p>
     <div class="hero-cta reveal">
       <a class="btn btn-primary" href="/downloads/Saient_1.0.16_amd64.deb" download>↓ Debian / Ubuntu · amd64</a>
-      <a class="btn" href="/downloads/Saient_1.0.16_x64-setup.exe" download>↓ Windows · x64 test build</a>
+      <a class="btn btn-primary" href="/downloads/Saient_1.0.16_x64-setup.exe" download>↓ Windows · x64 test build</a>
       <a class="btn" href="/release-manifest.json">Release details + SHA-256</a>
     </div>
-    <div style="margin-top:14px;font-size:12.5px;color:var(--text3)">v1.0.16 · packages hosted directly on saient.co.uk · <a href="/changelog" style="color:var(--text2)">release notes</a><br /><a href="https://github.com/SaientAI/ai-workshop/blob/master/CODE_SIGNING_POLICY.md" style="color:var(--text2)">Code signing policy</a> · Free code signing provided by <a href="https://signpath.io/" style="color:var(--text2)">SignPath.io</a>, certificate by <a href="https://signpath.org/" style="color:var(--text2)">SignPath Foundation</a>.<br />SignPath approval and workflow integration are pending; the current Windows installer is not Authenticode-signed and remains a test build pending a real Windows installation/runtime check.</div>
+    <div style="margin-top:14px;font-size:12.5px;color:var(--text3)">v1.0.16 · free and no-key · packages hosted directly on saient.co.uk · <a href="/changelog" style="color:var(--text2)">release notes</a><br /><a href="https://github.com/SaientAI/ai-workshop/blob/master/CODE_SIGNING_POLICY.md" style="color:var(--text2)">Code signing policy</a> · Free code signing provided by <a href="https://signpath.io/" style="color:var(--text2)">SignPath.io</a>, certificate by <a href="https://signpath.org/" style="color:var(--text2)">SignPath Foundation</a>.<br />SignPath approval and workflow integration are pending. The current Windows x64 installer is a CPU-LLM test build pending a real Windows installation/runtime check; it is not Authenticode-signed, so Windows may show “Unknown publisher.” Replacement AppImage remains pending.</div>
   </div>
 </section>
 <footer>
@@ -523,10 +554,14 @@
     <div class="foot-links">
       <a href="#features">Features</a>
       <a href="/ai-prompt-maker">Prompt maker</a>
-      <a href="/ai-image-generator">Image gen</a>
-      <a href="/ai-video-generator">Video gen</a>
+      <a href="/run-sdxl-locally">Run SDXL</a>
+      <a href="/run-wan-locally">Run Wan</a>
+      <a href="/run-llm-locally">Run LLMs</a>
+      <a href="/run-wan2-1-locally-on-android">Wan2.1 on Android</a>
+      <a href="/how-wan-2-1-runs-on-a-phone">How Wan2.1 works</a>
       <a href="/local-ai-agent">Agent</a>
       <a href="/quartz-engine">Quartz</a>
+      <a href="/comfyui-alternative">Compare</a>
       <a href="/help">Help</a>
       <a href="/terms">Terms</a>
       <a href="/privacy">Privacy</a>
