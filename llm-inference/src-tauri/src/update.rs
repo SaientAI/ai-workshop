@@ -361,7 +361,7 @@ async fn validate_deb(package: &Path, expected_version: &str) -> Result<(), Stri
 
 #[tauri::command]
 pub async fn check_update(app: AppHandle) -> Result<UpdateInfo, String> {
-    crate::internet::require_enabled("Update checks")?;
+    crate::internet::require_update_enabled("Update checks")?;
     let current = app.package_info().version.to_string();
 
     #[derive(Deserialize)]
@@ -407,7 +407,7 @@ pub async fn install_update(
     app: AppHandle,
     expected_version: String,
 ) -> Result<InstallUpdateResult, String> {
-    crate::internet::require_enabled("Installing updates")?;
+    crate::internet::require_update_enabled("Installing updates")?;
 
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     {

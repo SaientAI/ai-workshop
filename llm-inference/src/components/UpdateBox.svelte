@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import { listen } from "@tauri-apps/api/event";
   import { open } from "@tauri-apps/plugin-shell";
   import { update, toast } from "../lib/state.svelte.js";
@@ -9,13 +10,38 @@
   let installMessage = $state("");
   let downloaded = $state(0);
   let total = $state(0);
+  let updateNetworkGranted = false;
 
   const percent = $derived(total > 0 ? Math.min(100, Math.round(downloaded * 100 / total)) : 0);
+
+  onDestroy(() => { void releaseUpdateNetwork(); });
+
+  async function grantUpdateNetwork() {
+    await T.setUpdateInternetAuthorized(true);
+    updateNetworkGranted = true;
+  }
+
+  async function releaseUpdateNetwork() {
+    if (!updateNetworkGranted) return;
+    updateNetworkGranted = false;
+    await T.setUpdateInternetAuthorized(false).catch(() => {});
+  }
+
+  function friendlyUpdateError(error: unknown, action: "check" | "install") {
+    const raw = String(error).replace(/^Error:\s*/i, "").trim();
+    if (/needs temporary Internet access|needs Internet access/i.test(raw)) {
+      return `Saient could not authorize temporary Internet access for the update ${action}. Try again.`;
+    }
+    return action === "check"
+      ? `Update check failed: ${raw || "unknown error"}`
+      : `Update failed: ${raw || "unknown error"}`;
+  }
 
   async function check() {
     if (update.checking) return;
     update.checking = true; update.error = "";
     try {
+      await grantUpdateNetwork();
       const u = await T.checkUpdate();
       update.checked = true;
       update.available = u.update_available;
@@ -26,8 +52,9 @@
       update.notes = u.notes;
       update.dismissed = false;
     } catch (e) {
-      update.error = "Couldn't reach the update server. Check your connection and try again.";
+      update.error = friendlyUpdateError(e, "check");
     } finally {
+      await releaseUpdateNetwork();
       update.checking = false;
     }
   }
@@ -46,6 +73,7 @@
     total = 0;
     let unlisten: (() => void) | undefined;
     try {
+      await grantUpdateNetwork();
       unlisten = await listen<T.UpdateProgress>("update-progress", (event) => {
         installMessage = event.payload.message;
         downloaded = event.payload.downloaded;
@@ -56,9 +84,10 @@
       await new Promise((resolve) => setTimeout(resolve, 600));
       await T.relaunchAfterUpdate();
     } catch (e) {
-      update.error = `Update failed: ${String(e)}`;
+      update.error = friendlyUpdateError(e, "install");
       installing = false;
     } finally {
+      await releaseUpdateNetwork();
       unlisten?.();
     }
   }
@@ -123,6 +152,11 @@
       <button class="ub-site" onclick={visitSite} disabled={installing}>Visit site</button>
     </div>
 
+    <div class="ub-network-note">
+      Check now and Install use temporary access only for Saient's signed update servers.
+      This does not turn on Internet access for the agent.
+    </div>
+
     <button class="ub-diag" onclick={copyDiagnostics}>Copy diagnostics for support</button>
     <button class="ub-close" onclick={onClose}>Close</button>
   </div>
@@ -164,6 +198,9 @@
   }
   .ub-check:hover, .ub-site:hover { border-color: #5b8cff; }
   .ub-check:disabled { opacity: 0.5; cursor: default; }
+  .ub-network-note {
+    margin-top: 12px; color: #788292; font-size: 11px; line-height: 1.45;
+  }
   .ub-diag {
     margin-top: 16px; background: none; border: 0; color: #8a93a3; cursor: pointer; font-size: 12px; display: block; width: 100%;
   }

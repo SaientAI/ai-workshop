@@ -359,6 +359,11 @@ fn set_setup_internet_authorized(authorized: bool) {
     internet::set_setup_authorized(authorized);
 }
 
+#[command]
+fn set_update_internet_authorized(authorized: bool) {
+    internet::set_update_authorized(authorized);
+}
+
 // ── Inference: Load model ─────────────────────────────────────────────────────
 
 #[command]
@@ -2677,6 +2682,7 @@ fn main() {
             check_dependencies,
             // Internet/network access gate
             get_internet_enabled, set_internet_enabled, set_setup_internet_authorized,
+            set_update_internet_authorized,
             // Game asset builder
             asset_builder_scan, asset_builder_open_dir, asset_builder_run,
             // Agent write mode

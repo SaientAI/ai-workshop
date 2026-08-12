@@ -125,8 +125,9 @@
 
           {#if !internetEnabled}
             <div class="offline-note">
-              Hugging Face, update checks, and optional asset downloads are blocked.
-              Local models and normal Saient runtime remain available.
+              Automatic update checks, Hugging Face, and optional asset downloads are blocked.
+              A manual update check can request temporary update-only access; local models and
+              normal Saient runtime remain available.
             </div>
           {/if}
         {:else if tab === "setup"}
