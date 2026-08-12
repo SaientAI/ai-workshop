@@ -119,6 +119,15 @@
     else if (action === "max") await appWindow.toggleMaximize();
     else await appWindow.close();
   }
+
+  async function reopenSetup() {
+    await T.resetSetup();
+    // Setup may replace the creative runtime under an active process. Pause the
+    // background loop and present the wizard before any more work is started.
+    await T.saientSetEnabled(false).catch(() => {});
+    ui.showSettings = false;
+    showSetup = true;
+  }
 </script>
 
 <TitleBar {aw} />
@@ -226,6 +235,7 @@
       ui.showSettings = false;
       ui.showSecurity = true;
     }}
+    onSetup={reopenSetup}
   />
 {/if}
 

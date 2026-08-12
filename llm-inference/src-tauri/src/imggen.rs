@@ -249,7 +249,7 @@ fn do_load(
     }
     *guard = None; // kill any existing daemon
 
-    let python = resolve::find_python().map_err(|e: anyhow::Error| e.to_string())?;
+    let python = resolve::find_image_python().map_err(|e: anyhow::Error| e.to_string())?;
     let script = resolve::find_script("generate_sdxl.py").map_err(|e: anyhow::Error| e.to_string())?;
 
     emit_igload_progress(&window, "Starting Python…", progress.as_ref());

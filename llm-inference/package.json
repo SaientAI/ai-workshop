@@ -1,6 +1,6 @@
 {
   "name": "llm-runtime",
-  "version": "1.0.15",
+  "version": "1.0.16",
   "type": "module",
   "license": "Apache-2.0",
   "description": "Local LLM inference + autonomous agent runtime — GPU accelerated",
@@ -9,7 +9,7 @@
     "build": "vite build",
     "tauri": "tauri",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "test": "node src/artifact.test.js && node src/contract.test.js && node src/modalOwnership.test.js && node src/setupNetwork.test.js && node src/networkSurface.test.js && node src/bindingLifecycle.test.js && node src/agiLevel.test.js && node src/turnState.test.js && node src/pulse.test.js && node src/checkpoints.test.js && node src/saientPersona.test.js && node src/rapport.test.js",
+    "test": "node src/artifact.test.js && node src/contract.test.js && node src/modalOwnership.test.js && node src/setupNetwork.test.js && node src/setupRecovery.test.js && node src/networkSurface.test.js && node src/bindingLifecycle.test.js && node src/agiLevel.test.js && node src/turnState.test.js && node src/pulse.test.js && node src/checkpoints.test.js && node src/saientPersona.test.js && node src/rapport.test.js",
     "asset:dry-run": "python3 tools/blender-pipeline/png_to_asset.py --input assets/source-png --output assets/game-assets --dry-run",
     "asset:build": "python3 tools/blender-pipeline/png_to_asset.py --input assets/source-png --output assets/game-assets",
     "asset:test": "python3 tools/blender-pipeline/png_to_asset.py --self-test",

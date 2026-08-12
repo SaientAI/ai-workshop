@@ -107,9 +107,11 @@ pub struct SystemInfo {
     pub system_python: Option<String>,    // a base python3 to build the venv from
     pub python_version: Option<String>,
     pub venv_ready: bool,                  // managed venv exists
+    pub creative_ready: bool,              // image runtime modules resolve
     pub tinyq4_ready: bool,                // tinyq4 resolvable
     pub disk_free_gb: f64,
     pub setup_done: bool,                  // marker present
+    pub setup_profile: Option<String>,     // "full" | "fast" | "skipped"
 }
 
 /// Map the driver's max-supported CUDA version to the closest PyTorch wheel build.
@@ -256,6 +258,11 @@ pub fn detect_system() -> SystemInfo {
 
     let (system_python, python_version) = detect_system_python();
 
+    let marker = std::fs::read_to_string(setup_marker()).ok();
+    let setup_profile = marker.as_deref()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+        .and_then(|value| value.get("profile")?.as_str().map(str::to_owned));
+
     SystemInfo {
         os,
         gpu_name,
@@ -267,10 +274,12 @@ pub fn detect_system() -> SystemInfo {
         system_python,
         python_version,
         venv_ready: venv_python().exists(),
+        creative_ready: crate::resolve::image_runtime_ready(),
         tinyq4_ready: crate::engine::find_tinyq4().is_ok(),
         disk_free_gb: disk_free_gb(&config_dir().parent().map(|p| p.to_path_buf())
             .unwrap_or_else(|| PathBuf::from("/"))),
-        setup_done: setup_marker().exists(),
+        setup_done: marker.is_some(),
+        setup_profile,
     }
 }
 
@@ -938,9 +947,52 @@ pub fn skip_setup() -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-/// Re-open the wizard later by clearing the marker.
+fn remove_setup_marker(marker: &std::path::Path) -> Result<(), String> {
+    match std::fs::remove_file(marker) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("Could not reopen setup: {e}")),
+    }
+}
+
+/// Re-open the wizard later by clearing only its completion marker. Existing
+/// environments, models, settings, and downloaded assets remain untouched.
 #[tauri::command]
 pub fn reset_setup() -> Result<(), String> {
-    std::fs::remove_file(setup_marker()).ok();
-    Ok(())
+    remove_setup_marker(&setup_marker())
+}
+
+#[cfg(test)]
+mod reset_setup_tests {
+    use super::remove_setup_marker;
+
+    #[test]
+    fn reset_removes_only_the_marker() {
+        let root = tempfile::tempdir().unwrap();
+        let marker = root.path().join("setup_done.json");
+        let venv_python = root.path().join("venv").join("bin").join("python");
+        std::fs::create_dir_all(venv_python.parent().unwrap()).unwrap();
+        std::fs::write(&venv_python, "keep").unwrap();
+        std::fs::write(&marker, r#"{"profile":"skipped"}"#).unwrap();
+
+        remove_setup_marker(&marker).unwrap();
+
+        assert!(!marker.exists());
+        assert_eq!(std::fs::read_to_string(venv_python).unwrap(), "keep");
+    }
+
+    #[test]
+    fn reset_is_idempotent_when_marker_is_absent() {
+        let root = tempfile::tempdir().unwrap();
+        remove_setup_marker(&root.path().join("setup_done.json")).unwrap();
+    }
+
+    #[test]
+    fn reset_reports_a_real_removal_error() {
+        let root = tempfile::tempdir().unwrap();
+        let directory_at_marker_path = root.path().join("setup_done.json");
+        std::fs::create_dir(&directory_at_marker_path).unwrap();
+        let error = remove_setup_marker(&directory_at_marker_path).unwrap_err();
+        assert!(error.starts_with("Could not reopen setup:"));
+    }
 }

@@ -34,8 +34,9 @@ impl NoConsole for std::process::Command {
 /// Resolution order:
 ///   1. `PYTHON_PATH` env var
 ///   2. project-local managed venv
-///   3. `python3` on PATH
-///   4. `/usr/bin/python3`
+///   3. Windows Python launchers
+///   4. `python3` on PATH
+///   5. `/usr/bin/python3`
 pub fn find_python() -> anyhow::Result<PathBuf> {
     // 1. Explicit override
     if let Ok(p) = std::env::var("PYTHON_PATH") {
@@ -48,7 +49,20 @@ pub fn find_python() -> anyhow::Result<PathBuf> {
     let managed = crate::setup::venv_python();
     if managed.exists() { return Ok(managed); }
 
-    // 3. python3 on PATH
+    // 3. Windows has no `which` command. Probe the same launchers accepted by
+    // setup so an explicitly managed system environment can still be used.
+    #[cfg(target_os = "windows")]
+    for candidate in ["python", "python3", "py"] {
+        if let Ok(out) = std::process::Command::new(candidate)
+            .arg("--version")
+            .no_console()
+            .output()
+        {
+            if out.status.success() { return Ok(PathBuf::from(candidate)); }
+        }
+    }
+
+    // 4. python3 on PATH
     if let Ok(out) = std::process::Command::new("which").arg("python3").output() {
         if out.status.success() {
             let p = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
@@ -56,7 +70,7 @@ pub fn find_python() -> anyhow::Result<PathBuf> {
         }
     }
 
-    // 4. Absolute fallback
+    // 5. Absolute fallback
     let fallback = PathBuf::from("/usr/bin/python3");
     if fallback.exists() { return Ok(fallback); }
 
@@ -64,6 +78,44 @@ pub fn find_python() -> anyhow::Result<PathBuf> {
         "Python not found. Set PYTHON_PATH env var or install python3. \
          Alternatively run Saient setup to create the managed venv."
     )
+}
+
+/// Resolve Python and verify the modules needed by Image Gen before starting
+/// its long-lived daemon. This turns an opaque Python traceback into a direct
+/// recovery route when setup was skipped or only partially completed.
+pub fn find_image_python() -> anyhow::Result<PathBuf> {
+    let python = find_python()?;
+    let code = r#"import importlib.util, sys
+required = ("torch", "diffusers", "transformers", "PIL")
+missing = [name for name in required if importlib.util.find_spec(name) is None]
+print(", ".join(missing))
+sys.exit(1 if missing else 0)
+"#;
+    let output = std::process::Command::new(&python)
+        .args(["-c", code])
+        .no_console()
+        .output()
+        .map_err(|e| anyhow::anyhow!("Could not check the Image Gen Python environment: {e}"))?;
+    if output.status.success() { return Ok(python); }
+
+    let missing = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let detail = if missing.is_empty() {
+        String::from_utf8_lossy(&output.stderr).trim().to_string()
+    } else {
+        format!("missing: {missing}")
+    };
+    let detail = if detail.is_empty() {
+        String::new()
+    } else {
+        format!(" ({detail})")
+    };
+    anyhow::bail!(
+        "Image Gen is not set up for this Python environment{detail}. Open Settings → Setup and run Full setup."
+    )
+}
+
+pub fn image_runtime_ready() -> bool {
+    find_image_python().is_ok()
 }
 
 /// Find a bundled Python script by filename (e.g. "generate_sdxl.py").
