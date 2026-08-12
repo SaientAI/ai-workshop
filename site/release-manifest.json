@@ -1,39 +1,39 @@
 {
-  "release": "1.0.16",
+  "release": "1.0.17",
   "published_at": "2026-08-12",
   "artifact": {
     "platform": "Debian/Ubuntu amd64",
-    "url": "https://saient.co.uk/downloads/Saient_1.0.16_amd64.deb",
-    "bytes": 12482194,
-    "sha256": "8bb6b5661802c28c49fcd622ec2ca8be669e4eebccfaf35e00f05708769683c8",
-    "signature": "6Cj67gJOASF9UfCkXr2YPTC4Cd0dIw7f5PizdAlNGhN0/Bsz+7l9nidg0JvjqSmRV71hN5xJTpux3/Cp2r51AQ=="
+    "url": "https://saient.co.uk/downloads/Saient_1.0.17_amd64.deb",
+    "bytes": 12482452,
+    "sha256": "72bc31680d0f20530e121b0de8b6d90af459e9dab93832e861e4cecd37e578ed",
+    "signature": "N8CZKcIquM1tR2whaY+v9g7Da2hFaHQHQK8HW1jCqc/3Ox1Nwq2kOfX60FymLmVcmclv4tLYhFB9R9HdvmpHBg=="
   },
   "windows_artifact": {
     "platform": "Windows x86_64",
     "status": "published cross-compiled test build; installation and runtime require a real Windows check",
-    "url": "https://saient.co.uk/downloads/Saient_1.0.16_x64-setup.exe",
-    "bytes": 9714506,
-    "sha256": "a488ff1e30bf5d271400c2107bca688001ecbdaa9b3eb5bb814fca6b86f0b818",
-    "updater_signature_url": "https://saient.co.uk/downloads/Saient_1.0.16_x64-setup.exe.sig",
+    "url": "https://saient.co.uk/downloads/Saient_1.0.17_x64-setup.exe",
+    "bytes": 9713673,
+    "sha256": "a11b01246ec74ce138c616072a73b5da51ffd6e2ecefff47867291807608bb1c",
+    "updater_signature_url": "https://saient.co.uk/downloads/Saient_1.0.17_x64-setup.exe.sig",
     "updater_signature_verified": true,
     "authenticode_signed": false,
     "bundled_gguf_engine": "CPU only",
     "engine_sha256": "db250b71860366353a05d412244a65caff123aa36849c001bb9fe87ae2c438bf",
-    "application_exe_sha256": "d6123b085e7623b4b7c11975557642c227b2b39e82e0e784f1a1cdda6c7ddba4",
+    "application_exe_sha256": "b423010c138945f7dde934a16d6311ceadb6423698b1e6deb602aaa215f64bff",
     "build_host": "Linux x86_64",
     "rust_target": "x86_64-pc-windows-gnu"
   },
   "source": {
-    "base_commit": "7953def020670fa1f7c9b5ab05871834a4155883",
-    "state": "release artifacts built and verified from commit 7953def; signed release metadata is committed separately",
-    "package_lock_sha256": "305cc501216c3ce1aad6079c5a1f54ec41ca5b2177c2cd9280b39fa25b5ecc01",
-    "cargo_lock_sha256": "66e17473b00de497b1df6077f27447d5840babf43d30391fd706bda8b6cb821e",
-    "tauri_config_sha256": "9aec2c587b9990edecf0662c5b38ddcc9686098a14737595c998485fd991bfdf",
+    "base_commit": "cec631442e3da5c31759e572204efe28d6b92f55",
+    "state": "release artifacts built and verified from commit cec6314; signed release metadata is committed separately",
+    "package_lock_sha256": "c7d74a0c2adb1723814e2dbdbcacf3f56d04243aa86a13b9349150e1841dc205",
+    "cargo_lock_sha256": "49b2ca16201efef971d603f2934d8f96130ddf9f3d7bcef84c048d5bfe1c9e27",
+    "tauri_config_sha256": "e2b8eb758881e33ebbb1df84baec0917c820c60c88d2ca46d4548eb2a0608acd",
     "windows_config_sha256": "03833f8be8052c0d3eb032de788df3a11349aa8ab18445d549a91104ea682d61"
   },
   "verification": {
     "frontend_tests": {
-      "passed": 353,
+      "passed": 369,
       "failed": 0
     },
     "frontend_lint": {
@@ -46,7 +46,7 @@
       "ignored": 6
     },
     "production_npm_vulnerabilities": 0,
-    "debian_package": "verified as saient 1.0.16 amd64 with bundled CPU/CUDA engines and creative scripts",
+    "debian_package": "verified as saient 1.0.17 amd64 with bundled CPU/CUDA engines and creative scripts",
     "windows_cross_compile": "passed for x86_64-pc-windows-gnu",
     "windows_updater_signature": "verified with the configured public key",
     "windows_install_and_runtime": "not verified; requires a real Windows x64 machine"
