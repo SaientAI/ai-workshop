@@ -1,11 +1,11 @@
 {
-  "version": "1.0.16",
-  "notes": "Adds Settings → Setup & repair, safer setup skipping, and actionable Image Gen dependency diagnosis. This Windows x64 package is a cross-compiled test build pending real Windows installation/runtime verification.",
-  "pub_date": "2026-08-12T19:43:57Z",
+  "version": "1.0.17",
+  "notes": "Manual update checks now use temporary update-only Internet access and show the real backend error instead of falsely blaming the update server. This Windows x64 package is a cross-compiled test build pending real Windows installation/runtime verification.",
+  "pub_date": "2026-08-12T20:22:45Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTcmZ5RU1kUFBPUGdMcjlRNmY0UjB5bzFnNU5YbURBVmhqV01JRHJWQ2NpSW1QL2h6MzUweDBzd0I5YUg2cWp3OEhTRDlqNmtsYlNBMFR6Z3BDYXQ2citXWjc5d2s0Y0FrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NTYzODM3CWZpbGU6U2FpZW50XzEuMC4xNl94NjQtc2V0dXAuZXhlCnhMVkx2aXVMTmRGUGJqdnhtZXZFTzNVVngrdjJ0TDlNbkZUbUdUNnZ3Wko2SldaVVJjUXRnQnpwc2U0VWRldXAveXl4cXJaQlJyZHJrbFdyMVlCMUNnPT0K",
-      "url": "https://saient.co.uk/downloads/Saient_1.0.16_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTcmZ5RU1kUFBPUHRudmc4OXpna0hBNTZ2RTZJZUlwQ2ZtT0FKUlU1REpGakNmeGxRZTZlSC9MdDFMTEF2ejgrRHFBNW83blhFMmdNRWpWS3dDNkNKR3VkL2VPTTJaK3cwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NTY2MTY1CWZpbGU6U2FpZW50XzEuMC4xN194NjQtc2V0dXAuZXhlCkI2WFZHSzdNVUxjYXduRFFXMTJrTGpYeUZMTG9FQTN6STViNWEvSGJuR2hKc3lydnFxZHZxT2pzTVAwaStJei9tNVlFR3kyR2xSM0tXa1J6cThyaEN3PT0K",
+      "url": "https://saient.co.uk/downloads/Saient_1.0.17_x64-setup.exe"
     }
   }
 }
