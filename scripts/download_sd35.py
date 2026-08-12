@@ -19,7 +19,8 @@ IGNORE = ["*.bin", "*.ckpt", "*.pt", "*.pth", "*.onnx", "*workflow*", "*example*
 
 
 def main():
-    configure_hf_cache()
+    # This is an explicit download utility, never a generation/runtime path.
+    configure_hf_cache(offline=False)
     try:
         HfApi().auth_check(REPO)
     except Exception:

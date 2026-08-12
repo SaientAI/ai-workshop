@@ -12,7 +12,8 @@ Mirrors the generate_sdxl.py daemon protocol (newline-delimited JSON on stdin/st
 Full Setup downloads the model into Saient's cache. Runtime loading is strictly
 local; it never starts an implicit download.
 """
-import base64, io, json, os, sys, time
+import base64, io, json, os, shutil, sys, time
+from pathlib import Path
 
 # Reuse reserved-but-unallocated CUDA blocks (set before torch/CUDA init).
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
@@ -36,19 +37,54 @@ def main():
         from PIL import Image
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
-        repo = MODELS.get(cfg.get("model", "moondream2"), MODELS["moondream2"])
+        model_name = cfg.get("model", "moondream2")
+        if model_name not in MODELS:
+            raise RuntimeError(f"unsupported local vision model: {model_name}")
+        assets = Path(os.environ.get("SAIENT_RUNTIME_ASSETS_DIR", ""))
+        repo = assets / "vision" / "moondream2"
+        starmie = assets / "vision" / "starmie-v1" / "tokenizer.json"
+        required = (repo / "config.json", repo / "model.safetensors", starmie)
+        missing = [path for path in required if not path.is_file()]
+        if missing:
+            raise RuntimeError(
+                "Managed Moondream assets are missing. Open Settings > Setup and run Full setup. "
+                + "Missing: " + ", ".join(str(path) for path in missing)
+            )
+
+        # Transformers' dynamic-module resolver does not discover every nested
+        # relative import in this Moondream revision. Stage the complete pinned
+        # Python package in run-only state before loading; app startup clears it.
+        hf_home = Path(os.environ.get("HF_HOME", assets / ".." / "runtime-tmp" / "huggingface"))
+        module_dir = hf_home / "modules" / "transformers_modules" / repo.name
+        module_dir.mkdir(parents=True, exist_ok=True)
+        (module_dir / "__init__.py").touch()
+        for source in repo.glob("*.py"):
+            shutil.copy2(source, module_dir / source.name)
         want = cfg.get("device", "auto")
         device = "cuda" if (want != "cpu" and torch.cuda.is_available()) else "cpu"
         dtype = torch.float16 if device == "cuda" else torch.float32
 
-        model = AutoModelForCausalLM.from_pretrained(
-            repo, trust_remote_code=True, torch_dtype=dtype, local_files_only=True,
-        ).to(device).eval()
+        # This pinned Moondream revision calls Tokenizer.from_pretrained for its
+        # separate Starmie tokenizer inside trusted model code. Redirect that
+        # one request to the explicitly managed local file, then restore it.
+        from tokenizers import Tokenizer
+        original_tokenizer_loader = Tokenizer.from_pretrained
+        def local_tokenizer(identifier, *args, **kwargs):
+            if identifier == "moondream/starmie-v1":
+                return Tokenizer.from_file(str(starmie))
+            raise RuntimeError(f"blocked unexpected tokenizer download: {identifier}")
+        Tokenizer.from_pretrained = staticmethod(local_tokenizer)
+        try:
+            model = AutoModelForCausalLM.from_pretrained(
+                str(repo), trust_remote_code=True, torch_dtype=dtype, local_files_only=True,
+            ).to(device).eval()
+        finally:
+            Tokenizer.from_pretrained = original_tokenizer_loader
         tokenizer = AutoTokenizer.from_pretrained(
-            repo, trust_remote_code=True, local_files_only=True,
+            str(repo), trust_remote_code=True, local_files_only=True,
         )
     except Exception as e:
-        emit({"error": f"load failed: {e}"}); return
+        emit({"error": f"load failed: {e}"}); raise SystemExit(1)
 
     emit({"ready": True, "device": device})
 

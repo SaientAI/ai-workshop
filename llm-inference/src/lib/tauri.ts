@@ -559,6 +559,13 @@ export interface SystemInfo {
   setup_profile: "full" | "fast" | "skipped" | null;
 }
 
+export interface ManagedStorageInfo {
+  legacy_hf_bytes: number;
+  legacy_incomplete_bytes: number;
+  runtime_assets_bytes: number;
+  temporary_hf_bytes: number;
+}
+
 export const detectSystem = () => invoke<SystemInfo>("detect_system");
 
 /** profile: "full" (creative + core) or "fast" (core only). Streams "setup-log" / "setup-step". */
@@ -566,6 +573,8 @@ export const runSetup = (profile: "full" | "fast") => invoke<void>("run_setup", 
 
 export const skipSetup  = () => invoke<void>("skip_setup");
 export const resetSetup = () => invoke<void>("reset_setup");
+export const managedStorageInfo = () => invoke<ManagedStorageInfo>("managed_storage_info");
+export const clearLegacyHfCache = () => invoke<number>("clear_legacy_hf_cache");
 
 /** Download a GGUF from HuggingFace into the models dir. Streams "model-progress". */
 export const downloadStarterModel = (repo: string, file: string, modelsDir: string, token?: string) =>

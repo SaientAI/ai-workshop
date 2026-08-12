@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import * as T from "../lib/tauri.js";
-  import type { SystemInfo } from "../lib/tauri.js";
+  import type { ManagedStorageInfo, SystemInfo } from "../lib/tauri.js";
 
   let { onClose, onSecurity, onSetup }: {
     onClose: () => void;
@@ -19,10 +19,16 @@
   let setupLoaded = $state(false);
   let setupStarting = $state(false);
   let setupError = $state("");
+  let storageInfo = $state<ManagedStorageInfo | null>(null);
+  let storageLoading = $state(false);
+  let cacheClearing = $state(false);
+  let cacheConfirm = $state(false);
+  let cacheResult = $state("");
 
   onMount(() => {
     void loadInternetState();
     void loadSetupState();
+    void loadStorageState();
   });
 
   async function loadInternetState() {
@@ -70,6 +76,44 @@
     } catch (e) {
       setupError = String(e);
       setupStarting = false;
+    }
+  }
+
+  const formatBytes = (bytes: number) => {
+    if (bytes < 1_000_000) return `${(bytes / 1_000).toFixed(0)} KB`;
+    if (bytes < 1_000_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`;
+    return `${(bytes / 1_000_000_000).toFixed(2)} GB`;
+  };
+
+  async function loadStorageState() {
+    storageLoading = true;
+    try {
+      storageInfo = await T.managedStorageInfo();
+    } catch (e) {
+      setupError = String(e);
+    } finally {
+      storageLoading = false;
+    }
+  }
+
+  async function clearLegacyCache() {
+    if (cacheClearing || !storageInfo?.legacy_hf_bytes) return;
+    if (!cacheConfirm) {
+      cacheConfirm = true;
+      cacheResult = "Click again to permanently remove only the legacy Hugging Face cache.";
+      return;
+    }
+    cacheClearing = true;
+    setupError = "";
+    try {
+      const freed = await T.clearLegacyHfCache();
+      cacheResult = `Removed ${formatBytes(freed)} of legacy Hugging Face cache data.`;
+      cacheConfirm = false;
+      await loadStorageState();
+    } catch (e) {
+      setupError = String(e);
+    } finally {
+      cacheClearing = false;
     }
   }
 
@@ -162,6 +206,41 @@
             the saved setup choice and lets you run Full setup again.
           </div>
 
+          <div class="storage-card">
+            <div class="field-label">Local storage</div>
+            <div class="setup-status-row">
+              <span>Managed voice &amp; vision assets</span>
+              <strong class:ready={(storageInfo?.runtime_assets_bytes ?? 0) > 0}>
+                {storageLoading ? "Checking…" : formatBytes(storageInfo?.runtime_assets_bytes ?? 0)}
+              </strong>
+            </div>
+            <div class="setup-status-row">
+              <span>Legacy Hugging Face cache</span>
+              <strong class:warning={(storageInfo?.legacy_hf_bytes ?? 0) > 0}>
+                {storageLoading ? "Checking…" : formatBytes(storageInfo?.legacy_hf_bytes ?? 0)}
+              </strong>
+            </div>
+            {#if (storageInfo?.legacy_incomplete_bytes ?? 0) > 0}
+              <div class="storage-warning">
+                Includes {formatBytes(storageInfo?.legacy_incomplete_bytes ?? 0)} of incomplete downloads.
+              </div>
+            {/if}
+            <p class="storage-copy">
+              Saient no longer uses a persistent Hugging Face cache. Runtime model libraries are
+              forced offline; Full setup downloads only pinned files into the managed assets folder.
+              Clearing below does not remove models from your Models folder or managed setup assets.
+            </p>
+            {#if cacheResult}<div class:confirm={cacheConfirm} class="storage-result">{cacheResult}</div>{/if}
+            <button
+              class:confirm={cacheConfirm}
+              class="cache-btn"
+              onclick={clearLegacyCache}
+              disabled={storageLoading || cacheClearing || !(storageInfo?.legacy_hf_bytes ?? 0)}
+            >
+              {cacheClearing ? "Clearing…" : cacheConfirm ? "Confirm permanent removal" : "Clear legacy Hugging Face cache"}
+            </button>
+          </div>
+
           {#if setupError}<div class="panel-error">{setupError}</div>{/if}
 
           <button class="setup-btn" onclick={runSetupAgain} disabled={!setupLoaded || setupStarting}>
@@ -249,6 +328,7 @@
   .setup-status-row:last-child { border-bottom: 0; }
   .setup-status-row strong { color: #f5a623; font-size: 12px; text-align: right; }
   .setup-status-row strong.ready { color: #00d68f; }
+  .setup-status-row strong.warning { color: #f5a623; }
   .setup-note {
     color: #98a0ad; border: 1px solid #2a2f39; background: #0e1116;
     border-radius: 10px; padding: 12px; font-size: 12px; line-height: 1.5; margin-bottom: 14px;
@@ -260,6 +340,22 @@
   }
   .setup-btn:hover { background: rgba(108,142,245,0.24); }
   .setup-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+  .storage-card {
+    border: 1px solid #2a2f39; border-radius: 10px; background: #101319;
+    padding: 12px; margin-bottom: 14px;
+  }
+  .storage-card .field-label { margin-bottom: 3px; }
+  .storage-copy { color: #8d96a5; font-size: 12px; line-height: 1.5; margin: 12px 0; }
+  .storage-warning { color: #f7c873; font-size: 12px; margin-top: 10px; }
+  .storage-result { color: #8fa7ee; font-size: 12px; line-height: 1.4; margin: 10px 0; }
+  .storage-result.confirm { color: #f7c873; }
+  .cache-btn {
+    min-height: 38px; padding: 0 14px; border-radius: 8px; cursor: pointer;
+    border: 1px solid rgba(245,166,35,0.35); background: rgba(245,166,35,0.1);
+    color: #f7d08a; font-weight: 800;
+  }
+  .cache-btn.confirm { border-color: rgba(248,113,113,0.5); background: rgba(248,113,113,0.12); color: #fca5a5; }
+  .cache-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .security-btn {
     margin-top: 16px; height: 38px; padding: 0 14px; border-radius: 8px; cursor: pointer;
     border: 1px solid rgba(108,142,245,0.35); background: rgba(108,142,245,0.12);

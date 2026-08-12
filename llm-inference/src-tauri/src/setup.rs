@@ -316,19 +316,41 @@ fn run_streamed(window: &WebviewWindow, mut cmd: Command, label: &str) -> Result
     emit_log(window, format!("$ {label}"));
     cmd.no_console().stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(|e| format!("failed to start: {e}"))?;
-    if let Some(out) = child.stdout.take() {
-        for line in BufReader::new(out).lines().map_while(Result::ok) {
-            emit_log(window, line);
+    let stdout = child.stdout.take().ok_or("failed to capture setup stdout")?;
+    let stderr = child.stderr.take().ok_or("failed to capture setup stderr")?;
+    let stdout_window = window.clone();
+    let stderr_window = window.clone();
+    // Drain both pipes concurrently. Reading stdout to EOF before touching
+    // stderr can deadlock when pip/Python fills the stderr pipe.
+    let stdout_reader = std::thread::spawn(move || {
+        let mut tail = std::collections::VecDeque::with_capacity(12);
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            emit_log(&stdout_window, &line);
+            if tail.len() == 12 { tail.pop_front(); }
+            tail.push_back(line);
         }
-    }
-    if let Some(err) = child.stderr.take() {
-        for line in BufReader::new(err).lines().map_while(Result::ok) {
-            emit_log(window, line);
+        tail
+    });
+    let stderr_reader = std::thread::spawn(move || {
+        let mut tail = std::collections::VecDeque::with_capacity(12);
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            emit_log(&stderr_window, &line);
+            if tail.len() == 12 { tail.pop_front(); }
+            tail.push_back(line);
         }
-    }
+        tail
+    });
     let status = child.wait().map_err(|e| e.to_string())?;
+    let stdout_tail = stdout_reader.join().map_err(|_| "setup stdout reader stopped unexpectedly")?;
+    let stderr_tail = stderr_reader.join().map_err(|_| "setup stderr reader stopped unexpectedly")?;
     if status.success() { Ok(()) }
-    else { Err(format!("{label} exited with {}", status.code().unwrap_or(-1))) }
+    else {
+        let detail = stderr_tail.iter().chain(stdout_tail.iter())
+            .rev().find(|line| !line.trim().is_empty())
+            .map(|line| format!(": {}", line.trim()))
+            .unwrap_or_default();
+        Err(format!("{label} exited with {}{detail}", status.code().unwrap_or(-1)))
+    }
 }
 
 /// Create the managed venv if missing, using the detected base python.
@@ -359,41 +381,110 @@ fn pip_install(window: &WebviewWindow, args: &[&str], label: &str) -> Result<(),
 fn prefetch_runtime_assets(window: &WebviewWindow) -> Result<(), String> {
     crate::internet::require_setup_enabled("Offline runtime asset download")?;
 
-    // Kokoro otherwise asks Hugging Face for its model/voice files on first
-    // speech. Moondream's trusted model code also loads its tokenizer from the
-    // separate moondream/starmie-v1 repository. Cache that transitive runtime
-    // dependency explicitly rather than assuming the top-level snapshot is
-    // self-contained.
+    // Download a fixed, pinned allow-list straight into named runtime folders.
+    // This deliberately does not import huggingface_hub: there is no shared HF
+    // cache, Xet staging area, or datasets cache to grow behind the user's back.
     let code = r#"
-from pathlib import Path
-from huggingface_hub import hf_hub_download, snapshot_download
+import json, os, shutil, time, urllib.parse, urllib.request
+from pathlib import Path, PurePosixPath
 
-for repo in (
-    "hexgrad/Kokoro-82M",
-    "vikhyatk/moondream2",
-    "moondream/starmie-v1",
-):
-    print(f"prefetching {repo}", flush=True)
-    snapshot_download(repo_id=repo)
+ROOT = Path(os.environ["SAIENT_RUNTIME_ASSETS_DIR"])
+SPECS = (
+    ("hexgrad/Kokoro-82M", "f3ff3571791e39611d31c381e3a41a3af07b4987", ROOT / "voice" / "kokoro-82m",
+     lambda p: p in {"config.json", "kokoro-v1_0.pth"} or (p.startswith("voices/") and p.endswith(".pt"))),
+    ("vikhyatk/moondream2", "6b714b26eea5cbd9f31e4edb2541c170afa935ba", ROOT / "vision" / "moondream2",
+     lambda p: p.endswith((".json", ".py", ".txt", ".safetensors"))),
+    ("moondream/starmie-v1", "35192e10a54e36eabe0a7cc57a2c1aab371cafc5", ROOT / "vision" / "starmie-v1",
+     lambda p: p in {"special_tokens_map.json", "tokenizer.json", "tokenizer_config.json"}),
+)
+HEADERS = {"User-Agent": "Saient setup/1.0"}
 
-# Fail setup here, while its visible temporary network grant is still active,
-# if the two files needed by Moondream's offline construction are not local.
-for repo, filename in (
-    ("vikhyatk/moondream2", "model.safetensors"),
-    ("moondream/starmie-v1", "tokenizer.json"),
-):
-    cached = hf_hub_download(repo_id=repo, filename=filename, local_files_only=True)
-    if not Path(cached).is_file():
-        raise RuntimeError(f"offline runtime asset missing after prefetch: {repo}/{filename}")
+def open_url(url):
+    return urllib.request.urlopen(urllib.request.Request(url, headers=HEADERS), timeout=120)
+
+def manifest(repo, revision, allowed):
+    url = f"https://huggingface.co/api/models/{repo}/tree/{revision}?recursive=true&expand=true"
+    with open_url(url) as response:
+        rows = json.load(response)
+    files = []
+    for row in rows:
+        name = row.get("path", "")
+        rel = PurePosixPath(name)
+        if row.get("type") == "file" and allowed(name):
+            if rel.is_absolute() or ".." in rel.parts:
+                raise RuntimeError(f"unsafe runtime asset path: {name}")
+            files.append((name, int(row.get("size") or 0)))
+    if not files or any(size <= 0 for _, size in files):
+        raise RuntimeError(f"incomplete pinned asset manifest for {repo}")
+    return files
+
+plans = []
+missing = 0
+for repo, revision, dest, allowed in SPECS:
+    files = manifest(repo, revision, allowed)
+    plans.append((repo, revision, dest, files))
+    for name, size in files:
+        target = dest.joinpath(*PurePosixPath(name).parts)
+        if not target.is_file() or target.stat().st_size != size:
+            missing += size
+
+ROOT.mkdir(parents=True, exist_ok=True)
+free = shutil.disk_usage(ROOT).free
+headroom = 1_000_000_000
+if free < missing + headroom:
+    raise RuntimeError(
+        f"Not enough disk space for voice and vision assets: "
+        f"{missing / 1e9:.1f} GB still needed plus 1.0 GB safety space, but only {free / 1e9:.1f} GB is free. "
+        "Open Settings > Setup and clear the legacy Hugging Face cache, then retry."
+    )
+
+for repo, revision, dest, files in plans:
+    print(f"downloading managed runtime assets: {repo}", flush=True)
+    for name, size in files:
+        target = dest.joinpath(*PurePosixPath(name).parts)
+        if target.is_file() and target.stat().st_size == size:
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        part = target.with_name(target.name + ".part")
+        url = f"https://huggingface.co/{repo}/resolve/{revision}/{urllib.parse.quote(name, safe='/')}?download=true"
+        last_error = None
+        for attempt in range(2):
+            try:
+                if part.exists():
+                    part.unlink()
+                with open_url(url) as response, part.open("wb") as output:
+                    shutil.copyfileobj(response, output, length=4 * 1024 * 1024)
+                actual = part.stat().st_size
+                if actual != size:
+                    raise RuntimeError(f"size mismatch for {repo}/{name}: expected {size}, received {actual}")
+                os.replace(part, target)
+                last_error = None
+                break
+            except Exception as exc:
+                last_error = exc
+                if part.exists():
+                    part.unlink()
+                if attempt == 0:
+                    time.sleep(1)
+        if last_error is not None:
+            raise last_error
+
+required = (
+    ROOT / "voice" / "kokoro-82m" / "config.json",
+    ROOT / "voice" / "kokoro-82m" / "kokoro-v1_0.pth",
+    ROOT / "voice" / "kokoro-82m" / "voices" / "af_heart.pt",
+    ROOT / "vision" / "moondream2" / "model.safetensors",
+    ROOT / "vision" / "starmie-v1" / "tokenizer.json",
+)
+for path in required:
+    if not path.is_file() or path.stat().st_size == 0:
+        raise RuntimeError(f"managed runtime asset missing after download: {path}")
+print("managed voice and vision assets are ready; no Hugging Face cache was created", flush=True)
 "#;
     let mut assets = Command::new(venv_python());
     assets.arg("-c").arg(code)
-        .env(crate::paths::HF_HOME_ENV, crate::paths::hf_home())
-        .env(crate::paths::HF_HUB_CACHE_ENV, crate::paths::hf_hub_cache())
-        .env_remove("HF_HUB_OFFLINE")
-        .env_remove("TRANSFORMERS_OFFLINE")
-        .env_remove("DIFFUSERS_OFFLINE");
-    run_streamed(window, assets, "prefetch Kokoro and Moondream for offline use")?;
+        .env(crate::paths::RUNTIME_ASSETS_ENV, crate::paths::runtime_assets_dir());
+    run_streamed(window, assets, "download managed Kokoro and Moondream assets")?;
 
     // misaki/spaCy otherwise starts a pip subprocess from the first TTS call.
     // Install it while the setup-scoped capability is visibly active instead.
@@ -409,6 +500,12 @@ pub async fn run_setup(window: WebviewWindow, profile: String) -> Result<(), Str
     let full = profile == "full";
     if full {
         crate::internet::require_setup_enabled("Full setup downloads")?;
+        if info.disk_free_gb < 12.0 {
+            return Err(format!(
+                "Full setup needs at least 12 GB free for Python and managed voice/vision assets, but only {:.1} GB is free. Open Settings > Setup and clear the legacy Hugging Face cache, then retry.",
+                info.disk_free_gb
+            ));
+        }
     }
     emit_log(&window, format!("Setup profile: {profile}"));
     emit_log(&window, format!("OS: {} · CUDA: {} · torch wheel: {}",
@@ -837,7 +934,8 @@ pub async fn download_hf_repo(
 
     let python = crate::resolve::find_python().map_err(|e| e.to_string())?;
     let script = r#"
-import json, os, sys
+import json, os, shutil, sys
+from pathlib import Path
 try:
     from huggingface_hub import snapshot_download
 except Exception as e:
@@ -874,9 +972,17 @@ kwargs = dict(
     resume_download=True,
 )
 try:
-    snapshot_download(local_dir_use_symlinks=False, **kwargs)
-except TypeError:
-    snapshot_download(**kwargs)
+    try:
+        snapshot_download(local_dir_use_symlinks=False, **kwargs)
+    except TypeError:
+        snapshot_download(**kwargs)
+finally:
+    cache = Path(dest) / ".cache" / "huggingface"
+    if cache.exists():
+        shutil.rmtree(cache)
+    cache_parent = cache.parent
+    if cache_parent.exists() and not any(cache_parent.iterdir()):
+        cache_parent.rmdir()
 print(json.dumps({"ok": True, "dest": dest}))
 "#;
 
@@ -887,7 +993,13 @@ print(json.dumps({"ok": True, "dest": dest}))
         crate::paths::apply_child_env(&mut cmd);
         cmd.arg("-c").arg(script)
             .env("SAIENT_HF_REPO", &repo)
-            .env("SAIENT_HF_DEST", &dest);
+            .env("SAIENT_HF_DEST", &dest)
+            // This is an explicit, user-triggered model download. Generation
+            // children never receive these overrides.
+            .env_remove("HF_HUB_OFFLINE")
+            .env_remove("TRANSFORMERS_OFFLINE")
+            .env_remove("DIFFUSERS_OFFLINE")
+            .env_remove("HF_DATASETS_OFFLINE");
         if let Some(t) = token.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
             cmd.env("HF_TOKEN", t);
         }
@@ -918,15 +1030,82 @@ print(json.dumps({"ok": True, "dest": dest}))
 }
 
 fn dir_size(path: &std::path::Path) -> u64 {
-    let Ok(rd) = std::fs::read_dir(path) else { return 0 };
-    rd.flatten().map(|e| {
-        let p = e.path();
-        if p.is_dir() {
-            dir_size(&p)
-        } else {
-            e.metadata().map(|m| m.len()).unwrap_or(0)
-        }
-    }).sum()
+    walkdir::WalkDir::new(path)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+        .filter_map(|entry| entry.metadata().ok().map(|metadata| metadata.len()))
+        .sum()
+}
+
+fn incomplete_size(path: &std::path::Path) -> u64 {
+    walkdir::WalkDir::new(path)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".incomplete")
+            || entry.file_name().to_string_lossy().ends_with(".part"))
+        .filter_map(|entry| entry.metadata().ok().map(|metadata| metadata.len()))
+        .sum()
+}
+
+#[derive(Serialize)]
+pub struct ManagedStorageInfo {
+    pub legacy_hf_bytes: u64,
+    pub legacy_incomplete_bytes: u64,
+    pub runtime_assets_bytes: u64,
+    pub temporary_hf_bytes: u64,
+}
+
+#[tauri::command]
+pub fn managed_storage_info() -> ManagedStorageInfo {
+    let legacy = crate::paths::legacy_hf_cache_dir();
+    ManagedStorageInfo {
+        legacy_hf_bytes: dir_size(&legacy),
+        legacy_incomplete_bytes: incomplete_size(&legacy),
+        runtime_assets_bytes: dir_size(&crate::paths::runtime_assets_dir()),
+        temporary_hf_bytes: dir_size(&crate::paths::hf_home()),
+    }
+}
+
+fn remove_exact_managed_dir(parent: &std::path::Path, name: &str) -> Result<u64, String> {
+    let target = parent.join(name);
+    if target.parent() != Some(parent) || target.file_name().and_then(|part| part.to_str()) != Some(name) {
+        return Err("refusing unsafe managed-cache path".into());
+    }
+    let metadata = match std::fs::symlink_metadata(&target) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(format!("could not inspect {}: {error}", target.display())),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(format!("refusing to remove unexpected cache path: {}", target.display()));
+    }
+    let bytes = dir_size(&target);
+    std::fs::remove_dir_all(&target)
+        .map_err(|error| format!("could not remove {}: {error}", target.display()))?;
+    if target.exists() {
+        return Err(format!("cache path still exists after removal: {}", target.display()));
+    }
+    Ok(bytes)
+}
+
+/// Remove cache/state from releases up to 1.0.17. Named runtime assets and the
+/// user's models/configuration are intentionally outside both targets.
+#[tauri::command]
+pub fn clear_legacy_hf_cache() -> Result<u64, String> {
+    let data = crate::paths::data_dir();
+    let mut freed = remove_exact_managed_dir(&data, "huggingface")?;
+    let runtime_tmp = data.join("runtime-tmp");
+    freed += remove_exact_managed_dir(&runtime_tmp, "huggingface")?;
+    Ok(freed)
+}
+
+/// Best-effort startup cleanup for prior run-only library state.
+pub fn clear_ephemeral_hf_state() -> Result<u64, String> {
+    remove_exact_managed_dir(&crate::paths::data_dir().join("runtime-tmp"), "huggingface")
 }
 
 /// Minimal URL-encoder for query values (avoids pulling a crate).
@@ -994,5 +1173,42 @@ mod reset_setup_tests {
         std::fs::create_dir(&directory_at_marker_path).unwrap();
         let error = remove_setup_marker(&directory_at_marker_path).unwrap_err();
         assert!(error.starts_with("Could not reopen setup:"));
+    }
+}
+
+#[cfg(test)]
+mod managed_storage_tests {
+    use super::{dir_size, incomplete_size, remove_exact_managed_dir};
+
+    #[test]
+    fn removal_is_scoped_to_the_named_managed_child() {
+        let root = tempfile::tempdir().unwrap();
+        let cache = root.path().join("huggingface");
+        let keep = root.path().join("models");
+        std::fs::create_dir_all(cache.join("nested")).unwrap();
+        std::fs::create_dir_all(&keep).unwrap();
+        std::fs::write(cache.join("nested").join("download.incomplete"), [1_u8; 32]).unwrap();
+        std::fs::write(keep.join("model.bin"), [2_u8; 16]).unwrap();
+
+        assert_eq!(dir_size(&cache), 32);
+        assert_eq!(incomplete_size(&cache), 32);
+        assert_eq!(remove_exact_managed_dir(root.path(), "huggingface").unwrap(), 32);
+        assert!(!cache.exists());
+        assert_eq!(std::fs::read(keep.join("model.bin")).unwrap(), [2_u8; 16]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn removal_refuses_a_symlink_target() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("keep"), "private").unwrap();
+        symlink(outside.path(), root.path().join("huggingface")).unwrap();
+
+        let error = remove_exact_managed_dir(root.path(), "huggingface").unwrap_err();
+        assert!(error.contains("refusing to remove unexpected cache path"));
+        assert_eq!(std::fs::read_to_string(outside.path().join("keep")).unwrap(), "private");
     }
 }

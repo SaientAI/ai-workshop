@@ -73,7 +73,16 @@ cd "$APP_DIR"
 export SAIENT_DATA_DIR="${SAIENT_DATA_DIR:-$ROOT_DIR/data}"
 export SAIENT_CONFIG_DIR="${SAIENT_CONFIG_DIR:-$SAIENT_DATA_DIR/config/saient-dev}"
 export SAIENT_MODELS_DIR="${SAIENT_MODELS_DIR:-$SAIENT_DATA_DIR/models}"
-export HF_HOME="${HF_HOME:-$SAIENT_DATA_DIR/huggingface}"
+export SAIENT_RUNTIME_ASSETS_DIR="${SAIENT_RUNTIME_ASSETS_DIR:-$SAIENT_DATA_DIR/runtime-assets}"
+export HF_HOME="${HF_HOME:-$SAIENT_DATA_DIR/runtime-tmp/huggingface}"
 export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
+export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-$HF_HOME/datasets}"
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+export DIFFUSERS_OFFLINE=1
+export HF_DATASETS_OFFLINE=1
+export HF_HUB_DISABLE_TELEMETRY=1
+export DO_NOT_TRACK=1
+export HF_HUB_DISABLE_XET=1
 echo "$$" > "$PID_FILE"
 exec npm run tauri dev

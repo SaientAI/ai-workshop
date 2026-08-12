@@ -26,6 +26,8 @@ pub const SHARE_DIR_ENV: &str = "SAIENT_SHARE_DIR";
 pub const MODELS_DIR_ENV: &str = "SAIENT_MODELS_DIR";
 pub const HF_HOME_ENV: &str = "HF_HOME";
 pub const HF_HUB_CACHE_ENV: &str = "HF_HUB_CACHE";
+pub const HF_DATASETS_CACHE_ENV: &str = "HF_DATASETS_CACHE";
+pub const RUNTIME_ASSETS_ENV: &str = "SAIENT_RUNTIME_ASSETS_DIR";
 
 pub fn repo_root() -> Option<PathBuf> {
     if let Some(path) = env_path("SAIENT_REPO_ROOT") {
@@ -144,8 +146,22 @@ pub fn llm_runtime_dir() -> PathBuf {
     data_dir().join("llm-runtime")
 }
 
-pub fn hf_home() -> PathBuf {
+/// Explicitly downloaded, user-visible voice and vision files.
+pub fn runtime_assets_dir() -> PathBuf {
+    data_dir().join("runtime-assets")
+}
+
+/// Compatibility cache created by releases up to 1.0.17. New code never writes
+/// here; Settings can remove it after reporting its exact size.
+pub fn legacy_hf_cache_dir() -> PathBuf {
     data_dir().join("huggingface")
+}
+
+/// Throw-away state required by some Hugging Face libraries even when loading
+/// local files. It is removed on every Saient start so prompts/datasets cannot
+/// accumulate between runs.
+pub fn hf_home() -> PathBuf {
+    data_dir().join("runtime-tmp").join("huggingface")
 }
 
 pub fn hf_hub_cache() -> PathBuf {
@@ -163,13 +179,20 @@ pub fn apply_child_env(cmd: &mut Command) -> &mut Command {
         .env(CONFIG_DIR_ENV, config_dir())
         .env(SHARE_DIR_ENV, share_dir())
         .env(MODELS_DIR_ENV, models_dir())
+        .env(RUNTIME_ASSETS_ENV, runtime_assets_dir())
         .env(HF_HOME_ENV, hf_home())
-        .env(HF_HUB_CACHE_ENV, hf_hub_cache());
-    if !crate::internet::enabled() {
-        cmd.env("HF_HUB_OFFLINE", "1")
-            .env("TRANSFORMERS_OFFLINE", "1")
-            .env("DIFFUSERS_OFFLINE", "1");
-    }
+        .env(HF_HUB_CACHE_ENV, hf_hub_cache())
+        .env(HF_DATASETS_CACHE_ENV, hf_home().join("datasets"))
+        // Runtime inference is always local-only. The general Internet switch
+        // must never let a model library upload input or grow a durable cache.
+        // Explicit setup/model-download commands remove these flags themselves.
+        .env("HF_HUB_OFFLINE", "1")
+        .env("TRANSFORMERS_OFFLINE", "1")
+        .env("DIFFUSERS_OFFLINE", "1")
+        .env("HF_DATASETS_OFFLINE", "1")
+        .env("HF_HUB_DISABLE_TELEMETRY", "1")
+        .env("DO_NOT_TRACK", "1")
+        .env("HF_HUB_DISABLE_XET", "1");
     cmd
 }
 

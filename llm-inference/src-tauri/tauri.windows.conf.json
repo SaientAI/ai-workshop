@@ -2,10 +2,21 @@
   "bundle": {
     "targets": ["nsis"],
     "createUpdaterArtifacts": true,
-    "resources": [
-      "resources/engine/tinyq4-cpu.exe",
-      "resources/saient/**/*"
-    ],
+    "resources": {
+      "resources/engine/tinyq4-cpu.exe": "resources/engine/tinyq4-cpu.exe",
+      "resources/saient/": "resources/saient/",
+      "../../scripts/clean_lora_dataset.py": "resources/scripts/clean_lora_dataset.py",
+      "../../scripts/enhance_video.py": "resources/scripts/enhance_video.py",
+      "../../scripts/generate_cogvideo.py": "resources/scripts/generate_cogvideo.py",
+      "../../scripts/generate_sdxl.py": "resources/scripts/generate_sdxl.py",
+      "../../scripts/generate_video.py": "resources/scripts/generate_video.py",
+      "../../scripts/generate_wan_i2v.py": "resources/scripts/generate_wan_i2v.py",
+      "../../scripts/merge_checkpoints.py": "resources/scripts/merge_checkpoints.py",
+      "../../scripts/saient_paths.py": "resources/scripts/saient_paths.py",
+      "../../scripts/train_lora_sdxl.py": "resources/scripts/train_lora_sdxl.py",
+      "../../scripts/tts_kokoro.py": "resources/scripts/tts_kokoro.py",
+      "../../scripts/vision.py": "resources/scripts/vision.py"
+    },
     "windows": {
       "nsis": {
         "installMode": "currentUser"

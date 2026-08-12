@@ -65,6 +65,17 @@
   <p class="sub">What's new in each release of Saient.</p>
 
   <div class="rel">
+    <h2>1.0.18 <span class="date">12 August 2026</span></h2>
+    <ul>
+      <li><b>No persistent Hugging Face runtime cache:</b> model libraries are forced offline even when general Internet access is enabled, and run-only library state is cleared at startup</li>
+      <li><b>Visible managed assets:</b> Full Setup downloads pinned Kokoro and Moondream files directly into <code>runtime-assets</code>, with disk preflight, byte-size validation, and failed-part cleanup</li>
+      <li><b>Storage cleanup:</b> Settings reports managed assets, legacy Hugging Face cache bytes, and incomplete downloads, with a scoped two-step legacy-cache removal action</li>
+      <li><b>Windows Image Gen repair:</b> Windows installers now bundle every creative Python helper script, including <code>generate_sdxl.py</code></li>
+      <li><b>Actionable setup errors:</b> setup drains output safely and surfaces the last real subprocess error instead of only an exit code</li>
+    </ul>
+  </div>
+
+  <div class="rel">
     <h2>1.0.17 <span class="date">12 August 2026</span></h2>
     <ul>
       <li><b>Manual updates while offline:</b> Check now and Install can use temporary access limited to Saient's signed update endpoints without enabling Internet for the agent</li>
