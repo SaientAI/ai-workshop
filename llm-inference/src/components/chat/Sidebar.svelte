@@ -1,7 +1,8 @@
 <script lang="ts">
   import { listen } from "@tauri-apps/api/event";
-  import { model, params, dual, chat, toast } from "../../lib/state.svelte.js";
+  import { model, params, dual, chat, toast, ui } from "../../lib/state.svelte.js";
   import * as T from "../../lib/tauri.js";
+  import { bindSaientModel, resetModelBinding } from "../../lib/binding.js";
   import { friendlyLoadError, prettyPath } from "../../lib/format.js";
   import { STARTER_MODELS } from "../../lib/models.js";
   import ClearDataModal from "./ClearDataModal.svelte";
@@ -91,6 +92,7 @@
     if (!model.path) { model.loadError = "No model selected — click a card in the list above."; return; }
     model.loading = true;
     model.loaded = false;
+    resetModelBinding();
     model.loadError = "";
     model.loadStatus = "Starting model server…";
     try {
@@ -99,6 +101,7 @@
       model.summary = summary;
       model.loaded = true;
       model.loadStatus = "";
+      if (ui.saientEnabled) await bindSaientModel();
     } catch (e) {
       model.loadError = friendlyLoadError(String(e));
       model.loadStatus = "";
@@ -141,6 +144,7 @@
       return;
     }
     model.loading = true; model.loaded = false; model.loadError = "";
+    resetModelBinding();
     model.loadStatus = `Attaching to port ${port}…`;
     try {
       const summary = await T.attachModel(model.path, port);
@@ -148,6 +152,7 @@
       model.summary = summary;
       model.loaded = true;
       model.loadStatus = "";
+      if (ui.saientEnabled) await bindSaientModel();
     } catch (e) {
       model.loadError = friendlyLoadError(String(e));
       model.loadStatus = "";
@@ -320,7 +325,7 @@
         {model.loading ? "⟳ Working…" : model.loaded ? "⟳ Restart server" : "▶ Start server"}
       </button>
       {#if model.loaded}
-        <button class="tab-action btn-danger" onclick={() => T.stopModelServer(model.activeServerPort).then(() => { model.loaded = false; model.summary = null; model.activeServerPort = null; })}>Stop</button>
+        <button class="tab-action btn-danger" onclick={() => T.stopModelServer(model.activeServerPort).then(() => { model.loaded = false; model.summary = null; model.activeServerPort = null; resetModelBinding(); })}>Stop</button>
       {/if}
     </div>
 
@@ -339,6 +344,28 @@
 
     {#if model.loadError}
       <div class="load-error">⚠ {model.loadError}</div>
+    {/if}
+
+    {#if model.loaded && ui.saientEnabled}
+      <div class="binding-state" class:binding-ok={model.bindingStatus === "bound"} class:binding-bad={model.bindingStatus === "failed"}>
+        {#if model.bindingStatus === "binding"}
+          <div class="binding-title">⟳ Binding Saient to this model…</div>
+          <div class="binding-copy">Running the formal grounding, identity, and authority checks. Chat unlocks when they pass; this is not a user turn.</div>
+          {#if model.bindingSample > 0}
+            <div class="binding-progress">{model.bindingRung || "profile"} · sample {model.bindingSample} / up to 80</div>
+          {/if}
+        {:else if model.bindingStatus === "bound"}
+          <div class="binding-title">✓ Saient bound</div>
+          <div class="binding-copy">{model.bindingModel}</div>
+        {:else if model.bindingStatus === "failed"}
+          <div class="binding-title">⚠ Binding failed</div>
+          <div class="binding-copy">{friendlyLoadError(model.bindingError)}</div>
+          <button class="tab-action" onclick={bindSaientModel}>Retry binding</button>
+        {:else}
+          <div class="binding-title">Saient is not bound yet</div>
+          <button class="tab-action" onclick={bindSaientModel}>Bind Saient</button>
+        {/if}
+      </div>
     {/if}
 
     {#if model.summary}
@@ -538,6 +565,14 @@
   .phase-row span.done { color: var(--green); }
   .load-status { font-size: 10px; color: var(--amber); font-family: var(--mono); margin-top: 6px; }
   .load-error { font-size: 11px; color: var(--red); margin-top: 8px; padding: 7px 9px; background: rgba(248,113,113,0.07); border: 1px solid rgba(248,113,113,0.25); border-radius: var(--radius-sm); line-height: 1.5; }
+  .binding-state { margin-top: 8px; padding: 8px 10px; background: rgba(108,142,245,0.07); border: 1px solid rgba(108,142,245,0.28); border-radius: var(--radius-sm); }
+  .binding-state.binding-ok { background: rgba(52,211,153,0.06); border-color: rgba(52,211,153,0.28); }
+  .binding-state.binding-bad { background: rgba(248,113,113,0.06); border-color: rgba(248,113,113,0.28); }
+  .binding-title { font-size: 10px; font-weight: 700; color: var(--accent); margin-bottom: 4px; }
+  .binding-ok .binding-title { color: var(--green); }
+  .binding-bad .binding-title { color: var(--red); }
+  .binding-copy { font-size: 9px; line-height: 1.5; color: var(--text3); overflow-wrap: anywhere; margin-bottom: 5px; }
+  .binding-progress { font-size: 9px; font-family: var(--mono); color: var(--amber); }
   .model-info { margin-top: 10px; background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; }
   .server-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 11px; }
   .server-id { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text2); }

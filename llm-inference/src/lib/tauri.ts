@@ -45,6 +45,34 @@ export interface GenerateRequest {
 
 export const generate = (req: GenerateRequest) => invoke<PerfResult>("generate", { req });
 
+export interface SaientBindingReply {
+  text: string;
+  tick: number;
+  action: string | null;
+  conscience: string | null;
+  refused: boolean;
+  redirected: boolean;
+  success: boolean;
+  verified: boolean;
+  guarantees: Record<string, boolean>;
+  binding_status: "bound";
+  minimum_interface: string;
+  model: string;
+  manifest: string;
+  state_tick_before: number;
+  state_tick_after: number;
+  state_context_injected: boolean;
+  state_context_sha256: string;
+  record_boundary_clean: boolean;
+  identity_boundary_clean: boolean;
+  model_calls: number;
+  used_integrity_fallback: boolean;
+}
+
+export const saientBind = () => invoke<Record<string, unknown>>("saient_bind");
+export const saientChat = (message: string) =>
+  invoke<SaientBindingReply>("saient_chat", { message });
+
 export const dualGenerate = (req: GenerateRequest) => invoke<unknown>("dual_generate", { req });
 
 export const stopGenerate = () => invoke<void>("stop_generate");
@@ -278,6 +306,10 @@ export const getInternetEnabled = () => invoke<boolean>("get_internet_enabled");
 
 export const setInternetEnabled = (enabled: boolean) =>
   invoke<void>("set_internet_enabled", { enabled });
+
+/** Session-only network authority for first-run setup. Never changes Settings. */
+export const setSetupInternetAuthorized = (authorized: boolean) =>
+  invoke<void>("set_setup_internet_authorized", { authorized });
 
 // ── Dep check ─────────────────────────────────────────────────────────────────
 
@@ -607,26 +639,6 @@ export const installUpdate = (expectedVersion: string) =>
 
 /** Restart the current executable after the package manager replaces it. */
 export const relaunchAfterUpdate = () => invoke<void>("relaunch_after_update");
-
-// ── Phone pairing ─────────────────────────────────────────────────────────────
-export interface RemotePairingInfo {
-  name: string;
-  port: number;
-  url: string;
-  local_url: string;
-  payload: {
-    type: string;
-    version: number;
-    url: string;
-    token: string;
-  };
-}
-
-export const remotePairingInfo = () =>
-  invoke<RemotePairingInfo>("remote_pairing_info");
-
-export const remoteResetPairing = () =>
-  invoke<RemotePairingInfo>("remote_reset_pairing");
 
 /** Plain-text diagnostics (version, OS, GPU, paths) for support. No telemetry. */
 export const diagnostics = () => invoke<string>("diagnostics");

@@ -11,6 +11,8 @@ use std::time::Duration;
 use crate::gguf::{GgufFile, ModelSummary};
 use crate::resolve::NoConsole;
 
+const DESKTOP_BIND_HOST: &str = "127.0.0.1";
+
 // Known ports for user-started tinyq4 instances.
 pub const PROBE_PORTS: &[u16] = &[18081, 18082, 33115, 18080];
 
@@ -204,6 +206,7 @@ impl Engine {
             .no_console()
             .stdout(stdout)
             .stderr(stderr);
+        harden_desktop_server_command(&mut cmd);
         // On Unix, have the kernel SIGTERM the child if the app dies, so a crash can't
         // orphan a VRAM-holding server. On Windows we rely on kill_our_stale_servers()
         // (called at startup and on window-close) plus the PID_FILE for cleanup.
@@ -773,8 +776,14 @@ fn which_in_path(name: &str) -> Option<PathBuf> {
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 fn find_free_port() -> Result<u16> {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let listener = std::net::TcpListener::bind((DESKTOP_BIND_HOST, 0))?;
     Ok(listener.local_addr()?.port())
+}
+
+/// Standalone tinyq4 supports an explicit wildcard bind. The desktop parent
+/// must override, not inherit, that environment variable.
+fn harden_desktop_server_command(command: &mut Command) {
+    command.env("TINYQ4_BIND", DESKTOP_BIND_HOST);
 }
 
 async fn wait_for_ready(client: &Client, port: u16, process: &mut Child) -> Result<()> {
@@ -837,4 +846,21 @@ pub type EngineHandle = Arc<tokio::sync::Mutex<Option<Engine>>>;
 
 pub fn new_handle() -> EngineHandle {
     Arc::new(tokio::sync::Mutex::new(None))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn desktop_child_overrides_a_hostile_wildcard_bind_environment() {
+        let mut command = Command::new("tinyq4-test-only");
+        harden_desktop_server_command(&mut command);
+        let bind = command
+            .get_envs()
+            .find(|(key, _)| *key == "TINYQ4_BIND")
+            .and_then(|(_, value)| value)
+            .and_then(|value| value.to_str());
+        assert_eq!(bind, Some("127.0.0.1"));
+    }
 }

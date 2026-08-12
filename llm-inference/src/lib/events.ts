@@ -41,14 +41,6 @@ const LOAD_PHASE_LABELS: Record<string, string> = {
   ready: "✓ Ready",
 };
 
-type RemoteVideoLoadEvent = {
-  status: "started" | "done" | "error" | "unloaded";
-  model_path?: string | null;
-  lora_path?: string | null;
-  device?: string | null;
-  message?: string | null;
-};
-
 type VideoProgressEvent = {
   step: number;
   total: number;
@@ -64,13 +56,6 @@ type VideoPreviewEvent = {
   decode_seconds?: number;
 };
 
-type RemoteVideoGenerationEvent = {
-  status: "started" | "done" | "error";
-  message?: string | null;
-  frames?: number | null;
-  elapsed?: number | null;
-};
-
 function appendVideoLog(message: unknown) {
   const line = String(message ?? "").trim();
   if (!line) return;
@@ -81,8 +66,6 @@ function appendVideoLog(message: unknown) {
 }
 
 export async function setupEvents() {
-  // Phone requests can arrive while the desktop Video screen is not mounted.
-  // Keep its model state and rolling activity log synchronized at app scope.
   await listen<string>("vidload-progress", (e) => {
     video.loadStatus = e.payload || "Working…";
     appendVideoLog(e.payload);
@@ -109,67 +92,6 @@ export async function setupEvents() {
     appendVideoLog(`preview · step ${e.payload.step}/${e.payload.total} · ${e.payload.frames.length} frames${timing}`);
   });
 
-  await listen<RemoteVideoGenerationEvent>("remote-video-generation", (e) => {
-    const event = e.payload;
-    const message = event.message || "Phone video generation update";
-    if (event.status === "started") {
-      video.generating = true;
-      video.error = "";
-      video.progress = 0;
-      video.progressTotal = video.steps;
-      video.previewB64 = "";
-      video.previewStep = 0;
-      video.previewFrames = [];
-      appendVideoLog(`▶ ${message}`);
-      return;
-    }
-    video.generating = false;
-    video.loadStatus = "";
-    if (event.status === "done") {
-      appendVideoLog(`✓ ${message}${event.frames ? ` · ${event.frames} frames` : ""}${typeof event.elapsed === "number" ? ` · ${event.elapsed.toFixed(1)}s` : ""}`);
-    } else {
-      video.error = message;
-      appendVideoLog(`✗ ${message}`);
-    }
-  });
-
-  await listen<RemoteVideoLoadEvent>("remote-video-load", (e) => {
-    const event = e.payload;
-    const message = event.message || "Phone video model update";
-    if (event.status === "started") {
-      video.loading = true;
-      video.error = "";
-      video.loadStatus = message;
-      video.loadedPath = "";
-      if (event.model_path) video.modelPath = event.model_path;
-      video.loraPath = event.lora_path || "";
-      appendVideoLog(`▶ ${message}`);
-      return;
-    }
-    if (event.status === "done") {
-      video.loading = false;
-      video.loadStatus = "";
-      if (event.model_path) {
-        video.modelPath = event.model_path;
-        video.loadedPath = event.model_path;
-      }
-      video.loraPath = event.lora_path || "";
-      appendVideoLog(`✓ ${message}${event.device ? ` on ${event.device}` : ""}`);
-      return;
-    }
-    if (event.status === "unloaded") {
-      video.loading = false;
-      video.loadedPath = "";
-      video.loadStatus = "";
-      appendVideoLog(`✓ ${message}`);
-      return;
-    }
-    video.loading = false;
-    video.loadedPath = "";
-    video.loadStatus = "";
-    video.error = message;
-    appendVideoLog(`✗ phone load failed: ${message}`);
-  });
   // ── Model load phases ──────────────────────────────────────────────────────
   await listen("model-loading", (e) => {
     model.loading = true;
@@ -193,6 +115,12 @@ export async function setupEvents() {
     if (model.summary?.context_length) {
       params.maxTokens = Math.min(Math.floor(model.summary.context_length / 2), 8192);
     }
+  });
+
+  await listen<{ sample?: number; total?: number; rung?: string }>("saient-binding-progress", (e) => {
+    if (model.bindingStatus !== "binding") return;
+    model.bindingSample = Number(e.payload.sample ?? model.bindingSample);
+    model.bindingRung = String(e.payload.rung ?? model.bindingRung);
   });
 
   // ── Chat streaming ─────────────────────────────────────────────────────────

@@ -57,6 +57,18 @@ export interface ChatMessage {
   streamStart?: number;
   prefillDone?: number;
   prefillTotal?: number;
+  binding?: {
+    status: "bound";
+    model: string;
+    minimumInterface: string;
+    tick: number;
+    stateContextSha256: string;
+    recordBoundaryClean: boolean;
+    identityBoundaryClean: boolean;
+    usedIntegrityFallback: boolean;
+  };
+  /** Bound Saient responses are held until the full output passes integrity. */
+  saientTurn?: boolean;
   // attached image (base64, no data: prefix) analyzed by the vision model
   image?: string;
   imageMime?: string;

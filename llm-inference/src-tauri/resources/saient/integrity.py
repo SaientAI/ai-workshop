@@ -84,6 +84,12 @@ _SUCCEEDED = re.compile(r"\b(succeeded|completed it|carried it out|"
 #: every one of these is invented.
 _DECIMAL = re.compile(r"\b\d+\.\d+\b")
 
+#: A structured current-action field is an unambiguous claim about this tick,
+#: not a conversational reference to history.  It needs its own check because
+#: a prior action with the same name is otherwise (correctly) allowed in prose.
+_ACTION_HEADING = re.compile(r"^\s*ACTION\s*:\s*([^\n\r]+)", re.I | re.M)
+_CURRENT_TICK_SENTENCE = re.compile(r"[^.!?\n]*\bthis tick\b[^.!?\n]*", re.I)
+
 
 def _names_action(action: str, text: str) -> bool:
     """Does `text` name this action, in any of its ordinary written forms?"""
@@ -135,6 +141,30 @@ def validate(tick: "TickRecord", text: str) -> IntegrityReport:
     # stemming: a loose matcher here would start flagging ordinary prose.
     actual = str(tick.action.get("type", "") or "")
     if actual:
+        # Headed/form output names the current action exactly.  The previous
+        # recent-action exception let `ACTION: stabilize` escape on a respond
+        # tick whenever stabilize happened to appear in history.
+        for heading in _ACTION_HEADING.findall(text):
+            candidates = ("explore", "analyze", "optimize", "self_direct",
+                          "stabilize", "write", "respond")
+            named_matches = [
+                (match.start(), candidate)
+                for candidate in candidates
+                for match in [re.search(
+                    rf"\b{re.escape(candidate).replace('_', '[ _-]')}"
+                    r"(?:e|es|ed|ing|d|s)?\b",
+                    heading,
+                    re.I,
+                )]
+                if match is not None
+            ]
+            named = min(named_matches)[1] if named_matches else heading.strip().split(" ", 1)[0]
+            if named != actual:
+                bad.append(
+                    f"current action field named {named!r}; the tick ran {actual!r}"
+                )
+                break
+
         # A conversational summary may truthfully name actions in the finished
         # tick's recent record. Treating every earlier write as a swapped name
         # forced multi-step terminal reports into the generic fallback even
@@ -149,6 +179,17 @@ def validate(tick: "TickRecord", text: str) -> IntegrityReport:
             if _names_action(other, text) and not _names_action(actual, text):
                 bad.append(f"named action {other!r}; the tick ran {actual!r}")
                 break
+
+        # "This tick" also explicitly scopes an action claim to the current
+        # record.  Do not let a same-named historical action exempt that claim.
+        for sentence in _CURRENT_TICK_SENTENCE.findall(text):
+            for other in sorted({"explore", "analyze", "optimize", "self_direct",
+                                 "stabilize", "write", "respond"} - {actual}):
+                if _names_action(other, sentence) and not _names_action(actual, sentence):
+                    bad.append(
+                        f"current tick named action {other!r}; the tick ran {actual!r}"
+                    )
+                    break
 
     return IntegrityReport(violations=tuple(bad))
 

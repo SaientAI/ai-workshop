@@ -61,6 +61,17 @@
   <p class="sub">What's new in each release of Saient.</p>
 
   <div class="rel">
+    <h2>1.0.15 <span class="date">12 August 2026</span></h2>
+    <ul>
+      <li><b>Dismissible autonomy controls:</b> the autonomy dialog now has an accessible close button, so an accidental click on Agent no longer traps the user in the dialog or changes the saved project level</li>
+      <li><b>Formal local-model binding:</b> Saient checks the selected local model before chat is unlocked and preserves identity and record-authority boundaries</li>
+      <li><b>Network controls:</b> normal model traffic stays on numeric loopback endpoints and setup/download authorization is explicit and temporary</li>
+      <li><b>Cleaner interface checks:</b> the strict Svelte gate passes with no errors or warnings, including corrected image-lightbox click handling</li>
+      <li><b>Direct Pi hosting:</b> Windows x64 and Debian/Ubuntu amd64 packages and signed update metadata are served from <code>saient.co.uk</code>, not Vercel</li>
+    </ul>
+  </div>
+
+  <div class="rel">
     <h2>1.0.3 <span class="date">Image Gen fixes</span></h2>
     <ul>
       <li>Fixed: video models no longer show up in the Image Gen model list (they have their own tab) — clears a confusing load error</li>

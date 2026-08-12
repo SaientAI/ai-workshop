@@ -1,0 +1,56 @@
+{
+  "release": "1.0.15",
+  "published_at": "2026-08-12",
+  "artifact": {
+    "platform": "Debian/Ubuntu amd64",
+    "url": "https://saient.co.uk/downloads/Saient_1.0.15_amd64.deb",
+    "bytes": 12473304,
+    "sha256": "547b31f33f164a8a8c553a568fb239588cdb1f2b41ae6418882e4cb7df47f28b",
+    "signature": "S5oHwAuwTc6smBUrF+ue/uxle8LZAkMuZuSPTOZE26CdJ71NqZH3W0jvvwaGC3As/TZhqvxZMP0YY+lfhzDbBQ=="
+  },
+  "windows_artifact": {
+    "platform": "Windows x86_64",
+    "status": "published cross-compiled test build; installation and runtime require a real Windows check",
+    "url": "https://saient.co.uk/downloads/Saient_1.0.15_x64-setup.exe",
+    "bytes": 9720746,
+    "sha256": "37597155bcc921b4c916be5bb325755c9ded53d3134ecb9b9bf6526ab046b81a",
+    "updater_signature_url": "https://saient.co.uk/downloads/Saient_1.0.15_x64-setup.exe.sig",
+    "updater_signature_verified": true,
+    "authenticode_signed": false,
+    "bundled_gguf_engine": "CPU only",
+    "engine_sha256": "db250b71860366353a05d412244a65caff123aa36849c001bb9fe87ae2c438bf",
+    "application_exe_sha256": "c032b7dae688565837d41dc5c71475e73231ff0f8a9ed4235b612c8675b1758b",
+    "build_host": "Linux x86_64",
+    "rust_target": "x86_64-pc-windows-gnu"
+  },
+  "source": {
+    "base_commit": "13a6c36",
+    "state": "release built from the current dirty working tree at base commit 13a6c36; uncommitted user work is included and was not reset or overwritten",
+    "package_lock_sha256": "59eb11f717db396d9702467518476cdfa2111ec86c81498bf7384ed23d69ccd6",
+    "cargo_lock_sha256": "70ad36998f3335850c045fc785317bcfb6b8a084c92ea4a595c889d88dc299a2",
+    "tauri_config_sha256": "fe11736cc0c7620c7619c85c8f0c6e2b6aeae162d2adf8e29d7eef5d65d375c2",
+    "windows_config_sha256": "03833f8be8052c0d3eb032de788df3a11349aa8ab18445d549a91104ea682d61"
+  },
+  "verification": {
+    "frontend_tests": {
+      "passed": 343,
+      "failed": 0
+    },
+    "frontend_lint": {
+      "errors": 0,
+      "warnings": 0
+    },
+    "rust_tests": {
+      "passed": 112,
+      "failed": 0,
+      "ignored": 6
+    },
+    "saient_runtime_tests": {
+      "passed": 418,
+      "failed": 0
+    },
+    "production_npm_vulnerabilities": 0,
+    "windows_updater_signature": "verified with the configured public key",
+    "windows_install_and_runtime": "not verified; requires a real Windows x64 machine"
+  }
+}

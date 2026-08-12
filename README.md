@@ -86,6 +86,10 @@ npm run tauri build    # produce installers
 
 CI (GitHub Actions) runs type-checking, tests, and a Rust build on every push.
 
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). See the complete [code signing policy](CODE_SIGNING_POLICY.md), including build provenance, team roles, approval requirements, and current signing status.
+
 ---
 
 ## Inference engine
@@ -111,4 +115,4 @@ See [`llm-inference/README.md`](llm-inference/README.md) for the full architectu
 
 ## License
 
-Apache-2.0.
+Apache-2.0. See [LICENSE](LICENSE).

@@ -110,7 +110,7 @@
           <div class="gen-head">
             <span class="gen-dot"></span>
             <span>
-              {msg.prefillTotal ? "Processing prompt" : "Request sent"}
+              {msg.saientTurn ? "Running Saient tick" : msg.prefillTotal ? "Processing prompt" : "Request sent"}
             </span>
             <span class="gen-elapsed">{elapsed}</span>
           </div>
@@ -120,7 +120,7 @@
               <div class="bar-fill" style="width:{Math.max(2, Math.min(100, Math.round((msg.prefillDone ?? 0) / msg.prefillTotal * 100)))}%"></div>
             </div>
           {:else}
-            <div class="gen-detail">Waiting for first token…</div>
+            <div class="gen-detail">{msg.saientTurn ? "The response is held until state, identity, and provenance checks pass." : "Waiting for first token…"}</div>
             <div class="bar-track pending"><div class="bar-fill" style="width:38%"></div></div>
           {/if}
         </div>

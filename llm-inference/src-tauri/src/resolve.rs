@@ -3,6 +3,13 @@
 //! Callers should prefer env-var overrides and project-local paths.
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+
+static RESOURCE_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn set_resource_dir(path: PathBuf) {
+    let _ = RESOURCE_DIR.set(path);
+}
 
 /// Suppress the console window Windows pops for each child process. No-op on Unix.
 /// Apply to EVERY `std::process::Command` before spawn/output/status so the app
@@ -63,8 +70,9 @@ pub fn find_python() -> anyhow::Result<PathBuf> {
 ///
 /// Resolution order:
 ///   1. `SCRIPTS_DIR` env var / name
-///   2. Next to the current executable
-///   3. `scripts/` directory two levels up from the executable (dev layout)
+///   2. Tauri's packaged resource directory
+///   3. Next to the current executable
+///   4. `scripts/` directory above the executable (dev layout)
 pub fn find_script(name: &str) -> anyhow::Result<PathBuf> {
     // 1. Explicit scripts dir override
     if let Ok(dir) = std::env::var("SCRIPTS_DIR") {
@@ -73,13 +81,21 @@ pub fn find_script(name: &str) -> anyhow::Result<PathBuf> {
         anyhow::bail!("SCRIPTS_DIR='{}' but '{}' not found there", dir, name);
     }
 
-    // 2. Bundled next to our executable
+    // 2. Packaged resources. Tauri preserves the configured resources/ prefix.
+    if let Some(root) = RESOURCE_DIR.get() {
+        for candidate in [root.join("scripts").join(name),
+                          root.join("resources").join("scripts").join(name)] {
+            if candidate.is_file() { return Ok(candidate); }
+        }
+    }
+
+    // 3. Bundled next to our executable
     if let Ok(exe) = std::env::current_exe() {
         let exe_dir = exe.parent().unwrap_or(Path::new("."));
         let candidate = exe_dir.join(name);
         if candidate.exists() { return Ok(candidate); }
 
-        // 3. scripts/ relative to exe (dev: target/release/  → ../../scripts/)
+        // 4. scripts/ relative to exe (dev: target/release/ → ancestors/scripts/)
         for up in 1..=4 {
             let mut anc = exe_dir.to_path_buf();
             for _ in 0..up { anc = anc.parent().unwrap_or(Path::new(".")).to_path_buf(); }
