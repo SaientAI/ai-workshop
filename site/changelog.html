@@ -65,6 +65,15 @@
   <p class="sub">What's new in each release of Saient.</p>
 
   <div class="rel">
+    <h2>1.0.20 <span class="date">13 August 2026</span></h2>
+    <ul>
+      <li><b>Installed model selected automatically:</b> after downloading a suggested base model, Image Gen switches away from any stale checkpoint selection and selects the complete Diffusers folder</li>
+      <li><b>Legacy SDXL repair:</b> loading the old <code>sd_xl_base_1.0.safetensors</code> download now uses an installed complete SDXL Base folder or opens the repair picker when that folder is missing</li>
+      <li><b>Correct LoRA selection:</b> newly downloaded LoRAs are selected in the LoRA control instead of altering the base-model control</li>
+    </ul>
+  </div>
+
+  <div class="rel">
     <h2>1.0.19 <span class="date">13 August 2026</span></h2>
     <ul>
       <li><b>Working suggested Image Gen models:</b> SDXL Base, SDXL Turbo, DreamShaper XL, SD 1.5, and SD 2.1 now install as complete Diffusers repositories instead of incompatible bare checkpoint files</li>

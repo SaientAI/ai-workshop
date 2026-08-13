@@ -22,5 +22,15 @@ assert.match(setup, /image_models_download_dir\(\)\.join\(folder\)/,
   "the repository downloader must use the Image Gen scan directory");
 assert.doesNotMatch(setup, /crate::resolve::models_download_dir\(\)\.join\(folder\)/,
   "the repository downloader must not hide image models in the general models root");
+assert.match(browser, /const installedPath = await T\.downloadHfRepo[\s\S]*await onDone\(installedPath, installTarget\)/,
+  "a completed base-model install must return its path to the calling screen");
+assert.match(imageScreen, /onDone=\{selectInstalledAsset\}/,
+  "Image Gen must receive the exact path installed by the browser");
+assert.match(imageScreen, /ig\.modelPath = installedPath/,
+  "the newly installed base or checkpoint must replace any stale model selection");
+assert.match(imageScreen, /ig\.loraPath = installedPath/,
+  "a newly installed LoRA must be selected in the LoRA control, not the base-model control");
+assert.match(imageScreen, /legacySdxlBaseCheckpointSelected[\s\S]*installedSdxlBase/,
+  "legacy SDXL base checkpoints must be reconciled with an installed full base folder");
 
-console.log("imageModelDownload.test.js — 8 passed");
+console.log("imageModelDownload.test.js — 13 passed");
