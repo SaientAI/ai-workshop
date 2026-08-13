@@ -924,7 +924,7 @@ pub async fn download_hf_repo(
     }
 
     let folder = repo.split('/').next_back().unwrap_or("model");
-    let dest = crate::resolve::models_download_dir().join(folder);
+    let dest = crate::resolve::image_models_download_dir().join(folder);
     if dest.join("model_index.json").exists() {
         let size = dir_size(&dest);
         let _ = window.emit("model-progress", serde_json::json!({"downloaded": size, "total": size, "done": true}));

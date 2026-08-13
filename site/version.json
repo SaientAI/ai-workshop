@@ -1,5 +1,5 @@
 {
-  "version": "1.0.18",
+  "version": "1.0.19",
   "url": "https://saient.co.uk/#download",
-  "notes": "Hugging Face libraries are now offline during runtime, voice and vision use pinned managed assets instead of a persistent cache, legacy cache cleanup is visible in Settings, and Windows packages include the creative helper scripts."
+  "notes": "Suggested Image Gen base models now install as complete Diffusers folders in the directory Image Gen scans, while search still supports tuned single-file checkpoints."
 }

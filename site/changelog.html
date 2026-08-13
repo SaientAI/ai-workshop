@@ -65,6 +65,15 @@
   <p class="sub">What's new in each release of Saient.</p>
 
   <div class="rel">
+    <h2>1.0.19 <span class="date">13 August 2026</span></h2>
+    <ul>
+      <li><b>Working suggested Image Gen models:</b> SDXL Base, SDXL Turbo, DreamShaper XL, SD 1.5, and SD 2.1 now install as complete Diffusers repositories instead of incompatible bare checkpoint files</li>
+      <li><b>Correct model location:</b> full image repositories install into the managed <code>models/image</code> directory that Image Gen actually scans</li>
+      <li><b>Checkpoint choice retained:</b> normal search still lets advanced users download tuned single-file checkpoints</li>
+    </ul>
+  </div>
+
+  <div class="rel">
     <h2>1.0.18 <span class="date">12 August 2026</span></h2>
     <ul>
       <li><b>No persistent Hugging Face runtime cache:</b> model libraries are forced offline even when general Internet access is enabled, and run-only library state is cleared at startup</li>

@@ -3,8 +3,9 @@
   import { toast } from "../lib/state.svelte.js";
   import * as T from "../lib/tauri.js";
 
-  // target: where the download lands ("model" | "checkpoint" | "lora"); filter: HF pipeline tag
-  // for search (e.g. "text-to-image"); exts: file types to offer.
+  // target: where ordinary search downloads land ("model" | "checkpoint" | "lora").
+  // Curated suggestions may explicitly install a full Diffusers repo even when
+  // ordinary search remains in checkpoint-file mode.
   let {
     target,
     filter = "",
@@ -18,7 +19,7 @@
     filter?: string;
     exts?: string[];
     title?: string;
-    suggestions?: { label: string; repo: string }[];
+    suggestions?: { label: string; repo: string; install?: "repo" | "files" }[];
     onClose?: () => void;
     onDone?: () => void;
   } = $props();
@@ -88,14 +89,14 @@
     }
   }
 
-  async function downloadRepo(repoId: string) {
+  async function downloadRepo(repoId: string, installTarget = target) {
     if (downloading) return;
     repo = repoId;
     downloading = `${repoId} snapshot`;
     error = ""; prog = { downloaded: 0, total: 0 };
     const un = await listen<{ downloaded: number; total: number }>("model-progress", (e) => { prog = e.payload; });
     try {
-      await T.downloadHfRepo(repoId, target, token);
+      await T.downloadHfRepo(repoId, installTarget, token);
       toast(`Installed ${repoId} — it's now in your base model list.`, "success");
       onDone();
       onClose();
@@ -105,6 +106,11 @@
     } finally {
       un(); downloading = "";
     }
+  }
+
+  function useSuggestion(s: { repo: string; install?: "repo" | "files" }) {
+    if (s.install === "repo") return downloadRepo(s.repo, "model");
+    return target === "model" ? downloadRepo(s.repo) : listFiles(s.repo);
   }
 
   function backToResults() { files = []; repo = ""; }
@@ -173,17 +179,17 @@
         </div>
       {:else if !busy}
         {#if suggestions.length}
-          <div class="hb-suggest-label">Suggested models — one click</div>
+          <div class="hb-suggest-label">Suggested base models — install Diffusers folder</div>
           <div class="hb-suggest">
             {#each suggestions as s}
-              <button class="hb-chip" onclick={() => target === "model" ? downloadRepo(s.repo) : listFiles(s.repo)}>{s.label}</button>
+              <button class="hb-chip" onclick={() => useSuggestion(s)}>{s.label}</button>
             {/each}
           </div>
         {/if}
         <div class="hb-hint">
           {target === "model"
             ? "Paste a Hugging Face diffusers repo. Gated models need a token and accepted licence first."
-            : "Or search by name (e.g. anime, realistic) and pick a model — it downloads straight into the right folder, no setup."}
+            : "Suggested base models install as complete Diffusers folders. Search results let you choose a tuned single-file checkpoint."}
         </div>
       {/if}
     {/if}

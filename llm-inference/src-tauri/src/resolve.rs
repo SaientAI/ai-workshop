@@ -191,6 +191,14 @@ pub fn models_download_dir() -> PathBuf {
     d
 }
 
+/// Full Diffusers image repositories must land in the same category directory
+/// that Image Gen scans. The general models root is used by other model types.
+pub fn image_models_download_dir() -> PathBuf {
+    let d = crate::paths::image_models_dir();
+    std::fs::create_dir_all(&d).ok();
+    d
+}
+
 /// Return candidate directories for .safetensors checkpoint scanning.
 pub fn checkpoint_scan_dirs() -> Vec<PathBuf> {
     vec![
@@ -299,5 +307,16 @@ fn check_models_dir(dir: &Path) -> DepStatus {
     DepStatus {
         ok: true,
         detail: format!("{} ({} entries)", dir.display(), count),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{image_models_download_dir, model_scan_dirs};
+
+    #[test]
+    fn full_image_repo_downloads_land_in_a_scanned_directory() {
+        let download_dir = image_models_download_dir();
+        assert!(model_scan_dirs().contains(&download_dir));
     }
 }
