@@ -1,11 +1,11 @@
 {
-  "version": "1.0.19",
-  "notes": "Suggested Image Gen base models now install as complete Diffusers folders in the directory Image Gen scans; the resulting SDXL Base folder was loaded successfully on Linux. Search still supports tuned single-file checkpoints. This Windows x64 package is a cross-compiled build pending real Windows installation/runtime verification and SignPath Authenticode approval.",
-  "pub_date": "2026-08-13T10:40:53Z",
+  "version": "1.0.20",
+  "notes": "Image Gen now selects the complete model it just installed. A stale sd_xl_base_1.0.safetensors selection automatically switches to the installed SDXL Base Diffusers folder, or opens the repair picker when it is missing. This Windows x64 package is cross-compiled pending real Windows runtime verification and SignPath Authenticode approval.",
+  "pub_date": "2026-08-13T11:33:08Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTcmZ5RU1kUFBPUHIrMWQ4WVVVOUpGa1BJc0NaUWdaNWxBZnE5Q1lXaG50eW0xWDhZc01OZ2F0eDEyaFJybW9EclM0aTlJbjZCVGVhTVNKSFV6cGt4dDAyRFhFWDJ5b1FnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NjE3MjUyCWZpbGU6U2FpZW50XzEuMC4xOV94NjQtc2V0dXAuZXhlCnhRMmQreVhqTlJBUVo0cGh5REloNFdkeitpZ2dOaVlzcTArdEZCMTZ2Vzg2dXhxL1ZDNi8yNFdId2NaanJpUzFnWWkrcGZqWnRkbkd1a00ybndqSkFBPT0K",
-      "url": "https://saient.co.uk/downloads/Saient_1.0.19_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTcmZ5RU1kUFBPUHB3V1dPWjhST1JoVDR1UVo2VDNwcDU5U1pZT3ZHK29oVWZpRU5BVi91NFI0dHVWRTNzQmtSR2dRVlpWc2hqZyttb1plRTdGN0R1aUxQRTFVUitQa2cwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NjIwNTU5CWZpbGU6U2FpZW50XzEuMC4yMF94NjQtc2V0dXAuZXhlCm8yWmR0d3k2eklybktkQnplYWx5RnhOZElNUHZFRHF6TGdrMTRyYWw3dzM0eEc0Q2dZak9MYXd1WWo2ZVp1cDExc1N2MWNacmprR2J3VFhDNXRqM0F3PT0K",
+      "url": "https://saient.co.uk/downloads/Saient_1.0.20_x64-setup.exe"
     }
   }
 }
