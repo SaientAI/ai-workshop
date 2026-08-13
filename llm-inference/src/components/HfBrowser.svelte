@@ -21,7 +21,7 @@
     title?: string;
     suggestions?: { label: string; repo: string; install?: "repo" | "files" }[];
     onClose?: () => void;
-    onDone?: () => void;
+    onDone?: (installedPath: string, installedTarget: string) => void | Promise<void>;
   } = $props();
 
   let query = $state("");
@@ -77,9 +77,9 @@
     error = ""; prog = { downloaded: 0, total: 0 };
     const un = await listen<{ downloaded: number; total: number }>("model-progress", (e) => { prog = e.payload; });
     try {
-      await T.downloadHfFile(repo, file, target, token);
-      toast(`Downloaded ${downloading} — it's now in your ${target} list.`, "success");
-      onDone();
+      const installedPath = await T.downloadHfFile(repo, file, target, token);
+      await onDone(installedPath, target);
+      toast(`Downloaded and selected ${downloading}.`, "success");
       onClose();
     } catch (e) {
       error = String(e);
@@ -96,9 +96,9 @@
     error = ""; prog = { downloaded: 0, total: 0 };
     const un = await listen<{ downloaded: number; total: number }>("model-progress", (e) => { prog = e.payload; });
     try {
-      await T.downloadHfRepo(repoId, installTarget, token);
-      toast(`Installed ${repoId} — it's now in your base model list.`, "success");
-      onDone();
+      const installedPath = await T.downloadHfRepo(repoId, installTarget, token);
+      await onDone(installedPath, installTarget);
+      toast(`Installed and selected ${repoId}.`, "success");
       onClose();
     } catch (e) {
       error = String(e);

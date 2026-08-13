@@ -1,5 +1,5 @@
 {
-  "version": "1.0.19",
+  "version": "1.0.20",
   "url": "https://saient.co.uk/#download",
-  "notes": "Suggested Image Gen base models now install as complete Diffusers folders in the directory Image Gen scans, while search still supports tuned single-file checkpoints."
+  "notes": "Image Gen now automatically selects the complete model it just installed and repairs stale SDXL Base checkpoint selections instead of loading the incompatible old file again."
 }

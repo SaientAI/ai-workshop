@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from "svelte";
   import { save } from "@tauri-apps/plugin-dialog";
   import { listen } from "@tauri-apps/api/event";
-  import { ig } from "../../lib/state.svelte.js";
+  import { ig, toast } from "../../lib/state.svelte.js";
   import * as T from "../../lib/tauri.js";
   import HfBrowser from "../HfBrowser.svelte";
 
@@ -46,6 +46,13 @@
       ig.checkpoints = checkpoints as typeof ig.checkpoints;
       ig.loras = loras as typeof ig.loras;
     } catch (e) { console.error(e); }
+  }
+
+  async function selectInstalledAsset(installedPath: string, installedTarget: string) {
+    await igScanModels();
+    if (installedTarget === "lora") ig.loraPath = installedPath;
+    else ig.modelPath = installedPath;
+    loadError = "";
   }
 
   async function generate() {
@@ -132,6 +139,15 @@
     const m = allModels.find(m => m.path === ig.modelPath);
     return m ? m.label : ig.modelPath.split("/").pop() ?? ig.modelPath;
   });
+  const legacySdxlBaseCheckpointSelected = $derived(
+    /(?:^|[\\/])sd[_-]?xl[_-]?base[_-]?1(?:[._-]?0)?\.safetensors$/i.test(ig.modelPath),
+  );
+  const installedSdxlBase = $derived.by(() => ig.models.find((model) => {
+    const entry = model as unknown as { path: string; label: string };
+    const normalized = entry.path.replaceAll("\\", "/").toLowerCase();
+    return normalized.endsWith("/stable-diffusion-xl-base-1.0")
+      || entry.label.toLowerCase() === "stable-diffusion-xl-base-1.0";
+  }));
   const baseModelSelected = $derived.by(() => selectedModelLabel.startsWith("[BASE]"));
   const sketchBiasedModel = $derived.by(() => {
     const text = `${ig.modelPath} ${selectedModelLabel}`.toLowerCase();
@@ -141,12 +157,23 @@
 
   async function loadModel() {
     if (!ig.modelPath || loading) return;
+    let modelPath = ig.modelPath;
+    if (legacySdxlBaseCheckpointSelected) {
+      if (!installedSdxlBase) {
+        toast("That old SDXL Base file is incomplete. Choose SDXL Base 1.0 below to repair it.", "error", 7000);
+        findModel("checkpoint");
+        return;
+      }
+      modelPath = (installedSdxlBase as unknown as { path: string }).path;
+      ig.modelPath = modelPath;
+      toast("Switched from the old checkpoint to the complete SDXL Base folder.", "success");
+    }
     loading = true;
     loadError = "";
     loadStatus = "Connecting…";
     try {
-      const dev = await T.imggenLoad(ig.modelPath, ig.loraPath || "", ig.device);
-      hotModel = ig.modelPath;
+      const dev = await T.imggenLoad(modelPath, ig.loraPath || "", ig.device);
+      hotModel = modelPath;
       ig.vramFreed = false;
       loadStatus = "";
       console.log("Model loaded on", dev);
@@ -200,6 +227,9 @@
     {/if}
     {#if baseModelSelected}
       <div class="model-warning">Base/HF model folder. It may load, but tuned CKPT checkpoints usually give better game-asset output.</div>
+    {/if}
+    {#if legacySdxlBaseCheckpointSelected}
+      <div class="model-warning">Old single-file SDXL Base download. {installedSdxlBase ? "Load will switch to the complete base folder." : "Press Load to open the repair download."}</div>
     {/if}
     {#if sketchBiasedModel}
       <div class="model-warning">Sketch-biased model. Good for drawn styles; use a color/game checkpoint for stronger color.</div>
@@ -333,7 +363,7 @@
     title={browser.title}
     suggestions={browser.suggestions}
     onClose={() => (browser = null)}
-    onDone={igScanModels}
+    onDone={selectInstalledAsset}
   />
 {/if}
 
