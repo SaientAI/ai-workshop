@@ -8,19 +8,19 @@
 
   // Curated model repos for the downloader. Prefer tuned checkpoints for game assets;
   // raw base/HF folders are still supported but are not the best default.
-  const BASE_CHECKPOINTS = [
-    { label: "SDXL Base 1.0", repo: "stabilityai/stable-diffusion-xl-base-1.0" },
-    { label: "SDXL Turbo (fast)", repo: "stabilityai/sdxl-turbo" },
-    { label: "DreamShaper XL", repo: "Lykon/dreamshaper-xl-1-0" },
-    { label: "SD 1.5", repo: "stable-diffusion-v1-5/stable-diffusion-v1-5" },
-    { label: "SD 2.1", repo: "stabilityai/stable-diffusion-2-1" },
+  const BASE_MODELS = [
+    { label: "SDXL Base 1.0", repo: "stabilityai/stable-diffusion-xl-base-1.0", install: "repo" as const },
+    { label: "SDXL Turbo (fast)", repo: "stabilityai/sdxl-turbo", install: "repo" as const },
+    { label: "DreamShaper XL", repo: "Lykon/dreamshaper-xl-1-0", install: "repo" as const },
+    { label: "SD 1.5", repo: "stable-diffusion-v1-5/stable-diffusion-v1-5", install: "repo" as const },
+    { label: "SD 2.1", repo: "stabilityai/stable-diffusion-2-1", install: "repo" as const },
   ];
 
-  let browser = $state<{ target: string; filter: string; exts: string[]; title: string; suggestions: { label: string; repo: string }[] } | null>(null);
+  let browser = $state<{ target: string; filter: string; exts: string[]; title: string; suggestions: { label: string; repo: string; install?: "repo" | "files" }[] } | null>(null);
   function findModel(target: "checkpoint" | "lora") {
     browser = target === "lora"
       ? { target: "lora", filter: "text-to-image", exts: [".safetensors"], title: "Find a LoRA", suggestions: [] }
-      : { target: "checkpoint", filter: "text-to-image", exts: [".safetensors", ".ckpt"], title: "Find a checkpoint", suggestions: BASE_CHECKPOINTS };
+      : { target: "checkpoint", filter: "text-to-image", exts: [".safetensors", ".ckpt"], title: "Find an image model", suggestions: BASE_MODELS };
   }
 
   const SCHEDULERS = [
