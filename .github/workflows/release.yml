@@ -227,12 +227,19 @@ jobs:
           path: signed/*-setup.exe
           if-no-files-found: error
 
+      # *-setup.exe* rather than *-setup.exe: the updater .sig sits beside the
+      # installer and the update feed is useless without it.
+      #
+      # NOTE for when SignPath goes live: the updater signature must be taken
+      # over the FINAL bytes, so once Authenticode signing is in the path the
+      # .sig has to be regenerated after SignPath returns the signed installer,
+      # not carried over from this step.
       - name: Upload Windows installer (unsigned)
         if: env.SIGNPATH_API_TOKEN == ''
         uses: actions/upload-artifact@v4
         with:
           name: saient-windows
-          path: llm-inference/src-tauri/target/release/bundle/nsis/*-setup.exe
+          path: llm-inference/src-tauri/target/release/bundle/nsis/*-setup.exe*
           if-no-files-found: error
 
   # ── Draft GitHub Release with all bundles (tag builds only) ────────────────────
