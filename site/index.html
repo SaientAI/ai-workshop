@@ -326,6 +326,15 @@
     .reveal { opacity:1; transform:none; transition:none; }
     .mascot-ring, .caret, .eyebrow .dot { animation: none; }
   }
+
+  /* Download-page candour notes: small, quiet, but readable — these say what is
+     not finished, so they must not look like fine print nobody is meant to read. */
+  .dl-notes { max-width: 62ch; margin: 18px auto 0; text-align: left;
+              font-size: 13px; line-height: 1.65; color: var(--text3); }
+  .dl-notes p { margin: 0 0 10px; }
+  .dl-notes p:last-child { margin-bottom: 0; }
+  .dl-notes strong { color: var(--text2); font-weight: 650; }
+  .dl-notes a { color: var(--text2); }
 </style>
 </head>
 <body>
@@ -545,7 +554,15 @@
       <a class="btn btn-primary" href="/downloads/Saient_1.0.20_x64-setup.exe" download>↓ Windows · x64 test build</a>
       <a class="btn" href="/release-manifest.json">Release details + SHA-256</a>
     </div>
-    <div style="margin-top:14px;font-size:12.5px;color:var(--text3)">v1.0.20 · free and no-key · packages hosted directly on saient.co.uk · <a href="/changelog" style="color:var(--text2)">release notes</a><br /><a href="https://github.com/SaientAI/ai-workshop/blob/master/CODE_SIGNING_POLICY.md" style="color:var(--text2)">Code signing policy</a> · Free code signing provided by <a href="https://signpath.io/" style="color:var(--text2)">SignPath.io</a>, certificate by <a href="https://signpath.org/" style="color:var(--text2)">SignPath Foundation</a>.<br />SignPath approval and workflow integration are pending. The current Windows x64 installer is a CPU-LLM test build pending a real Windows installation/runtime check; it is not Authenticode-signed, so Windows may show “Unknown publisher.” Replacement AppImage remains pending.</div>
+    <div style="margin-top:14px;font-size:12.5px;color:var(--text3)">v1.0.20 · free and no-key · packages hosted directly on saient.co.uk · <a href="/changelog" style="color:var(--text2)">release notes</a> · <a href="https://github.com/SaientAI/ai-workshop/blob/master/CODE_SIGNING_POLICY.md" style="color:var(--text2)">Code signing policy</a></div>
+
+    <div class="dl-notes">
+      <p><strong>On code signing — we’re on it.</strong> The Windows installer is not yet Authenticode-signed, so Windows will warn about an “Unknown publisher” and SmartScreen may ask you to confirm. That is a certificate we are actively working to put in place, not a corner we cut. The release pipeline is already wired to sign automatically the moment one is available, so this notice disappears on its own. Until then every download is listed with its SHA-256 in the <a href="/release-manifest.json">release manifest</a> so you can check what you got.</p>
+
+      <p><strong>Linux got the closer attention, and shipped first.</strong> It is what Saient is developed and tested on every day, and it is the build that has had the detail work. The Windows installer landed later and is still a test build: it is cross-compiled, bundles the CPU inference engine only, and has had far less real-world running than the Linux one. Expect it to be slower and rougher. We would rather say that plainly than let you find out after installing.</p>
+
+      <p><strong>Thank you.</strong> To everyone who has downloaded Saient, reported something broken, or just followed along — genuinely, it helps, and it is the reason the rough edges get found at all.</p>
+    </div>
   </div>
 </section>
 <footer>
