@@ -150,7 +150,7 @@ def _anatomy_lock_prompts(prompt: str, neg: str):
     p, n = (prompt or "").strip(), (neg or "").strip()
     if not _looks_explicit(p) and not _looks_explicit(n):
         return p, n
-    if p and not re.search(r"anatomically correct|labia majora|vulva with distinct", p, re.I):
+    if p and not re.search(r"anatomically correct", p, re.I):
         p = f"{p}, {_ANATOMY_POS}"
     n = _merge_csv(n, _ANATOMY_NEG)
     return p, n

@@ -80,7 +80,7 @@
       p = `${p}, ${QUALITY_LONG_POS}`;
     }
     if (!video.anatomyLock || !looksExplicitAnatomy(p)) return p;
-    if (/anatomically correct|labia majora|vulva with distinct/i.test(p)) return p;
+    if (/anatomically correct/i.test(p)) return p;
     return `${p}, ${ANATOMY_POS}`;
   }
   function withAnatomyNeg(neg: string, prompt = "") {
@@ -1148,7 +1148,7 @@
       // Still inject anatomy/quality locks if the user wrote continuity language but omitted them.
       let p = text;
       if (longClip && !/high-fidelity|no quality drop/i.test(p)) p = `${p}, ${QUALITY_LONG_POS}`;
-      if (video.anatomyLock && explicit && !/anatomically correct|not a mouth|labia majora/i.test(p)) {
+      if (video.anatomyLock && explicit && !/anatomically correct/i.test(p)) {
         p = `${p}, ${ANATOMY_POS}, consistent anatomy between frames, no anatomy drift`;
       }
       return p;
