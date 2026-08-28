@@ -1,5 +1,5 @@
 {
-  "version": "1.0.22",
+  "version": "1.0.23",
   "url": "https://saient.co.uk/#download",
-  "notes": "Saient now registers the saient:// URL scheme, so a Hugging Face model page can hand it a repo id and Saient offers to import a GGUF from it. The Windows package is built on Windows for the first time and now bundles the CUDA inference engine -- earlier Windows builds ran on CPU only. Still not Authenticode-signed; Windows will warn about an unknown publisher."
+  "notes": "Removes explicit anatomy wording that had been left in the shipped default prompts from video testing. Also carries the saient:// deep link and, on Windows, the CUDA inference engine."
 }

@@ -1,11 +1,11 @@
 {
-  "version": "1.0.22",
-  "notes": "Saient now registers the saient:// URL scheme, so a Hugging Face model page can hand it a repo id and Saient offers to import a GGUF from it. The Windows package is built on Windows for the first time and now bundles the CUDA inference engine -- earlier Windows builds ran on CPU only. Still not Authenticode-signed; Windows will warn about an unknown publisher.",
-  "pub_date": "2026-08-28T07:02:52Z",
+  "version": "1.0.23",
+  "notes": "Removes explicit anatomy wording that had been left in the shipped default prompts from video testing. Also carries the saient:// deep link and, on Windows, the CUDA inference engine.",
+  "pub_date": "2026-08-28T15:31:45Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTcmZ5RU1kUFBPUGx5MmlJaUhGN0hNVkRKYUlNd1ZkVnZhNjZHQ2M0T1ZvZm9xOHlTUGxYYUozNVpoMXd5bHBrY0RlUzM3UmhjYlZZQU81WlBvUEprTVJGZ1hrb2F0QUFrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3ODg5OTM4CWZpbGU6U2FpZW50XzEuMC4yMl94NjQtc2V0dXAuZXhlCnRIOUx3bFA2cVc4S1MwL280dTlFQXpDVmxDcktlMTkxaW00cDJWYXlibUNDQWtQTjh6SGFYZEdFYWt6TjNhUjZ6OTFZK2hrUnA4MGtlRk5EQmU2QUNBPT0K",
-      "url": "https://saient.co.uk/downloads/Saient_1.0.22_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTcmZ5RU1kUFBPUHNlcEpOclEzc3dzbURxRlcyRVltbXV0RlY3am1GZW51NnRvQStGYnYvQXhzdC9jaEpzMitvOU40UkRPRFRMK2IzZ1Nia09wNXVXcE9SMTRKSEE2alFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3OTMwOTExCWZpbGU6U2FpZW50XzEuMC4yM194NjQtc2V0dXAuZXhlCnBudHFUVEpQQmFtQ0l1T2RYNFF6dit3bklGejNhQm5uSXdWOTc3RDZmMTdZak9TUko2bGNRNCtLTk12RUV5dzhSOXB2bitEQlYzUlN2OGkyMEZlV0RBPT0K",
+      "url": "https://saient.co.uk/downloads/Saient_1.0.23_x64-setup.exe"
     }
   }
 }
