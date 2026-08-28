@@ -58,3 +58,41 @@ connect to localhost" unless Vite is running on 1421. Either run `npm run dev`
 first or test a release build. In a debug build the scheme is registered at
 runtime (`register("saient")`); installed builds get it from the packaged
 desktop entry instead.
+
+## Verified
+
+| Leg | How |
+|---|---|
+| Parse + validation | `cargo test hflink` — 4 tests |
+| Live link, app already running | `xdg-open` → prompt named the repo (Linux) |
+| Cold start, link in argv | Same prompt, via the pending-link path (Linux) |
+| Internet gate | With Internet off, "Show files" returns the usual gate message |
+| Import | `SmolLM2-135M-Instruct-IQ3_XS.gguf` landed in `models/llm/…` and appeared in the model list |
+| Packaged `.deb` / AppImage | `Exec=llm-inference %u` + `MimeType=x-scheme-handler/saient` inside both |
+| Installed Linux build | `dpkg -i`, then `xdg-open` reached `/usr/bin/llm-inference` with the URL in argv |
+| **Installed Windows build** | **2026-08-28: cross-built NSIS installer on a real Windows laptop — `Win+R` with a `saient://` URL opened the prompt with the correct repo** |
+
+## Next: the Hugging Face side
+
+The app half is done. To make the link reachable from a model page, add an entry
+to `LOCAL_APPS` in `huggingface.js/packages/tasks/src/local-apps.ts`:
+
+```typescript
+saient: {
+	prettyLabel: "Saient",
+	docsUrl: "https://saient.co.uk",
+	mainTask: "text-generation",
+	displayOnModelPage: isLlamaCppGgufModel,
+	deeplink: (model) => new URL(`saient://models/huggingface/${model.id}`),
+},
+```
+
+`isLlamaCppGgufModel` is `!!model.gguf?.context_length`, which is the right
+predicate for a tinyq4 host. `mainTask` takes a single `PipelineType`, so one
+entry cannot also represent the SDXL/Wan sides of the app.
+
+Add a matching case to `local-apps.spec.ts`, mirroring the `atomic-chat` tests —
+one asserting `displayOnModelPage` is true for a GGUF repo and the deeplink
+href, and one negative case. There are no published acceptance criteria for
+local apps; merging is maintainer discretion. Closed-source and paid apps are
+already in the list (LM Studio, Msty).
