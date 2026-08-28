@@ -47,19 +47,12 @@
   // ── Activity log (non-typable mini terminal under Params) ──────────────────
   let termEl: HTMLDivElement | undefined = $state();
 
-  // Wan/SVI NSFW failure mode: vulva gets rendered as a mouth/lips, or genitals fuse
-  // into a penis+vagina hybrid. Positive lock + hard negatives fix most of it; refine
-  // with the same language pulls multi-chunk 30s chains back into shape.
-  const ANATOMY_NEG =
-    "bad anatomy, malformed anatomy, fused body parts, ambiguous anatomy, ambiguous anatomy, ambiguous anatomy, " +
-    "misplaced facial features, lips instead of anatomy, features as lips, oral opening as anatomy, " +
-    "misplaced facial features, face on body, fused anatomy, fused anatomy, " +
-    "fused anatomy, inverted anatomy, missing anatomy, malformed anatomy, " +
-    "anatomically incorrect anatomy, wrong anatomy";
-  const ANATOMY_POS =
-    "anatomically correct female genitalia, clear consistent anatomy" +
-    "and labia minora and clitoris, natural anatomy" +
-    "no penis, no fused sex organs, realistic intimate anatomy";
+  // Video models can render anatomy incorrectly: body parts fusing, and facial
+  // features appearing where they do not belong. A positive anatomy lock plus hard
+  // negatives corrects most of it, and refine reuses the same terms so multi-chunk
+  // 30s chains stay consistent. Clinical wording on purpose -- this repo is public.
+  const ANATOMY_NEG = "bad anatomy, anatomically incorrect, malformed anatomy, distorted proportions, merged or fused body parts, misplaced facial features, duplicated features, extra limbs, missing limbs";
+  const ANATOMY_POS = "anatomically correct and consistent human anatomy, natural proportions, correctly placed facial features";
   const QUALITY_LONG_POS =
     "sharp high-fidelity detail, consistent identity, stable lighting and exposure, " +
     "no quality drop, no blur creep, smooth natural motion";
@@ -1698,7 +1691,7 @@
       <input type="checkbox" bind:checked={video.anatomyLock} />
       Anatomy lock
       <span style="color:var(--text3); font-size:11px">
-        — stops feature placement/lips and fused body parts (auto pos+neg on explicit prompts; used by Refine too)
+        — corrects fused body parts and misplaced facial features (auto pos+neg; used by Refine too)
       </span>
     </label>
 

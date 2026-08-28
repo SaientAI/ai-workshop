@@ -251,7 +251,7 @@ export const video = $state({
   prompt: "",
   // Base quality + anatomy anti-confusion. Wan/SVI often maps feature placement/lips or
   // fuses sex organs; keep those negatives resident so every gen gets the guard.
-  negPrompt: "blurry, distorted, low quality, static, watermark, bad anatomy, deformed hands, extra fingers, malformed anatomy, fused body parts, ambiguous anatomy, ambiguous anatomy, misplaced facial features, lips instead of anatomy, oral opening as anatomy, misplaced facial features, face on body, fused anatomy, inverted anatomy, malformed anatomy, anatomically incorrect anatomy",
+  negPrompt: "blurry, distorted, low quality, static, watermark, bad anatomy, deformed hands, extra fingers, anatomically incorrect, malformed anatomy, distorted proportions, merged or fused body parts, misplaced facial features",
   // Storyboard for segmented long videos: separate prompts per ~5s chunk.
   // If filled, a storyboard generate can chain them with auto-extend/stitch.
   storyboardPrompts: ["", "", "", ""],

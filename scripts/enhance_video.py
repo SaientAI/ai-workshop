@@ -113,18 +113,13 @@ def frames_to_b64(frames, fps):
 
 # ── Stage: refine (Wan vid2vid, full bf16 — fits because generator is unloaded) ─
 
-# Wan/SVI often map feature placement/lips or fuse sex organs. Refine re-encodes the prompt,
-# so re-injecting these terms here is what actually cleans a bad 30s chain.
+# Refine re-encodes the prompt, so the anatomy terms are re-injected here -- that is
+# what actually cleans up a bad 30s chain. Clinical wording on purpose: public repo.
 _ANATOMY_NEG = (
-    "bad anatomy, malformed anatomy, fused body parts, ambiguous anatomy, ambiguous anatomy, "
-    "misplaced facial features, lips instead of anatomy, features as lips, oral opening as anatomy, "
-    "misplaced facial features, face on body, fused anatomy, fused anatomy, "
-    "inverted anatomy, malformed anatomy, anatomically incorrect anatomy"
+    "bad anatomy, anatomically incorrect, malformed anatomy, distorted proportions, merged or fused body parts, misplaced facial features, duplicated features, extra limbs, missing limbs"
 )
 _ANATOMY_POS = (
-    "anatomically correct female genitalia, clear consistent anatomy"
-    "and labia minora and clitoris, natural anatomy"
-    "no penis, no fused sex organs, realistic intimate anatomy"
+    "anatomically correct and consistent human anatomy, natural proportions, correctly placed facial features"
 )
 
 
@@ -212,7 +207,7 @@ def stage_refine(frames, req):
 
     prompt, neg_prompt = _anatomy_lock_prompts(req.get("prompt", ""), req.get("neg_prompt", "") or "")
     if prompt != (req.get("prompt", "") or "").strip() or neg_prompt != (req.get("neg_prompt", "") or "").strip():
-        emit({"loading_status": "refine: anatomy lock injected (anti feature placement / fused body parts)"})
+        emit({"loading_status": "refine: anatomy lock injected"})
 
     # Encode prompt with a 4-bit text encoder, then free it (same staged trick).
     # Reuse the shared pre-quantized 4-bit UMT5 cache built by generate_video.py.

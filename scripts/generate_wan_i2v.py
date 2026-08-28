@@ -178,7 +178,7 @@ def _match_extension_to_tail(prev_frames, ext_frames, window=24):
 
     Soft ease-in over the first frames so multi-chunk 20–30s i2v chains don't
     accumulate a hard brightness step (and so skin-tone over-correction doesn't
-    make labia↔lips confusion worse at the cut).
+    make anatomical feature confusion worse at the cut).
     """
     if not prev_frames or not ext_frames:
         return ext_frames

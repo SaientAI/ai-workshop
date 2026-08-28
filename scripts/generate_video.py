@@ -513,7 +513,12 @@ def _b64_to_frames(video_b64: str):
 
 
 def _frame_to_uint8(frame, np):
-    """Normalize Diffusers float frames and decoded uint8 frames for ffmpeg."""
+    """Normalize Diffusers float frames and decoded uint8 frames for ffmpeg.
+
+    postprocess_video(output_type="np") is [0, 1]. A tiny undershoot (min≈-0.02)
+    used to flip that frame onto the [-1, 1] map while neighbours stayed [0, 1],
+    which reads as brightness flashing on an otherwise still clip.
+    """
     if hasattr(frame, "detach"):
         frame = frame.detach().cpu().numpy()
     arr = np.asarray(frame)
@@ -525,8 +530,10 @@ def _frame_to_uint8(frame, np):
         arr = np.nan_to_num(arr, nan=0.0, posinf=1.0, neginf=0.0)
         low = float(arr.min()) if arr.size else 0.0
         high = float(arr.max()) if arr.size else 0.0
-        if low >= -1.01 and high <= 1.01:
-            arr = (arr + 1.0) * 127.5 if low < -0.01 else arr * 255.0
+        if low < -0.2 and high <= 1.01:
+            arr = (arr + 1.0) * 127.5
+        elif high <= 1.5:
+            arr = arr * 255.0
     return np.ascontiguousarray(np.clip(np.rint(arr), 0, 255).astype(np.uint8))
 
 
@@ -589,7 +596,7 @@ def _match_extension_to_tail(prev_frames, ext_frames, window=24):
         prev_mean, prev_std = prev_sample.mean(axis=0), prev_sample.std(axis=0)
         ext_mean, ext_std = ext_sample.mean(axis=0), ext_sample.std(axis=0)
         # Slightly softer gain clamp than 0.75–1.35 so long chains don't over-correct
-        # skin tones (which is where "lips vs labia" contrast mistakes get worse).
+        # skin tones (which is where fine anatomical contrast mistakes get worse).
         gain = prev_std / np.maximum(ext_std, 1.0)
         gain = np.clip(gain, 0.82, 1.22)
         bias = prev_mean - ext_mean * gain
@@ -1525,7 +1532,15 @@ def _i2v_pipe():
             import torch
             if next(_vae.parameters()).device.type != "cuda":
                 _vae.to("cuda:0")
-            out = _orig_encode(*a, **k)
+            # I2V encodes one still. Spatial tiles on the 16× Wan2.2 VAE split that
+            # still into independently cached causal chunks, which is a flicker source
+            # and is unnecessary at 480p/720p. Decode keeps its own tiling fallback.
+            was_tiling = bool(getattr(_vae, "use_tiling", False))
+            _vae.use_tiling = False
+            try:
+                out = _orig_encode(*a, **k)
+            finally:
+                _vae.use_tiling = was_tiling
             _vae.to("cpu"); torch.cuda.empty_cache()
             return out
         _vae.encode = _encode_then_park
@@ -1555,9 +1570,21 @@ def _vae_to(device):
 
 
 def _use_untiled_vae_decode(z_dim, latent_frames, latent_height, latent_width):
-    """Use a seam-free full-frame decode only when its measured-size proxy is safe."""
+    """Use a seam-free full-frame decode when it can fit.
+
+    Spatial tiles on Wan's causal VAE decode each tile with its own feat_cache,
+    which shows up as flicker/lighting chatter on I2V. The original working 5B
+    path effectively ran untiled (no-arg enable_tiling did not bound 480p).
+    Decode already falls back to 256px tiles on OOM.
+    """
+    transformer_resident = (
+        getattr(PIPE, "transformer", None) is not None
+        or getattr(PIPE, "transformer_2", None) is not None
+    )
     if int(z_dim) >= 32:
-        return False
+        # 5B: measured untiled 480×832×49 spike ~+8.6 GB. Fits 16 GB only if the
+        # transformer is parked. If it is still resident, tiles are required.
+        return not transformer_resident
     temporal_scale = max(1, int(getattr(PIPE, "vae_scale_factor_temporal", 4) or 4))
     spatial_scale = max(1, int(getattr(PIPE, "vae_scale_factor_spatial", 8) or 8))
     frames = max(1, (int(latent_frames) - 1) * temporal_scale + 1)
@@ -1861,6 +1888,45 @@ def _retrieve_latents_argmax(encoder_output):
     if hasattr(encoder_output, "latents"):
         return encoder_output.latents
     raise AttributeError("Could not access latents from VAE encoder output")
+
+
+def _prepare_i2v_image(img, width, height):
+    """Resize the I2V still the way Wan's official TI2V recipe does.
+
+    Stretching every photo to a fixed 832×480 used to warp the first-frame
+    latent. The model then spends its capacity reconstructing that stretched
+    still instead of adding temporal motion. Keep the requested pixel budget,
+    preserve aspect ratio, align to VAE×patch.
+    """
+    from PIL import Image
+
+    spatial = int(getattr(PIPE, "vae_scale_factor_spatial", 0) or 0)
+    if spatial <= 0:
+        try:
+            spatial = int(PIPE.vae.config.scale_factor_spatial)
+        except Exception:
+            spatial = 8
+    patch = 2
+    try:
+        patch = int(PIPE.vae.config.patch_size or 2)
+    except Exception:
+        try:
+            patch = int(PIPE.transformer.config.patch_size[1])
+        except Exception:
+            patch = 2
+    mod = max(8, int(spatial) * int(patch))
+    max_area = max(int(width) * int(height), mod * mod)
+    aspect = float(img.height) / max(float(img.width), 1.0)
+    h = max(mod, int(round((max_area * aspect) ** 0.5)) // mod * mod)
+    w = max(mod, int(round((max_area / max(aspect, 1e-6)) ** 0.5)) // mod * mod)
+    if (w, h) != img.size:
+        img = img.resize((w, h), Image.LANCZOS)
+    if (w, h) != (int(width), int(height)):
+        emit({"loading_status": (
+            f"i2v: aspect-preserving {w}×{h} inside {int(width)}×{int(height)} "
+            f"budget (multiple of {mod})"
+        )})
+    return img, w, h
 
 
 def _frame_to_first_frame_condition(frame, height, width):
@@ -2325,11 +2391,15 @@ def generate(req):
         # ── Image-to-video ──────────────────────────────────────────────────────
         import io
         from PIL import Image
-        img = Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB").resize((width, height))
+        img = Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB")
+        img, width, height = _prepare_i2v_image(img, width, height)
         # i2v encodes the input image through the VAE inside the pipe call, so the VAE must
         # be back on the GPU (we parked it before encode for text-encoder headroom).
         if _vae_to("cuda:0"):
             emit({"loading_status": "i2v: VAE back on GPU for image conditioning…"})
+        if not STREAM_TRANSFORMER and getattr(PIPE, "transformer", None) is None:
+            emit({"loading_status": "i2v: reloading transformer for denoise…"})
+            _reload_transformer()
         pipe = _i2v_pipe()
         emit({"loading_status": "i2v: conditioning on your image, denoising…"})
         latents = pipe(
@@ -2489,10 +2559,10 @@ def generate(req):
     if frames is None:
         _free_cuda()
         _vram_stage("denoising")
-        if (DUAL_EXPERT or LOW_VRAM_ACTIVE) and not STREAM_TRANSFORMER:
+        if (DUAL_EXPERT or LOW_VRAM_ACTIVE or _vae_is_heavy()) and not STREAM_TRANSFORMER:
             if getattr(PIPE, "transformer", None) is not None or getattr(PIPE, "transformer_2", None) is not None:
-                label = "finished dual expert" if DUAL_EXPERT else "inactive transformer"
-                emit({"loading_status": f"freeing {label} before VAE decode…"})
+                label = "finished dual expert" if DUAL_EXPERT else "transformer"
+                emit({"loading_status": f"freeing {label} before VAE decode (untiled 5B path)…"})
                 _unload_transformer()
         frames = _decode_latents(latents)
         del latents
