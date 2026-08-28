@@ -25,6 +25,11 @@
       "devCsp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:1421 ws://127.0.0.1:1421; frame-src 'none'"
     }
   },
+  "plugins": {
+    "deep-link": {
+      "desktop": { "schemes": ["saient"] }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": ["deb", "appimage", "nsis"],
@@ -49,6 +54,7 @@
     "linux": {
       "deb": {
         "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"],
+        "desktopTemplate": "linux/main.desktop",
         "conflicts": ["ai-workshop"],
         "replaces": ["ai-workshop"]
       },

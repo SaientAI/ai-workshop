@@ -587,6 +587,13 @@ export interface HfFile { file: string; size: number }
 export const hfListGguf = (repo: string, token?: string) =>
   invoke<HfFile[]>("hf_list_gguf", { repo, token: token || null });
 
+/**
+ * Take the repo id from a pending `saient://models/huggingface/<owner>/<name>`
+ * link — the Hugging Face "Use this model" route. Taking it clears it, so one
+ * link opens one prompt. Returns null when there is nothing waiting.
+ */
+export const hfPendingDeeplink = () => invoke<string | null>("hf_pending_deeplink");
+
 /** A HuggingFace model repo from search. */
 export interface HfRepo { id: string; downloads: number; likes: number }
 

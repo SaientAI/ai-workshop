@@ -10,6 +10,7 @@ mod auth;
 mod binding;
 mod engine;
 mod gguf;
+mod hflink;
 mod imggen;
 mod internet;
 mod lora;
@@ -2615,6 +2616,13 @@ fn now_ms() -> u64 {
 
 fn main() {
     let builder = tauri::Builder::default()
+        // First, and before any window exists: a `saient://` link launches the
+        // app if it is not running, so a second process must hand its argv to
+        // the first one instead of opening a rival instance.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            hflink::deliver(app, argv);
+        }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init());
@@ -2638,6 +2646,26 @@ fn main() {
             }
             // Kill any server left over from a previous session (crash or force-quit).
             engine::kill_our_stale_servers();
+
+            // `saient://models/huggingface/<owner>/<name>` — the Hugging Face
+            // "Use this model" route. This only ever opens a confirmation
+            // prompt; see hflink.rs for why it carries no network authority.
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    hflink::deliver(&handle, event.urls().iter().map(|u| u.to_string()));
+                });
+                // An installed build registers the scheme through its .desktop
+                // entry / registry key at install time; a dev build has neither,
+                // so ask the OS at runtime instead.
+                #[cfg(debug_assertions)]
+                if let Err(e) = app.deep_link().register("saient") {
+                    eprintln!("Could not register the saient:// scheme for development: {e}");
+                }
+                // First launch: the URL is in our own argv, not an event.
+                hflink::deliver(app.handle(), std::env::args());
+            }
 
             // Saient starts with the app and dies with it. She begins PAUSED —
             // the flag is only flipped by the title-bar button — so launching
@@ -2715,6 +2743,8 @@ fn main() {
             setup::managed_storage_info, setup::clear_legacy_hf_cache,
             setup::download_starter_model, setup::hf_list_gguf,
             setup::hf_search, setup::hf_list_files, setup::download_hf_file, setup::download_hf_repo,
+            // saient:// deep links (Hugging Face "Use this model")
+            hflink::hf_pending_deeplink,
             // Signed Pi-hosted update check and platform installer
             update::check_update, update::install_update, update::relaunch_after_update,
             // Launch password

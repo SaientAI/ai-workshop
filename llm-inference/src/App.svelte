@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+  import { listen } from "@tauri-apps/api/event";
   import { setupEvents } from "./lib/events.js";
   import { ui, model, agent, update, toast, projects } from "./lib/state.svelte.js";
   import { handleKey } from "./lib/shortcuts.js";
@@ -18,6 +19,7 @@
   import CheckpointBar from "./components/CheckpointBar.svelte";
   import ProjectPicker from "./components/ProjectPicker.svelte";
   import AutonomyConfirm from "./components/AutonomyConfirm.svelte";
+  import HfImport from "./components/HfImport.svelte";
   import { effectiveAgiLevel, needsConfirm, needsLoop } from "./lib/agiLevel.js";
   import ChatScreen from "./components/screens/ChatScreen.svelte";
   import AgentScreen from "./components/screens/AgentScreen.svelte";
@@ -37,6 +39,9 @@
   let autonomyConfirmed = $state(false);
   let autonomyDialogRequested = $state(false);
   let locked = $state(false);
+  // Repo id from a `saient://models/huggingface/<owner>/<name>` link, i.e. from
+  // Hugging Face's "Use this model". Null unless a link is actually waiting.
+  let hfImportRepo = $state<string | null>(null);
 
   onMount(async () => {
     // ── Global safety net ──────────────────────────────────────────────────
@@ -76,6 +81,15 @@
     }).catch(() => {});
 
     await setupEvents();
+
+    // `saient://` deep links. The event covers a link that arrives while the app
+    // is already running; the pending check covers a cold start, where the link
+    // reached the backend before this listener existed.
+    await listen<{ repo: string }>("hf-deeplink", (e) => {
+      if (e.payload?.repo) hfImportRepo = e.payload.repo;
+    });
+    const pendingRepo = await T.hfPendingDeeplink().catch(() => null);
+    if (pendingRepo) hfImportRepo = pendingRepo;
 
     // Sync write mode to backend
     await T.setAgentWriteMode(ui.agentWriteMode).catch(() => {});
@@ -241,6 +255,18 @@
 
 {#if ui.showSecurity}
   <SecuritySettings onClose={() => (ui.showSecurity = false)} />
+{/if}
+
+<!-- Hugging Face "Use this model → Saient". App level because the link can
+     arrive on any screen, and it must never auto-import. -->
+{#if hfImportRepo}
+  <HfImport
+    repo={hfImportRepo}
+    modelsDir={model.modelsDir}
+    onClose={() => (hfImportRepo = null)}
+    onDone={async () => {
+      model.models = await T.scanModelsDir().catch(() => model.models);
+    }} />
 {/if}
 
 <Toasts />
