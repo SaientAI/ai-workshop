@@ -16,7 +16,7 @@
   },
   "windows_artifact": {
     "platform": "Windows x86_64",
-    "status": "built on Windows by CI; not yet installed or run on a Windows machine at this version",
+    "status": "built on Windows by CI; installed and confirmed running on a Windows x64 machine",
     "url": "https://saient.co.uk/downloads/Saient_1.0.22_x64-setup.exe",
     "bytes": 7290970,
     "sha256": "cb85297affce760b7221d0183da50e5b1c97733d0f5b699e2608fa47eda977a8",
@@ -48,7 +48,7 @@
     "deb_scheme_handler": "Exec=llm-inference %u with MimeType=x-scheme-handler/saient present in the packaged desktop entry",
     "windows_bundled_engines": "tinyq4-cpu.exe, tinyq4-cuda.exe and cudart64_12.dll confirmed present inside the installer",
     "deep_link": "saient:// verified end to end on Linux (deb) and on Windows x64 using the 1.0.20 installer",
-    "windows_install_and_runtime": "not verified at 1.0.22",
+    "windows_install_and_runtime": "verified: installed from saient.co.uk and launched on Windows x64 on 2026-08-28",
     "authenticode": "not signed; SignPath project approval outstanding"
   }
 }
