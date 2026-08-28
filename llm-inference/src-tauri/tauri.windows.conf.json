@@ -4,6 +4,8 @@
     "createUpdaterArtifacts": true,
     "resources": {
       "resources/engine/tinyq4-cpu.exe": "resources/engine/tinyq4-cpu.exe",
+      "resources/engine/tinyq4-cuda.exe": "resources/engine/tinyq4-cuda.exe",
+      "resources/engine/cudart64_12.dll": "resources/engine/cudart64_12.dll",
       "resources/saient/": "resources/saient/",
       "../../scripts/clean_lora_dataset.py": "resources/scripts/clean_lora_dataset.py",
       "../../scripts/enhance_video.py": "resources/scripts/enhance_video.py",

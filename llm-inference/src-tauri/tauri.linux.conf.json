@@ -1,0 +1,9 @@
+{
+  "bundle": {
+    "resources": {
+      "resources/engine/tinyq4-cpu": "resources/engine/tinyq4-cpu",
+      "resources/engine/tinyq4-cuda": "resources/engine/tinyq4-cuda",
+      "resources/engine/libcudart.so.12": "resources/engine/libcudart.so.12"
+    }
+  }
+}

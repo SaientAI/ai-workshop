@@ -35,9 +35,6 @@
     "targets": ["deb", "appimage", "nsis"],
     "icon": ["icons/icon.png", "icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
     "resources": {
-      "resources/engine/tinyq4-cpu": "resources/engine/tinyq4-cpu",
-      "resources/engine/tinyq4-cuda": "resources/engine/tinyq4-cuda",
-      "resources/engine/libcudart.so.12": "resources/engine/libcudart.so.12",
       "resources/saient/": "resources/saient/",
       "../../scripts/clean_lora_dataset.py": "resources/scripts/clean_lora_dataset.py",
       "../../scripts/enhance_video.py": "resources/scripts/enhance_video.py",
