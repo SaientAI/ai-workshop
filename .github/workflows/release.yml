@@ -104,6 +104,11 @@ jobs:
     # Pinned rather than passing nvcc -allow-unsupported-compiler, which
     # disables the check instead of satisfying it.
     runs-on: windows-2022
+    # Step-level `if:` cannot read the secrets context directly, so the two
+    # values that gate signing are surfaced as env for the guards below.
+    env:
+      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+      SIGNPATH_ORGANIZATION_ID: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
     steps:
       - name: Checkout app
         uses: actions/checkout@v4
@@ -176,7 +181,48 @@ jobs:
         working-directory: llm-inference
         run: npm run tauri -- build --bundles nsis
 
-      - name: Upload Windows installer
+      # ── Authenticode signing ──────────────────────────────────────────────
+      # Free OSS certificate from the SignPath Foundation; see
+      # CODE_SIGNING_POLICY.md. The secrets only exist once the SignPath project
+      # is approved, so until then the signing steps skip and the release
+      # carries the unsigned installer — which is what the policy document
+      # already promises to label as such.
+      #
+      # SignPath reads its input from a GitHub artifact, so the installer is
+      # uploaded first under an `internal-` name. The draft-release job only
+      # collects `saient-*`, so this intermediate is never published.
+      - name: Upload installer for signing
+        id: upload_unsigned
+        uses: actions/upload-artifact@v4
+        with:
+          name: internal-windows-unsigned
+          path: llm-inference/src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+
+      - name: Sign installer (SignPath)
+        id: signpath
+        if: env.SIGNPATH_API_TOKEN != ''
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.upload_unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      - name: Upload Windows installer (signed)
+        if: env.SIGNPATH_API_TOKEN != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: saient-windows
+          path: signed/*-setup.exe
+          if-no-files-found: error
+
+      - name: Upload Windows installer (unsigned)
+        if: env.SIGNPATH_API_TOKEN == ''
         uses: actions/upload-artifact@v4
         with:
           name: saient-windows
@@ -196,6 +242,9 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: dist
+          # Only published bundles. Excludes `internal-windows-unsigned`, the
+          # pre-signing copy SignPath consumes.
+          pattern: saient-*
 
       - name: Publish draft release
         uses: softprops/action-gh-release@v2
