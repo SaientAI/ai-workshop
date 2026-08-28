@@ -179,6 +179,12 @@ jobs:
 
       - name: Tauri build (NSIS)
         working-directory: llm-inference
+        # tauri.windows.conf.json sets createUpdaterArtifacts, so the bundler
+        # needs the updater signing key or it fails after producing the
+        # installer: "A public key has been found, but no private key."
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri -- build --bundles nsis
 
       # ── Authenticode signing ──────────────────────────────────────────────
