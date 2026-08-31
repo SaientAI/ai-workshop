@@ -42,6 +42,14 @@
   // Repo id from a `saient://models/huggingface/<owner>/<name>` link, i.e. from
   // Hugging Face's "Use this model". Null unless a link is actually waiting.
   let hfImportRepo = $state<string | null>(null);
+  // The agent screen owns a live PTY. Destroying it on a screen switch kills the
+  // shell and its scrollback, so once it has been opened it stays mounted and is
+  // hidden with CSS instead — the same rule its own tabs already follow. It is
+  // not mounted before first use, so the shell is still spawned on demand.
+  let agentMounted = $state(false);
+  $effect(() => {
+    if (ui.screen === "agent") agentMounted = true;
+  });
 
   onMount(async () => {
     // ── Global safety net ──────────────────────────────────────────────────
@@ -147,10 +155,15 @@
 <TitleBar {aw} />
 <div class="layout">
   <IconRail />
+  {#if agentMounted}
+    <!-- display:contents — the wrapper adds no box, so both of AgentScreen's
+         root panes stay direct flex children of .layout. -->
+    <div class="keep-alive" class:keep-alive-hidden={ui.screen !== "agent"}>
+      <AgentScreen />
+    </div>
+  {/if}
   {#if ui.screen === "chat"}
     <ChatScreen />
-  {:else if ui.screen === "agent"}
-    <AgentScreen />
   {:else if ui.screen === "imggen"}
     <ImageGenScreen />
   {:else if ui.screen === "assets"}
@@ -330,6 +343,11 @@
     --radius: 8px;
     --radius-sm: 5px;
   }
+  .keep-alive { display: contents; }
+  /* Both classes sit on the same element — keep the hide rule more specific than
+     the display:contents rule so the toggle cannot lose on source order. */
+  .keep-alive.keep-alive-hidden { display: none; }
+
   .layout {
     display: flex;
     /* 36px title bar + 32px Saient Pulse. The Pulse is always mounted, so this

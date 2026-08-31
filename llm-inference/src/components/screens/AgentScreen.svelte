@@ -85,10 +85,16 @@
   async function spawnWorkspaceTerminal(path: string, announce: boolean) {
     if (!term) return;
     const cwd = path || ".";
+    // The screen can be mounted but hidden (chat is showing), and a hidden
+    // element measures zero — re-fit first so the shell is never spawned at a
+    // degenerate size that nothing corrects until the terminal tab is opened.
+    fit?.fit();
+    const cols = Math.max(term.cols, 80);
+    const rows = Math.max(term.rows, 24);
     if (announce) {
       term.write(`\r\n\x1b[38;2;108;142;245mworkspace\x1b[0m → ${cwd}\r\n`);
     }
-    await T.ptySpawn(cwd, term.cols, term.rows, model.activeServerPort);
+    await T.ptySpawn(cwd, cols, rows, model.activeServerPort);
     ptyWorkspace = cwd;
   }
 
@@ -105,9 +111,12 @@
     });
   });
 
-  // Re-fit whenever the terminal tab becomes visible (display:block re-enables measurement).
+  // Re-fit whenever the terminal becomes visible again (display:block re-enables
+  // measurement). Both conditions matter: the screen is kept mounted and hidden
+  // when you switch to chat, and a hidden element measures zero — coming back
+  // never changes `agent.tab`, so the tab alone would leave it mis-sized.
   $effect(() => {
-    if (agent.tab === "terminal" && fit && term) {
+    if (ui.screen === "agent" && agent.tab === "terminal" && fit && term) {
       requestAnimationFrame(() => {
         fit?.fit();
         if (term) T.ptyResize(term.cols, term.rows).catch(() => {});
@@ -365,7 +374,8 @@
 
     // Resize observer: keep PTY kernel size in sync with terminal element size.
     const ro = new ResizeObserver(() => {
-      if (agent.tab !== "terminal") return;
+      // A hidden screen collapses to zero and would resize the PTY to nothing.
+      if (ui.screen !== "agent" || agent.tab !== "terminal") return;
       fit?.fit();
       if (term) T.ptyResize(term.cols, term.rows).catch(() => {});
     });
