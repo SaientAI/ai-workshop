@@ -343,11 +343,6 @@
     --radius: 8px;
     --radius-sm: 5px;
   }
-  .keep-alive { display: contents; }
-  /* Both classes sit on the same element — keep the hide rule more specific than
-     the display:contents rule so the toggle cannot lose on source order. */
-  .keep-alive.keep-alive-hidden { display: none; }
-
   .layout {
     display: flex;
     /* 36px title bar + 32px Saient Pulse. The Pulse is always mounted, so this

@@ -67,6 +67,20 @@ body {
 .ig-sidebar { width: 300px; min-width: 240px; max-width: 340px; flex-shrink: 0; overflow-y: auto; overflow-x: hidden; background: var(--bg2); border-right: 1px solid var(--border); padding: 16px; }
 .ig-main    { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; padding: 16px; gap: 12px; }
 
+/* ── Agent screen keep-alive wrapper ── */
+/* The agent screen owns a live PTY, so it is mounted once and then hidden with
+   CSS instead of being unmounted. These two rules control `display` on the
+   agent screen's top-level container AND the element is conditionally rendered
+   ({#if agentMounted}), which is precisely the Svelte 5 HMR case described at
+   the top of this file — in App.svelte's <style> block the scoped class can be
+   dropped in dev, which would render the agent screen on top of chat.
+   `display: contents` keeps the wrapper boxless so both of AgentScreen's root
+   panes stay direct flex children of `.layout`. Both classes sit on the same
+   element, so the hide rule is more specific than the contents rule and cannot
+   lose on source order. */
+.keep-alive { display: contents; }
+.keep-alive.keep-alive-hidden { display: none; }
+
 /* ── Chat screen layout ── */
 .chat-area    { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 .input-area   { border-top: 1px solid var(--border); background: var(--bg2); flex-shrink: 0; padding: 10px 14px 12px; }
