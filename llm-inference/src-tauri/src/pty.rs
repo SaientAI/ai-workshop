@@ -140,6 +140,29 @@ def ensure_formal_binding(port):
         BINDING_ERROR = "%s: %s" % (type(exc).__name__, exc)
         return False
 
+def resolve_existing_binding(port):
+    """Adopt the binding the app already proved, for the header label only.
+
+    The banner used to read `binding pending` for the whole session even when the
+    model had been bound from the chat screen, because the only thing that set
+    BINDING_MANIFEST ran on the first message. This reads the cached manifest and
+    never profiles, so it cannot cost a user turn.
+
+    A failure here is not a binding failure — the usual cause is no model loaded,
+    which the banner already reports on its own line. BINDING_ERROR is left alone
+    so an absent server can never be shown as a rejected host.
+    """
+    global BINDING_MANIFEST
+    if BINDING_MANIFEST is not None or BINDING_ERROR or not port:
+        return
+    try:
+        config = Path(os.environ.get("SAIENT_CONFIG_DIR", ".")).expanduser().resolve()
+        manifest, _ = SAIENT_BINDING.require_binding(
+            "http://127.0.0.1:%d" % port, config / "bindings")
+        BINDING_MANIFEST = manifest
+    except Exception:
+        pass
+
 SYSTEM = """You are the proposal host inside Saient's local terminal. You are not
 Saient and you are not the user-facing speaker. You may propose one tool call at
 a time; Saient's rule policy and conscience decide whether it runs, and the
@@ -703,6 +726,9 @@ def show_result(text):
         print("   %s│ …(%d more lines)%s" % (D, len(lines) - 40, X))
 
 def header(port, model, yolo):
+    # Adopt an existing binding before drawing the label, so a model bound from
+    # the app is not reported as pending here. Never profiles.
+    resolve_existing_binding(port)
     os.system("clear")
     print(A + BANNER + X)
     if port:
