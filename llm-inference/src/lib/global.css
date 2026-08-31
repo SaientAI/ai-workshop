@@ -28,23 +28,11 @@
  *   Agent    → .agent-sidebar, .agent-main, .tabbar (fixed via inline style in component)
  */
 
-:root {
-  --bg:     #0d0d0f;
-  --bg2:    #141418;
-  --bg3:    #1a1a20;
-  --border: #2a2a35;
-  --text:   #e8e8f0;
-  --text2:  #a0a0b8;
-  --text3:  #606078;
-  --accent: #6c8ef5;
-  --green:  #00d68f;
-  --amber:  #f5a623;
-  --red:    #f87171;
-  --sans:   -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --mono:   "JetBrains Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
-  --radius:    8px;
-  --radius-sm: 5px;
-}
+/* Design tokens (colours, type, radii) are GENERATED from the shared source:
+   packages/saient-tokens/tokens.json  ->  node packages/saient-tokens/build.mjs
+   Edit tokens there, not here; mobile/lib/theme.ts is emitted from the same file.
+   This @import must stay above every rule below (CSS requires it). */
+@import "./tokens.css";
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 

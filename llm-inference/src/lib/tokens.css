@@ -1,0 +1,23 @@
+/* GENERATED FILE - DO NOT EDIT BY HAND.
+   Source:    packages/saient-tokens/tokens.json
+   Generator: packages/saient-tokens/build.mjs
+   Regenerate: node packages/saient-tokens/build.mjs
+   Edits here are lost on the next build. */
+
+:root {
+  --bg:        #0d0d0f; /* App background, darkest surface */
+  --bg2:       #141418; /* Raised surface: panels, sidebars */
+  --bg3:       #1a1a20; /* Highest surface: cards, inputs, hover */
+  --border:    #2a2a35; /* Default hairline border */
+  --text:      #e8e8f0; /* Primary text */
+  --text2:     #a0a0b8; /* Secondary text, labels */
+  --text3:     #606078; /* Tertiary text, hints, placeholders */
+  --accent:    #6c8ef5; /* Brand accent: primary actions, focus, links */
+  --green:     #00d68f; /* Success / ready / healthy */
+  --amber:     #f5a623; /* Warning / in-progress / caution */
+  --red:       #f87171; /* Error / destructive */
+  --sans:      -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; /* UI typeface stack */
+  --mono:      "JetBrains Mono", "Fira Code", "Cascadia Code", Consolas, monospace; /* Code / metrics typeface */
+  --radius:    8px; /* Default corner radius: cards, modals, buttons */
+  --radius-sm: 5px; /* Tight corner radius: inputs, chips, small controls */
+}
