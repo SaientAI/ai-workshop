@@ -29,8 +29,10 @@
  */
 
 /* Design tokens (colours, type, radii) are GENERATED from the shared source:
-   packages/saient-tokens/tokens.json  ->  node packages/saient-tokens/build.mjs
-   Edit tokens there, not here; mobile/lib/theme.ts is emitted from the same file.
+   tokens.json in https://github.com/SaientAI/saient-tokens
+   Edit them there and run `node build.mjs` in a clone of that repo, not here;
+   the mobile app's lib/theme.ts is emitted from the same file. tokens.css is
+   committed in THIS repo because the generator lives in the other one.
    This @import must stay above every rule below (CSS requires it). */
 @import "./tokens.css";
 

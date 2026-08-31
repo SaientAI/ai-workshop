@@ -1,7 +1,6 @@
 /* GENERATED FILE - DO NOT EDIT BY HAND.
-   Source:    packages/saient-tokens/tokens.json
-   Generator: packages/saient-tokens/build.mjs
-   Regenerate: node packages/saient-tokens/build.mjs
+   Source:     tokens.json in https://github.com/SaientAI/saient-tokens
+   Regenerate: node build.mjs   (from a clone of that repo)
    Edits here are lost on the next build. */
 
 :root {
