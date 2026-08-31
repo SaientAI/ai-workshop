@@ -219,6 +219,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn lists_a_project_that_is_a_symlink_to_a_directory() {
+        // Regression: `list()` filtered on `entry.file_type()`, which describes the
+        // link itself, so a symlinked project never reached the picker even though
+        // `path_for` (which follows) would open it by name.
+        let base = std::env::temp_dir().join(format!("saient-symlink-test-{}", std::process::id()));
+        let projects = base.join("projects");
+        let real = base.join("elsewhere");
+        std::fs::create_dir_all(&projects).unwrap();
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::create_dir_all(projects.join("plain")).unwrap();
+        std::os::unix::fs::symlink(&real, projects.join("linked")).unwrap();
+
+        std::env::set_var("SAIENT_DATA_DIR", &base);
+        let names: Vec<String> = list().unwrap().into_iter().map(|p| p.name).collect();
+        std::env::remove_var("SAIENT_DATA_DIR");
+        std::fs::remove_dir_all(&base).ok();
+
+        assert!(names.contains(&"plain".to_string()), "control missing: {names:?}");
+        assert!(names.contains(&"linked".to_string()), "SYMLINKED PROJECT MISSING: {names:?}");
+    }
+
+    #[test]
     fn rejects_names_that_could_climb_out() {
         for bad in ["../escape", "a/b", "a\\b", "..", "../../etc"] {
             assert!(validate_name(bad).is_err(), "{bad} should be refused");
