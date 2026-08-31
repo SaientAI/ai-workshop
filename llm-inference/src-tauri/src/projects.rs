@@ -116,7 +116,11 @@ pub fn list() -> Result<Vec<ProjectInfo>> {
     let mut out = Vec::new();
     for entry in std::fs::read_dir(&root)? {
         let entry = entry?;
-        if !entry.file_type()?.is_dir() {
+        // Follow symlinks. `file_type()` reports the link itself, so a project
+        // symlinked in from elsewhere on disk was skipped here while
+        // `path_for` (which follows) accepted it — the folder could be opened
+        // by name but never appeared in the picker.
+        if !entry.path().is_dir() {
             continue;
         }
         let name = entry.file_name().to_string_lossy().into_owned();
