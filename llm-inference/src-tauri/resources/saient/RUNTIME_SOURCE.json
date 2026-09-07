@@ -152,12 +152,12 @@
     },
     "project_controller.py": {
       "source_sha256": null,
-      "bundled_sha256": "2a71f8c17ea9ab151edbcc4877c29f7be8d7bae2f87f16038d2c88799c9523e2",
+      "bundled_sha256": "93cca39d0d4f728a47ef68fe9756a8d8e786ed325e2d2ef7f4a07dd7ee48abd0",
       "source": "Saient Desktop opt-in durable project controller; not present in the captured upstream revision"
     },
     "project_jobs.py": {
       "source_sha256": null,
-      "bundled_sha256": "1bef4a45028ec3f81b00069ad59df83d1ddca5110e07205f2e7bd6d419a3fb46",
+      "bundled_sha256": "5b932d256c4006443cdb4ebfb5db6bf47ba766e9f5af9c5ca5ad857fb943cfa1",
       "source": "Saient Desktop durable command supervisor; not present in the captured upstream revision"
     },
     "project_store.py": {

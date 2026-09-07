@@ -98,7 +98,7 @@ class ProjectJobsTests(unittest.TestCase):
         result = self.assert_final(job, "completed", 0)
         self.assertIn(str(self.root), result["tail"])
         self.assertIn("héllo ∑", result["tail"])
-        self.assertEqual(result["tail"], job.log_path.read_text(encoding="utf-8"))
+        self.assertEqual(result["tail"], job.log_path.read_bytes().decode("utf-8"))
         record = job.metadata_path.read_text()
         self.assertNotIn("PROJECT_JOB_TEST", record)
         self.assertNotIn("héllo", record)
@@ -246,6 +246,16 @@ class ProjectJobsTests(unittest.TestCase):
         job = self.start("print('configured for days')", timeout_seconds=7 * 24 * 3600)
         self.assert_final(job, "completed", 0)
         self.assertEqual(json.loads(job.metadata_path.read_text())["timeout_seconds"], 7 * 24 * 3600)
+
+    @unittest.skipUnless(os.name == "nt", "native Windows process flags")
+    def test_windows_background_commands_do_not_allocate_console_hosts(self):
+        _, _, _, options = jobs._validate_start([sys.executable, "-V"], self.root, 10, None, None, 8192)
+        self.assertTrue(options["creationflags"] & subprocess.CREATE_NO_WINDOW)
+        # Query the child's real console handle; a flag-only assertion does
+        # not establish native behavior or clean supervisor shutdown.
+        for _ in range(5):
+            job = self.start("import ctypes; k=ctypes.WinDLL('kernel32'); k.GetConsoleWindow.restype=ctypes.c_void_p; assert not k.GetConsoleWindow()")
+            self.assert_final(job, "completed", 0)
 
     def test_history_never_assumes_ownership_of_persisted_pid(self):
         job = self.start("import time; time.sleep(30)")

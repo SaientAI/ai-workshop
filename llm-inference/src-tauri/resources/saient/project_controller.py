@@ -362,7 +362,15 @@ class ProjectRunner:
                 return "Acceptance command passed but required evidence is missing: " + missing
             self.store.transition("COMPLETED", "Configured acceptance command passed; recorded scope is this check, not proof of every possible behaviour")
             return ""
-        return "Acceptance command did not pass. Inspect the result and repair the project; do not weaken the acceptance test."
+        if row and not row["executed"]:
+            return ("Acceptance command was NOT executed; this is not a failing test or evidence of incorrect files. "
+                    "Saient selected %s (conscience=%s). Recorded result: %s. "
+                    "Do not invent a test failure. A later project_finish can request the same acceptance check, "
+                    "still subject to conscience; never bypass its decision." %
+                    (row["selected"], row["conscience"], row["result"][-1200:]))
+        return ("Acceptance command did not pass. Recorded result: %s. "
+                "Inspect the evidence; do not invent a cause or weaken the acceptance test." %
+                (row["result"][-1200:] if row else "No verified command outcome"))
 
     def run(self):
         feedback = ""
@@ -409,7 +417,8 @@ class ProjectRunner:
                     continue
                 tool = self.cli["extract_tool"](text)
                 if tool and tool.get("name") == "project_blocked":
-                    self.store.transition("BLOCKED", str(tool.get("reason", "Model reported a blocker"))[:2000])
+                    self.store.transition("BLOCKED", "Model-reported blocker (unverified): " +
+                                          str(tool.get("reason", "No reason supplied"))[:2000])
                     break
                 if tool and tool.get("name") == "project_finish":
                     feedback = self.finish()

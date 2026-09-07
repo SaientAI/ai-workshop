@@ -150,7 +150,11 @@ def _validate_start(argv, cwd, timeout_seconds, idle_timeout_seconds, popen_opti
     if not argv or not argv[0]:
         raise ValueError("empty command")
     if os.name == "nt":
-        options["creationflags"] = options.get("creationflags", 0) | subprocess.CREATE_NEW_PROCESS_GROUP
+        # These are noninteractive jobs with pipes, not a new terminal. A
+        # detached supervisor otherwise causes Windows to create a console
+        # host, which can outlive a successful command inside our Job Object.
+        options["creationflags"] = (options.get("creationflags", 0) |
+                                    subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW)
     else:
         if options.get("start_new_session") is False:
             raise ValueError("owned process groups require start_new_session=True")
@@ -609,7 +613,8 @@ class ManagedJob:
                 if on_progress is not None:
                     on_progress(snapshot)
                 if snapshot["status"] in TERMINAL_STATUSES or snapshot["status"] == "recover_unknown":
-                    if self._worker is not None and snapshot["status"] in TERMINAL_STATUSES:
+                    if self._worker is not None and (snapshot["status"] in TERMINAL_STATUSES or
+                                                     snapshot.get("recorded_status") in TERMINAL_STATUSES):
                         # The worker has persisted final state and is exiting;
                         # reap it without concealing an anomalous stuck worker.
                         try:

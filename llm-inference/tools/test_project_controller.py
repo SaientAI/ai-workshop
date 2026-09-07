@@ -115,6 +115,23 @@ class ProjectControllerTests(unittest.TestCase):
             {"verify_command": 'python -c "raise SystemExit(7)"'})
         self.assertEqual(state["status"], "BLOCKED")
 
+    def test_unexecuted_acceptance_is_not_reported_as_a_failing_test(self):
+        with ProjectStore(self.state_dir, self.workspace) as store:
+            store.create("Inspect notes.txt", {"verify_command": "python -V"})
+            runner = ProjectRunner(self.cli, store)
+            runner.execute = lambda *_: {"executed": False, "selected": "analyze",
+                "conscience": "clarify", "result": "original bash not executed"}
+            feedback = runner.finish()
+            self.assertIn("NOT executed", feedback)
+            self.assertIn("not a failing test", feedback)
+            self.assertIn("clarify", feedback)
+            self.assertEqual(store.snapshot()["status"], "RUNNING")
+
+    def test_model_blocker_reason_is_explicitly_unverified(self):
+        state, _ = self.run_project([{"name": "project_blocked", "reason": "Tests failed"}])
+        self.assertEqual(state["status"], "BLOCKED")
+        self.assertEqual(state["reason"], "Model-reported blocker (unverified): Tests failed")
+
     def test_denied_shell_never_starts_process(self):
         state, _ = self.run_project([{"name": "bash", "command": 'python -c "open(\'escape\',\'w\').write(\'bad\')"'}])
         self.assertEqual(state["status"], "BLOCKED")
