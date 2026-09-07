@@ -2,6 +2,7 @@
   import { onMount, untrack } from "svelte";
   import { open } from "@tauri-apps/plugin-dialog";
   import { listen } from "@tauri-apps/api/event";
+  import LongProjectHelp from "../LongProjectHelp.svelte";
   import { agent, model, ui, chat, checkpoints, projects, setCheckpointPolicy, toast } from "../../lib/state.svelte.js";
   import * as T from "../../lib/tauri.js";
   import type { TreeEntry } from "../../lib/types.js";
@@ -520,7 +521,7 @@
         title="Choose the folder Saient may access">…</button>
     </div>
     <div style="margin-top:5px;font-size:10px;line-height:1.35;color:var(--text3);">
-      Saient can read and act only inside this folder. Changing it restarts the terminal in that folder.
+      File tools use this folder; host shell commands are not OS-sandboxed. Changing it restarts the terminal.
     </div>
   </div>
 
@@ -555,6 +556,7 @@
     xterm container — ALWAYS rendered so scrollback survives tab switches.
     Visibility is controlled by CSS: visible only when agent.tab === "terminal".
   -->
+  {#if agent.tab === "terminal"}<LongProjectHelp />{/if}
   <div class="xterm-wrap" class:xterm-hidden={agent.tab !== "terminal"} bind:this={xtermEl}></div>
 
   <!-- Files tab -->

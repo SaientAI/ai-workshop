@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Saient Long Project controls — development preview</title>
+  </head>
+  <body>
+    <main style="max-width:1000px;margin:30px auto;padding:16px">
+      <h1>Long Project controls</h1>
+      <p>Development UI preview. This renders the real component without a Tauri backend or model.</p>
+      <div id="preview"></div>
+    </main>
+    <script type="module">
+      import { mount } from "svelte";
+      import "../src/lib/global.css";
+      import LongProjectHelp from "../src/components/LongProjectHelp.svelte";
+      mount(LongProjectHelp, { target: document.getElementById("preview") });
+    </script>
+  </body>
+</html>

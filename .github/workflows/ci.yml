@@ -69,6 +69,10 @@ jobs:
           python3 tools/test_terminal_report.py
           python3 tools/test_terminal_windows.py
           python3 tools/test_release_provenance.py
+          python3 tools/test_project_store.py
+          python3 tools/test_project_jobs.py
+          python3 tools/test_project_controller.py
+          python3 tools/test_project_recovery.py
 
       # Tauri's build needs the WebKitGTK / GTK dev headers. CUDA is NOT needed
       # here — the GPU work lives in the separate tinyq4 crate, not this app.
@@ -147,6 +151,10 @@ jobs:
           python tools/test_terminal_report.py
           python tools/test_terminal_windows.py
           python tools/test_release_provenance.py
+          python tools/test_project_store.py
+          python tools/test_project_jobs.py
+          python tools/test_project_controller.py
+          python tools/test_project_recovery.py
 
       - name: Install frontend dependencies
         working-directory: llm-inference

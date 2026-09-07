@@ -271,7 +271,7 @@ def find_server():
             continue
     return None, None
 
-def stream(port, messages):
+def stream(port, messages, control=None):
     body = json.dumps({"messages": messages, "stream": True,
                        "max_tokens": 2048, "temperature": 0.3}).encode()
     req = urllib.request.Request(
@@ -279,7 +279,11 @@ def stream(port, messages):
         data=body, headers={"Content-Type": "application/json"})
     out = ""
     with urllib.request.urlopen(req, timeout=120) as resp:
+        if control is not None:
+            control.attach(resp)
         for raw in resp:
+            if control is not None and control.cancelled.is_set():
+                raise InterruptedError("project inference cancelled")
             line = raw.decode("utf-8", "replace").strip()
             if not line.startswith("data:"):
                 continue
@@ -923,7 +927,7 @@ def header(port, model, yolo):
         binding = G + "formally bound" + X
     else:
         binding = Y + "binding pending" + X
-    print("   %sagent%s · env tempdir read ls write edit bash · %s · %s · %s/yolo /tools /clear /exit%s" % (D, X, binding, mode, D, X))
+    print("   %sagent%s · env tempdir read ls write edit bash · %s · %s · %s/project /yolo /tools /clear /exit%s" % (D, X, binding, mode, D, X))
     print("   %scwd %s%s\n" % (D, WORKSPACE, X))
     if BINDING_ERROR:
         print("   %sSaient runtime unavailable: %s%s\n" % (R, BINDING_ERROR, X))
@@ -1660,6 +1664,13 @@ def main():
             continue
         if user in ("/exit", "/quit", "/q"):
             break
+        if user == "/project" or user.startswith("/project "):
+            try:
+                from project_controller import handle_command
+                handle_command(user, globals())
+            except ImportError as exc:
+                print("   %sLong Project runtime unavailable: %s%s" % (R, exc, X))
+            continue
         if user in ("/clear", "/reset"):
             session = []
             pending = None
@@ -1671,7 +1682,7 @@ def main():
         if user == "/tools":
             print("   %senv · tempdir · read · ls · write · edit · bash%s\n" % (D, X)); continue
         if user == "/help":
-            print("   %s/bind · /rebind · /yolo · /tools · /clear · /exit%s\n" % (D, X)); continue
+            print("   %s/project · /bind · /rebind · /yolo · /tools · /clear · /exit%s\n" % (D, X)); continue
         port, model = find_server()
         if not port:
             print("   %sno server — load a model in Saient first%s\n" % (R, X)); continue

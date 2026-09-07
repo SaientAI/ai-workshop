@@ -4,7 +4,7 @@
   "source_commit": "1123cf3de3fa6005981e6069a3695b90eb92aa3b",
   "captured_with_local_changes": true,
   "captured_at": "2026-08-11",
-  "runtime_file_count": 48,
+  "runtime_file_count": 51,
   "purpose": "Minimal complete Python dependency closure for run_saient.py, formal local-host binding, and the desktop terminal bridge, bundled with Saient Desktop.",
   "intentional_bundle_changes": [
     "Mutable state, conscience identity, audit logs, Choice Lab input, and v3 self-memory resolve through SAIENT_STATE_DIR.",
@@ -13,7 +13,8 @@
     "The desktop expression boundary applies the source voice guard before any model text can leave stage 12.",
     "2026-09-07: desktop terminal reports carry typed controller evidence through orchestrator, expression, integrity and desktop_bridge; host prose cannot certify file creation or testing.",
     "2026-09-07: binding_bridge caches rejected and unresolved profiles; explicit rebind is required to retry. Conscience includes the terminal bash tool as an evaluated world action and correlates its failure history by concrete command so a corrected operation does not inherit an unrelated command failure.",
-    "2026-09-07: runtime_file_lock.py is a desktop-only helper for persistent sidecar locks. Conscience audit, atomic persistence and whole-tick serialization retain POSIX flock and use native Windows byte-zero msvcrt locking with contention retries, without unconditional fcntl imports or an unlocked fallback."
+    "2026-09-07: runtime_file_lock.py is a desktop-only helper for persistent sidecar locks. Conscience audit, atomic persistence and whole-tick serialization retain POSIX flock and use native Windows byte-zero msvcrt locking with contention retries, without unconditional fcntl imports or an unlocked fallback.",
+    "2026-09-07: project_controller.py, project_jobs.py and project_store.py add opt-in Long Project mode to the desktop terminal: durable per-workspace budgets and recovery, detached command supervision, explicit permissions and user-supplied acceptance checks. They are desktop additions, not claims of changes in the captured research source."
   ],
   "files": {
     "arc_gremlin/__init__.py": {
@@ -148,6 +149,21 @@
     "proposer.py": {
       "source_sha256": "5b22066d357e3910b55e54663715d0224e00f3bb128608c50798e2f0cf288e68",
       "bundled_sha256": "5b22066d357e3910b55e54663715d0224e00f3bb128608c50798e2f0cf288e68"
+    },
+    "project_controller.py": {
+      "source_sha256": null,
+      "bundled_sha256": "2a71f8c17ea9ab151edbcc4877c29f7be8d7bae2f87f16038d2c88799c9523e2",
+      "source": "Saient Desktop opt-in durable project controller; not present in the captured upstream revision"
+    },
+    "project_jobs.py": {
+      "source_sha256": null,
+      "bundled_sha256": "1bef4a45028ec3f81b00069ad59df83d1ddca5110e07205f2e7bd6d419a3fb46",
+      "source": "Saient Desktop durable command supervisor; not present in the captured upstream revision"
+    },
+    "project_store.py": {
+      "source_sha256": null,
+      "bundled_sha256": "0aa7ef867c252fad81bea4b3171b461277a50c98974227e801b0f5d1686a1b8a",
+      "source": "Saient Desktop per-workspace durable project state; not present in the captured upstream revision"
     },
     "real_actions.py": {
       "source_sha256": "b148add753c51e8a3d462c6ab3e755b8775a0aa83e05f60dc82ebe8a1bc5b446",

@@ -1,6 +1,6 @@
 [package]
 name = "llm-inference"
-version = "1.0.24"
+version = "1.0.25-dev.1"
 description = "Local LLM inference + autonomous agent runtime — GPU accelerated"
 authors = ["you"]
 license = "Apache-2.0"

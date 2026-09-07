@@ -1,6 +1,6 @@
 # Saient
 
-**A local AI desktop app — chat, a coding agent, image generation, TTS, and LoRA training, all running on your own machine. No cloud, no API keys, no data leaving your computer.**
+**A local AI desktop app — chat, a coding agent, image generation, TTS, and LoRA training, running on your own machine. Local inference does not require a cloud API key.**
 
 Built with Tauri + Svelte, powered by the [tinyq4](#inference-engine) GGUF inference engine.
 
@@ -16,7 +16,7 @@ Built with Tauri + Svelte, powered by the [tinyq4](#inference-engine) GGUF infer
 | 🔊 **TTS** | Natural speech via Kokoro voices. |
 | 🎛 **LoRA / Merge** | Train SDXL LoRAs and merge checkpoints, with a dataset cleaner. |
 
-Everything is GPU-accelerated and fully offline.
+Inference runs locally. Setup and model downloads need a network connection; authorized agent shell commands can also access the network and external services.
 
 ---
 
@@ -26,7 +26,7 @@ Everything is GPU-accelerated and fully offline.
 Grab the published Linux (`.deb` / `.AppImage`) or Windows installer from [saient.co.uk](https://saient.co.uk/#download), with exact source revisions and checksums in its [release manifest](https://saient.co.uk/release-manifest.json), or [build from source](#build-from-source).
 
 ### 2. First-run setup wizard
-On first launch a wizard detects your system and sets everything up for you — **no dependency wrangling**:
+On first launch a wizard detects your system and helps configure the managed Python environment. Base Python, the NVIDIA driver when needed, and the Windows Visual C++ runtime remain [prerequisites](#requirements):
 
 - Reads your **GPU, driver, and CUDA version** and picks the matching PyTorch wheel automatically (the part that usually makes people rage-quit).
 - Installs into a **managed Python venv** — it never touches your system Python.
@@ -69,7 +69,9 @@ Press <kbd>?</kbd> any time for the full list. Highlights:
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd> | Toggle the Saient agent |
 
 ### The Saient agent
-Open the **Agent** screen → **Terminal** tab and type `saient` to launch the agent TUI, or use the **Planner** for autonomous runs. It works in a sandboxed workspace; **Write mode** (off by default) gates file writes and command execution, and destructive tools ask before running unless you flip on `/yolo`.
+Open the **Agent** screen → **Terminal** tab and type `saient` to launch the agent TUI, or use the separate **Planner**. Planner **Write mode**, terminal confirmations/`/yolo`, and Long Project permissions are separate controls. Terminal file tools enforce path boundaries, but host shell commands run with your account's access: a workspace is **not an OS sandbox**.
+
+Development version **1.0.25-dev.1** adds opt-in [Long Project mode](docs/LONG_PROJECT_MODE.md): saved project state, automatic continuation, explicit permissions, adjustable model-call/time budgets, and recovery that does not blindly replay interrupted commands. Open its helper in the Terminal tab or type `/project help` inside Saient. This development feature does not change the public 1.0.24 downloads; multi-day operation and native Windows behavior still require target verification.
 
 ---
 

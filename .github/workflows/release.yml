@@ -57,7 +57,7 @@ jobs:
         working-directory: llm-inference
         run: |
           set -euo pipefail
-          for suite in runtime_file_lock saient_binding_cache terminal_completion terminal_interrupt terminal_conscience terminal_report terminal_windows release_provenance; do
+          for suite in runtime_file_lock saient_binding_cache terminal_completion terminal_interrupt terminal_conscience terminal_report terminal_windows release_provenance project_store project_jobs project_controller project_recovery; do
             python tools/test_${suite}.py
           done
 
@@ -164,7 +164,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for suite in runtime_file_lock saient_binding_cache terminal_completion terminal_interrupt terminal_conscience terminal_report terminal_windows release_provenance; do
+          for suite in runtime_file_lock saient_binding_cache terminal_completion terminal_interrupt terminal_conscience terminal_report terminal_windows release_provenance project_store project_jobs project_controller project_recovery; do
             python tools/test_${suite}.py
           done
 
