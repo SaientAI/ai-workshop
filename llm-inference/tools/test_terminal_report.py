@@ -109,7 +109,7 @@ class TerminalReportTests(unittest.TestCase):
         tick = replace(tick, result=replace(tick.result, verified=False))
         report = expression.TerminalReportExpresser().express(tick)
         self.assertIn(json.dumps(str(artifact)), report)
-        self.assertIn(evidence.checks[0], report)
+        self.assertIn(json.dumps(evidence.checks[0]), report)
         self.assertIn("do not by themselves establish functional correctness", report)
         self.assertNotIn("fully working", report)
         self.assertTrue(expression.validate_expression(tick, report).ok)
@@ -229,7 +229,7 @@ class TerminalReportTests(unittest.TestCase):
         self.assertEqual(reply.detail["verification_scope"], "message_receipt")
         self.assertIn("INCOMPLETE", reply.text)
         self.assertTrue(reply.guarantees["saved"])
-        self.assertEqual(state.DATA_DIR, Path(_STATE_DIRECTORY.name))
+        self.assertEqual(state.DATA_DIR, Path(_STATE_DIRECTORY.name).resolve())
         saved = json.loads(state.STATE_PATH.read_text())["history"][-1]
         self.assertEqual(saved["tick"], reply.tick)
         self.assertTrue(saved["result"]["verified"])
