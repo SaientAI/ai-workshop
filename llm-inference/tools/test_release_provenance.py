@@ -119,7 +119,8 @@ class ProvenanceTests(unittest.TestCase):
 
         def change_during_hash(path):
             result = digest(path)
-            if path.parent == self.artifacts:
+            # The collector resolves Windows 8.3 temp-directory aliases.
+            if path.parent == self.artifacts.resolve():
                 before = path.stat()
                 os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
             return result
