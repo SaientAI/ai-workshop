@@ -181,7 +181,8 @@ mod tests {
     use crate::workspace::backend::SandboxSpec;
 
     fn spec() -> SandboxSpec {
-        SandboxSpec::new("/tmp/ws-test", "sh")
+        // This is a host path, unlike the fixed Linux paths inside the guest.
+        SandboxSpec::new(std::env::temp_dir().join("ws-test"), "sh")
             .args(["-c", "echo hi"])
             .layout(HostLayout { merged_usr: true })
     }
@@ -243,14 +244,15 @@ mod tests {
 
     #[test]
     fn only_the_workspace_is_writable() {
-        let v = argv(&spec());
+        let s = spec();
+        let v = argv(&s);
         // Exactly one --bind (read-write); everything else is --ro-bind.
-        let writable: Vec<&String> = v
+        let writable: Vec<&str> = v
             .windows(2)
             .filter(|w| w[0] == "--bind")
-            .map(|w| &w[1])
+            .map(|w| w[1].as_str())
             .collect();
-        assert_eq!(writable, vec![&"/tmp/ws-test".to_string()]);
+        assert_eq!(writable, vec![s.workspace_dir.to_str().expect("UTF-8 fixture")]);
     }
 
     #[test]
@@ -287,7 +289,17 @@ mod tests {
         let v = argv(&spec().layout(HostLayout { merged_usr: false }));
         assert!(!has_pair(&v, "--symlink", "usr/bin"));
         // /bin exists on any Linux host, merged or not.
+        #[cfg(target_os = "linux")]
         assert!(has_pair(&v, "--ro-bind", "/bin"));
+        // The builder only binds real host directories. Keep checking that
+        // contract on hosts where the Linux toolchain paths are absent, too.
+        for path in ["/bin", "/lib", "/lib64", "/sbin"] {
+            assert_eq!(
+                has_pair(&v, "--ro-bind", path),
+                std::path::Path::new(path).exists(),
+                "read-only bind must match host path availability: {path}"
+            );
+        }
     }
 
     #[test]

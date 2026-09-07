@@ -385,12 +385,18 @@ mod tests {
     #[test]
     fn normalize_path_cannot_escape_with_excess_dotdot() {
         // Excess `..` beyond the filesystem root are clamped — the result stays absolute.
-        let p = Path::new("/sandbox/../../etc/passwd");
-        let result = normalize_path(p);
-        // The fixed implementation never pops past root, so result is /etc/passwd
-        // (still absolute). resolve_cwd then rejects it via starts_with(&sandbox_root).
+        // On Windows a rooted path without a drive is not absolute, so use a
+        // native absolute fixture and verify its precondition before normalizing.
+        let root = if cfg!(windows) { Path::new(r"C:\") } else { Path::new("/") };
+        let sandbox_root = root.join("sandbox");
+        let p = sandbox_root.join("../../etc/passwd");
+        assert!(p.is_absolute(), "fixture must be absolute, got {:?}", p);
+        let result = normalize_path(&p);
+        // Normalization keeps the original root/drive. resolve_cwd then rejects
+        // the escaped result via starts_with(&sandbox_root).
+        assert_eq!(result, root.join("etc/passwd"));
         assert!(result.is_absolute(), "result must be absolute, got {:?}", result);
-        assert!(!result.starts_with("/sandbox"), "should not be inside /sandbox");
+        assert!(!result.starts_with(&sandbox_root), "should not be inside {:?}", sandbox_root);
     }
 
     #[test]
