@@ -22,7 +22,7 @@ cd "$TINYQ4_SRC"
 
 # CPU build (always — the universal fallback)
 echo "==> building tinyq4 (CPU)…"
-CARGO_TARGET_DIR=/tmp/tq4-cpu cargo build --release
+CARGO_TARGET_DIR=/tmp/tq4-cpu cargo build --release --locked
 # The engine crate was renamed tinyq4 -> quartz; CI checks out the renamed
 # repo while local copies may still be the old name. Accept either.
 TQ4_CPU_BIN=""
@@ -36,7 +36,7 @@ strip "$DEST/tinyq4-cpu" || true
 # CUDA build (skipped if no nvcc; the app then falls back to the CPU binary)
 if [ -x "$CUDA_HOME/bin/nvcc" ]; then
   echo "==> building tinyq4 (CUDA, $CUDA_HOME)…"
-  CUDA_HOME="$CUDA_HOME" cargo build --release --features cuda
+  CUDA_HOME="$CUDA_HOME" cargo build --release --locked --features cuda
   TQ4_CUDA_BIN=""
   for c in target/release/quartz target/release/tinyq4; do
     [ -f "$c" ] && { TQ4_CUDA_BIN="$c"; break; }

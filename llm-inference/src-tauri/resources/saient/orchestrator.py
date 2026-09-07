@@ -60,8 +60,9 @@ from __future__ import annotations
 
 import copy
 import time
-from dataclasses import dataclass, field
-from typing import Any, Mapping, Protocol
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any, Literal, Mapping, Protocol
 
 import belief
 import controller
@@ -190,6 +191,45 @@ class Expresser(Protocol):
 
 
 @dataclass(slots=True, frozen=True)
+class TerminalReportEvidence:
+    """A terminal controller's verified task result, not a model's draft.
+
+    The caller must independently re-read each artifact and construct checks
+    from executed, verified operations, describing only what each check proves
+    (for example a command's exit status, not inferred functional correctness).
+    This immutable snapshot is separate from the reporting tick: successful
+    receipt of a message is never evidence that preceding work succeeded.
+
+    Paths are absolute native paths, not aliases such as ``@temp``. Shape
+    validation does not substitute for the controller's live verification.
+    """
+
+    status: Literal["complete", "incomplete"]
+    artifacts: tuple[str, ...] = ()
+    checks: tuple[str, ...] = ()
+    unmet: tuple[str, ...] = ()
+    requested_root: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.status not in ("complete", "incomplete"):
+            raise ValueError("terminal report status must be complete or incomplete")
+        for name in ("artifacts", "checks", "unmet"):
+            values = getattr(self, name)
+            if not isinstance(values, tuple) or any(
+                not isinstance(value, str) or not value.strip() or "\x00" in value
+                for value in values
+            ):
+                raise ValueError(f"terminal report {name} must be a tuple of nonempty strings")
+        paths = self.artifacts + (() if self.requested_root is None
+                                  else (self.requested_root,))
+        for path in paths:
+            if not isinstance(path, str) or "\x00" in path or not Path(path).is_absolute():
+                raise ValueError("terminal report paths must be absolute native paths")
+        if self.status == "complete" and (self.unmet or not (self.artifacts or self.checks)):
+            raise ValueError("complete terminal reports require evidence and no unmet requirements")
+
+
+@dataclass(slots=True, frozen=True)
 class TickRecord:
     """Everything that happened, in the order it happened."""
 
@@ -234,6 +274,9 @@ class TickRecord:
     #: stage 12 can read it but still cannot reach or mutate state.
     state_fields: Mapping[str, Any] = field(default_factory=dict)
     utterance: str | None = None
+    #: Prior task evidence supplied by the terminal controller. It cannot be
+    #: inferred from this tick's RespondExecutor receipt or a host draft.
+    terminal_report: TerminalReportEvidence | None = None
 
     @property
     def grounded(self) -> bool:
@@ -296,6 +339,7 @@ def tick(
     intent: Mapping[str, Any] | None = None,
     persist: bool = True,
     conscience_mode: str | None = None,
+    terminal_report: TerminalReportEvidence | None = None,
 ) -> TickRecord:
     """Run exactly one beat, in the fixed order, and return what happened.
 
@@ -303,6 +347,8 @@ def tick(
     twelve stages as an autonomous beat rather than taking a side door. A request
     that skips arbitration is a request that can do things Saient would not.
     """
+    if terminal_report is not None and not isinstance(terminal_report, TerminalReportEvidence):
+        raise TypeError("terminal_report must be TerminalReportEvidence")
     observer = observer or NullObserver()
     executor = executor or NullExecutor()
     proposer = proposer or NullProposer()
@@ -567,6 +613,7 @@ def tick(
             "closed": objective_closed,
         }),
         state_fields=_expression_state(st),
+        terminal_report=terminal_report,
     )
 
     _append_history(st, record_tick)
@@ -804,6 +851,8 @@ def _append_history(st: dict, rec: TickRecord) -> None:
         "strategy_mode": st.get("strategy", {}).get("mode", "balanced"),
         "grounded": rec.grounded,
     }
+    if rec.terminal_report is not None:
+        event["terminal_report"] = asdict(rec.terminal_report)
     history = st.setdefault("history", [])
     history.append(event)
     st["history"] = history[-200:]
@@ -990,6 +1039,7 @@ class RespondExecutor:
         return ActionResult(
             action_type="respond", success=True, simulated=False, verified=True,
             detail={"received_chars": len(message),
+                    "verification_scope": "message_receipt",
                     "note": "no world state changed; the effect is the utterance"},
         )
 

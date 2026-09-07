@@ -4,13 +4,16 @@
   "source_commit": "1123cf3de3fa6005981e6069a3695b90eb92aa3b",
   "captured_with_local_changes": true,
   "captured_at": "2026-08-11",
-  "runtime_file_count": 47,
+  "runtime_file_count": 48,
   "purpose": "Minimal complete Python dependency closure for run_saient.py, formal local-host binding, and the desktop terminal bridge, bundled with Saient Desktop.",
   "intentional_bundle_changes": [
     "Mutable state, conscience identity, audit logs, Choice Lab input, and v3 self-memory resolve through SAIENT_STATE_DIR.",
     "Loaded conscience profiles always save back to the path actually loaded, not a stale absolute memory_path.",
-    "host_profile.py, expression.py, and voice_guard.py are copied byte-for-byte from the AGI source; binding_bridge.py is the desktop-only fail-closed stdio adapter.",
-    "The desktop expression boundary applies the source voice guard before any model text can leave stage 12."
+    "host_profile.py and voice_guard.py retain the upstream profiling and voice contracts; binding_bridge.py is the desktop-only fail-closed stdio adapter.",
+    "The desktop expression boundary applies the source voice guard before any model text can leave stage 12.",
+    "2026-09-07: desktop terminal reports carry typed controller evidence through orchestrator, expression, integrity and desktop_bridge; host prose cannot certify file creation or testing.",
+    "2026-09-07: binding_bridge caches rejected and unresolved profiles; explicit rebind is required to retry. Conscience includes the terminal bash tool as an evaluated world action and correlates its failure history by concrete command so a corrected operation does not inherit an unrelated command failure.",
+    "2026-09-07: runtime_file_lock.py is a desktop-only helper for persistent sidecar locks. Conscience audit, atomic persistence and whole-tick serialization retain POSIX flock and use native Windows byte-zero msvcrt locking with contention retries, without unconditional fcntl imports or an unlocked fallback."
   ],
   "files": {
     "arc_gremlin/__init__.py": {
@@ -51,7 +54,7 @@
     },
     "arc_gremlin/persistence.py": {
       "source_sha256": "4a393cd998a2718cff525105c5d6b984cc892879546600b8b76b8afdc6e5e0b8",
-      "bundled_sha256": "4a393cd998a2718cff525105c5d6b984cc892879546600b8b76b8afdc6e5e0b8"
+      "bundled_sha256": "3c72dad5f4f64fb4d4be20745f2c32856fa400ec4f5adc7208ede1ceb399eecf"
     },
     "arc_gremlin/saient_solver.py": {
       "source_sha256": "63b02e86d13e1bdcce9b9474e3afd34c06191aece166fede60c5838513339776",
@@ -75,7 +78,7 @@
     },
     "binding_bridge.py": {
       "source_sha256": "9c8f72cf61d4e4885a9c7d57f2883bdea7022bb80181cad67e532e7846de4718",
-      "bundled_sha256": "9c8f72cf61d4e4885a9c7d57f2883bdea7022bb80181cad67e532e7846de4718",
+      "bundled_sha256": "dd7e3a50817edeaf40d7e90387ce6aee59dd65edb971368ec332518a5f1dd7c7",
       "source": "Saient Desktop formal-binding stdio adapter"
     },
     "bridge.py": {
@@ -84,7 +87,7 @@
     },
     "conscience.py": {
       "source_sha256": "e506005a45d4fa002d5d24193f5cfb975760502672620f6992b5b6bd26fa9c62",
-      "bundled_sha256": "33e3352b013816d6eba49d9c057e6e635d3f8fbeb797890b20e76552bd7c4d0c"
+      "bundled_sha256": "56f3b3722058c623496aaa9690e957687bd24f6d8cd69e0763cf3cd0eaa89136"
     },
     "controller.py": {
       "source_sha256": "04c43720675e6b705dcbccde47ec59cf741f82f764a071a01b115484ed69369c",
@@ -92,7 +95,7 @@
     },
     "desktop_bridge.py": {
       "source_sha256": "69dc281543e3ea2c7b8162d8062a33ba9950a0b4cb94e5e4f5248b1806bcb16d",
-      "bundled_sha256": "69dc281543e3ea2c7b8162d8062a33ba9950a0b4cb94e5e4f5248b1806bcb16d"
+      "bundled_sha256": "1b8fa2694ceb97e31c8642e4ec7fb23d9459b665bd00d51aeffb6c2cf0d7cb58"
     },
     "drives.py": {
       "source_sha256": "00d6370ad625516b4ff33cd1e8eca28d103ea6bc10a1d247fc635eab4241ffb9",
@@ -100,7 +103,7 @@
     },
     "expression.py": {
       "source_sha256": "c91394c8856d9452ed6552cbba8ae4664a30ccaaf62613c41febeaaa295ded96",
-      "bundled_sha256": "c91394c8856d9452ed6552cbba8ae4664a30ccaaf62613c41febeaaa295ded96"
+      "bundled_sha256": "5a591c78697457e2b34c11a4120d04b46f07013c4e258e40f0860b06439bae98"
     },
     "gate.py": {
       "source_sha256": "6a03e6adf4ab19e2c47ba7a759db16060562480b85dd1e947cb3452a18de6637",
@@ -120,7 +123,7 @@
     },
     "integrity.py": {
       "source_sha256": "f649d81e07f1f48b393e2656339c8f2b4be29298b35c15422efc882c91e9f6bf",
-      "bundled_sha256": "f649d81e07f1f48b393e2656339c8f2b4be29298b35c15422efc882c91e9f6bf"
+      "bundled_sha256": "74adf7f1d00e4a0e3d6fdeebce0b552ecae322176618e7342fdc3338901fa004"
     },
     "loop.py": {
       "source_sha256": "454dd96891fd7b5ce591e575841e745593221c7875ee83d4a9609950828d6602",
@@ -140,7 +143,7 @@
     },
     "orchestrator.py": {
       "source_sha256": "a5279f8e294003db84dbc5080e3d9c9d8e7f8ebc4348d8d8cd5b95a63a90fbf2",
-      "bundled_sha256": "a5279f8e294003db84dbc5080e3d9c9d8e7f8ebc4348d8d8cd5b95a63a90fbf2"
+      "bundled_sha256": "a8ad377b9717d5ef33408ecedb7953ad8e3b7642c8d335c0680e4f8dd8321317"
     },
     "proposer.py": {
       "source_sha256": "5b22066d357e3910b55e54663715d0224e00f3bb128608c50798e2f0cf288e68",
@@ -157,6 +160,11 @@
     "run_saient.py": {
       "source_sha256": "4ab9315e269f870f60b9dcc3bebd8f61bad6e1479647f048baab91b042864a67",
       "bundled_sha256": "4ab9315e269f870f60b9dcc3bebd8f61bad6e1479647f048baab91b042864a67"
+    },
+    "runtime_file_lock.py": {
+      "source_sha256": null,
+      "bundled_sha256": "b63438ca4292cf7a3a7b0ecf9a7bc0dbf03ea32b706e30ac34ee3d4a5e676b53",
+      "source": "Saient Desktop cross-platform sidecar lock helper; not present in the captured upstream revision"
     },
     "saient_v3_exogenous_goal_layer/__init__.py": {
       "source_sha256": "0bb6f68e99c8e83f9893e28df1d27cb7bbb6213ab06c556eb27333bd010246da",
@@ -188,7 +196,7 @@
     },
     "state.py": {
       "source_sha256": "2b5f578db226587c2bc06839c72733f271c29462d94264b9bf289cd7cc34bd16",
-      "bundled_sha256": "bcc0fa3e0529044105efc64e07d87da863426cc9aa23d5a6ac177b7b89d9db04"
+      "bundled_sha256": "ab950dc7a0f17b87690f761562621514a27a281cea1ab83f3af45240de8841bc"
     },
     "strategy.py": {
       "source_sha256": "7abe7923d602c1001f829204cf86a1b58da28d755fd3a197312d9a0834437f68",

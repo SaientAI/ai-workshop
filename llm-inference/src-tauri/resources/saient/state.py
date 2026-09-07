@@ -7,6 +7,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 from arc_gremlin.persistence import load_json, locked_write
+from runtime_file_lock import exclusive_file_lock
 
 BASE = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("SAIENT_STATE_DIR", str(BASE / "data"))).expanduser().resolve()
@@ -21,27 +22,8 @@ def _tick_lock():
     """Serialize the complete load-to-save tick across desktop processes."""
     _ensure_data_dir()
     tick_lock_path = DATA_DIR / "tick.lock"
-    with tick_lock_path.open("a+b") as lock:
-        if tick_lock_path.stat().st_size == 0:
-            lock.write(b"\0")
-            lock.flush()
-        lock.seek(0)
-        if os.name == "nt":
-            import msvcrt
-            msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
-        else:
-            import fcntl
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            lock.seek(0)
-            if os.name == "nt":
-                import msvcrt
-                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+    with exclusive_file_lock(tick_lock_path):
+        yield
 
 
 def serialized(func):

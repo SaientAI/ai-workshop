@@ -360,10 +360,10 @@
         {:else if model.bindingStatus === "failed"}
           <div class="binding-title">⚠ Binding failed</div>
           <div class="binding-copy">{friendlyLoadError(model.bindingError)}</div>
-          <button class="tab-action" onclick={bindSaientModel}>Retry binding</button>
+          <button class="tab-action" onclick={() => bindSaientModel(true)}>Retry binding</button>
         {:else}
           <div class="binding-title">Saient is not bound yet</div>
-          <button class="tab-action" onclick={bindSaientModel}>Bind Saient</button>
+          <button class="tab-action" onclick={() => bindSaientModel()}>Bind Saient</button>
         {/if}
       </div>
     {/if}

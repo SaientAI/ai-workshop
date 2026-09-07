@@ -30,9 +30,9 @@
   "source": {
     "base_commit": "5e41ae412498e0831223f0b065931410249a4bdb",
     "state": "artifacts built by GitHub Actions from this commit; the updater signatures were produced locally with the configured key",
-    "package_lock_sha256": "0364350a2d570864ed2005ec46daac2a5fbb74113b8545d947f3943e4982d326",
-    "cargo_lock_sha256": "298e8ba5d006719b975298c40a8bde2156d4c1fb8bdd74a851ee36fc1c131b8d",
-    "tauri_config_sha256": "dc530e9604d4afc471ebfce9d7dac48efe207272f791b43ec6d613d657540e8d",
+    "package_lock_sha256": "d6e9932df28996a1aff3bced1d957ed009b49b74c161517a5b398f21080cc2cb",
+    "cargo_lock_sha256": "e4853771580f0ac198a2539581c7b95ca0ca5a4e6363194a74f8dddaa624f40a",
+    "tauri_config_sha256": "5b71c77dd72f40370a5d12a7119cf479cf453effa877bd9b74a72b764e898c9d",
     "windows_config_sha256": "7492f1c2a1abdf2eb527ef66b195241e8f965850102827888ec09bcd80f8a189",
     "linux_config_sha256": "07b37c6c2ec1ff83a8abf90059e0cb6efea6dc59f7d652c1d12a4d6664268216"
   },

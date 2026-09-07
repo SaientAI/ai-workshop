@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { open } from "@tauri-apps/plugin-dialog";
   import { listen } from "@tauri-apps/api/event";
   import { agent, model, ui, chat, checkpoints, projects, setCheckpointPolicy, toast } from "../../lib/state.svelte.js";
@@ -13,10 +13,54 @@
 
   // ── File tree ──────────────────────────────────────────────────────────────
 
+  let expandedFolders = $state<Record<string, boolean>>({});
+  let loadingFolders = $state<Record<string, boolean>>({});
+  const loadedFolders = new Set<string>();
+  let treeGeneration = 0;
+
   async function loadFileTree() {
+    const generation = ++treeGeneration;
+    const epoch = agent.workspaceEpoch;
+    expandedFolders = {};
+    loadingFolders = {};
+    loadedFolders.clear();
+    agent.tree = [];
     try {
-      agent.tree = await T.fsTree(".", 4) as TreeEntry[];
-    } catch (e) { console.error(e); }
+      const entries = await T.fsTree(".", 1) as TreeEntry[];
+      if (generation === treeGeneration && epoch === agent.workspaceEpoch) {
+        agent.tree = entries;
+      }
+    } catch (e) {
+      if (generation === treeGeneration && epoch === agent.workspaceEpoch) {
+        toast(`Could not load workspace files: ${String(e)}`, "error");
+      }
+    }
+  }
+
+  async function toggleFolder(entry: TreeEntry) {
+    const path = entry.path;
+    expandedFolders[path] = !expandedFolders[path];
+    if (!expandedFolders[path] || loadedFolders.has(path) || loadingFolders[path]) return;
+    const generation = treeGeneration;
+    const epoch = agent.workspaceEpoch;
+    loadingFolders[path] = true;
+    try {
+      // Fetch only immediate children. A broad workspace such as / must not
+      // recursively walk and render thousands of unopened directories.
+      const children = await T.fsTree(path, 1) as TreeEntry[];
+      if (generation !== treeGeneration || epoch !== agent.workspaceEpoch) return;
+      entry.children = children;
+      loadedFolders.add(path);
+    } catch (e) {
+      if (generation === treeGeneration && epoch === agent.workspaceEpoch) {
+        expandedFolders[path] = false;
+        toast(`Could not open folder ${path}: ${String(e)}`, "error");
+      }
+    } finally {
+      if (generation === treeGeneration && epoch === agent.workspaceEpoch) {
+        loadingFolders[path] = false;
+      }
+    }
   }
 
   async function selectFile(path: string) {
@@ -44,7 +88,15 @@
     await selectFile(name);
   }
 
+  // Editing is local until the backend accepts a complete path. Binding the
+  // input to sandboxRoot restarted the PTY on each partial path, including /.
+  let workspaceDraft = $state("");
+  let workspaceChanging = $state(false);
+
+  $effect(() => { workspaceDraft = agent.sandboxRoot; });
+
   async function browseSandboxRoot() {
+    if (workspaceChanging) return;
     const p = await open({ directory: true }).catch(() => null);
     if (p) {
       await changeSandboxRoot(p as string);
@@ -52,21 +104,36 @@
   }
 
   async function changeSandboxRoot(path: string) {
-    const previous = await T.getSandboxRoot().catch(() => agent.sandboxRoot);
+    if (workspaceChanging) return;
+    if (!path.trim() || path === agent.sandboxRoot) {
+      workspaceDraft = agent.sandboxRoot;
+      return;
+    }
+    workspaceChanging = true;
     try {
       await T.setSandboxRoot(path);
-      agent.sandboxRoot = path;
+      // The backend canonicalizes relative paths and symlinks; the terminal
+      // must use that accepted root too.
+      const accepted = await T.getSandboxRoot().catch((e) => {
+        // setSandboxRoot already succeeded. Keep that accepted path if the
+        // follow-up read fails, and surface the failure without faking rollback.
+        toast(`Workspace opened, but its resolved path could not be read: ${String(e)}`, "error");
+        return path;
+      });
+      agent.sandboxRoot = accepted;
+      workspaceDraft = accepted;
       projects.active = null;
-      await T.saientSetEnabled(false).catch(() => {});
-      agent.workspaceEpoch += 1;
-      agent.tree = [];
       agent.selPath = null;
       agent.content = "";
-      await loadFileTree();
-      toast(`Workspace changed to ${path}`, "success");
+      agent.dirty = false;
+      agent.workspaceEpoch += 1;
+      await T.saientSetEnabled(false).catch(() => {});
+      toast(`Workspace changed to ${accepted}`, "success");
     } catch (e) {
-      agent.sandboxRoot = previous;
+      workspaceDraft = agent.sandboxRoot;
       toast(`Could not open workspace: ${String(e)}`, "error");
+    } finally {
+      workspaceChanging = false;
     }
   }
 
@@ -104,7 +171,10 @@
   // workspaces again.
   $effect(() => {
     const epoch = agent.workspaceEpoch;
-    const cwd = agent.sandboxRoot || ".";
+    // Epoch changes represent accepted workspace transitions; merely assigning
+    // a path during startup must not race the backend's workspace update.
+    const cwd = untrack(() => agent.sandboxRoot) || ".";
+    if (epoch > 0) void loadFileTree();
     if (epoch === 0 || !term || cwd === ptyWorkspace) return;
     void spawnWorkspaceTerminal(cwd, true).catch((e) => {
       term?.write(`\x1b[31mFailed to switch workspace: ${String(e)}\x1b[0m\r\n`);
@@ -211,9 +281,16 @@
   }
 
   async function loadAllMemory() {
+    await T.memoryIngestPty().catch(() => 0);
     const store = await T.memoryAll().catch(() => null) as { facts?: typeof agent.memFacts } | null;
     agent.memFacts = store?.facts ?? [];
   }
+
+  $effect(() => {
+    if (ui.screen === "agent" && agent.tab === "memory") {
+      void loadAllMemory();
+    }
+  });
 
   async function forgetFact(id: string) {
     await T.memoryForget(id).catch(() => {});
@@ -387,6 +464,9 @@
     // PTY output events → xterm.
     const unlistenPty = await listen<string>("pty-data", e => {
       term?.write(e.payload);
+      if (/\bmemory \d+ facts?\b/.test(e.payload)) {
+        void loadAllMemory();
+      }
     });
 
     // Plan executor (exec_command) output → xterm with amber colour so it's
@@ -423,11 +503,21 @@
   <div class="sidebar-section" style="flex-shrink:0;">
     <div class="section-label">Workspace</div>
     <div style="display:flex;gap:6px;align-items:center;">
-      <input type="text" bind:value={agent.sandboxRoot} placeholder="data/agent-workspace"
+      <input type="text" bind:value={workspaceDraft} placeholder="data/agent-workspace"
         style="flex:1;font-size:11px;"
         aria-label="Workspace folder. Agent access is limited to this folder."
-        onchange={() => changeSandboxRoot(agent.sandboxRoot)} />
-      <button class="tab-action" onclick={browseSandboxRoot} title="Choose the folder Saient may access">…</button>
+        disabled={workspaceChanging}
+        onchange={() => changeSandboxRoot(workspaceDraft)}
+        onkeydown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            void changeSandboxRoot(workspaceDraft);
+          } else if (e.key === "Escape") {
+            workspaceDraft = agent.sandboxRoot;
+          }
+        }} />
+      <button class="tab-action" onclick={browseSandboxRoot} disabled={workspaceChanging}
+        title="Choose the folder Saient may access">…</button>
     </div>
     <div style="margin-top:5px;font-size:10px;line-height:1.35;color:var(--text3);">
       Saient can read and act only inside this folder. Changing it restarts the terminal in that folder.
@@ -759,12 +849,20 @@
       tabindex="0"
       class:dir={e.is_dir}
       class:sel={agent.selPath === e.path}
-      onclick={() => !e.is_dir && selectFile(e.path)}
-      onkeydown={(ev) => ev.key === "Enter" && !e.is_dir && selectFile(e.path)}
+      aria-expanded={e.is_dir ? !!expandedFolders[e.path] : undefined}
+      aria-busy={e.is_dir ? !!loadingFolders[e.path] : undefined}
+      onclick={() => e.is_dir ? toggleFolder(e) : selectFile(e.path)}
+      onkeydown={(ev) => {
+        if (ev.key === "Enter" || ev.key === " ") {
+          ev.preventDefault();
+          if (e.is_dir) void toggleFolder(e);
+          else selectFile(e.path);
+        }
+      }}
     >
-      {e.is_dir ? "📁" : "📄"} {e.name}
+      {e.is_dir ? (expandedFolders[e.path] ? "📂" : "📁") : "📄"} {e.name}{loadingFolders[e.path] ? " …" : ""}
     </div>
-    {#if e.is_dir && e.children.length > 0}
+    {#if e.is_dir && expandedFolders[e.path] && e.children.length > 0}
       {@render FileTree({ entries: e.children, depth: depth + 1, selectFile })}
     {/if}
   {/each}

@@ -65,6 +65,23 @@ def say(message: str, *, expresser: O.Expresser | None = None, **kw) -> Reply:
     return _reply(O.chat_turn(message, expresser=expresser, **kw))
 
 
+def report_terminal(message: str, *, evidence: O.TerminalReportEvidence,
+                    **kw) -> Reply:
+    """Report controller-verified prior work through the ordinary tick pipeline.
+
+    The terminal controller, not the model, constructs ``evidence`` after its
+    completion checks. No free-text host draft enters this authoritative report.
+    Reply.success/verified still describe this reporting tick, not task status;
+    the latter is explicitly carried by the evidence and rendered in text.
+    """
+    from expression import TerminalReportExpresser
+
+    if not isinstance(evidence, O.TerminalReportEvidence):
+        raise TypeError("evidence must be TerminalReportEvidence")
+    return _reply(O.chat_turn(message, expresser=TerminalReportExpresser(),
+                              terminal_report=evidence, **kw))
+
+
 def do(action_type: str, *, workspace: str | None = None,
        executor: O.ActionExecutor | None = None, allow_writes: bool = False,
        allow_commands: bool = False, expresser: O.Expresser | None = None,

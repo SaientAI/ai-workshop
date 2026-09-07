@@ -218,6 +218,9 @@ pub fn checkpoint_dir(project_path: &Path) -> PathBuf {
 mod tests {
     use super::*;
 
+    // Creating a Windows symlink requires privileges not guaranteed on CI or
+    // ordinary user machines. Keep the real filesystem regression on Unix.
+    #[cfg(unix)]
     #[test]
     fn lists_a_project_that_is_a_symlink_to_a_directory() {
         // Regression: `list()` filtered on `entry.file_type()`, which describes the

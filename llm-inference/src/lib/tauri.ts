@@ -69,7 +69,8 @@ export interface SaientBindingReply {
   used_integrity_fallback: boolean;
 }
 
-export const saientBind = () => invoke<Record<string, unknown>>("saient_bind");
+export const saientBind = (force = false) =>
+  invoke<Record<string, unknown>>("saient_bind", { force });
 export const saientChat = (message: string) =>
   invoke<SaientBindingReply>("saient_chat", { message });
 
@@ -276,6 +277,8 @@ export const memorySearch = (query: string) => invoke<unknown[]>("mem_recall", {
 export const memoryAll = () => invoke<unknown>("mem_store");
 
 export const memoryForget = (id: string) => invoke<boolean>("mem_forget", { id });
+
+export const memoryIngestPty = () => invoke<number>("mem_ingest_pty");
 
 // ── Agent: write mode ─────────────────────────────────────────────────────────
 

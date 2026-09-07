@@ -277,6 +277,8 @@ def render_brief(tick: "TickRecord") -> str:
 
     result = tick.result
     facts = [f"success={result.success}"]
+    if result.detail.get("verification_scope"):
+        facts.append(f"verification scope={result.detail['verification_scope']}")
     if result.detail.get("read"):
         facts.append(f"read {result.detail['read']}")
     if result.detail.get("argv"):
@@ -289,6 +291,8 @@ def render_brief(tick: "TickRecord") -> str:
     lines.append("OUTCOME (facts): " + ", ".join(facts))
 
     unknown = []
+    if result.action_type == "respond":
+        unknown.append("message receipt does not verify earlier work or artifacts")
     if result.simulated:
         unknown.append("the outcome was SIMULATED — a coin flip, not the world")
     if not result.verified:
@@ -639,6 +643,12 @@ def validate_expression(tick: "TickRecord", text: str,
     `voice_guard` remains the authority for self-nature assertions.  Combining the
     reports here gives the retry/fallback path one fail-closed decision.
     """
+    # Terminal reports have a stricter, separate contract: exact transcription
+    # of typed controller evidence, never free prose about a respond receipt.
+    # Generic action/voice heuristics must not interpret quoted artifact names
+    # or check descriptions as the current action or the speaker's identity.
+    if tick.terminal_report is not None:
+        return integrity.validate_terminal_report(tick, text)
     expectation = state_query_expectation(tick, question)
     completed_requirements = completed_action_report_requirements(tick, question)
     # An exact field answer is a typed scalar, not free narration.  Passing
@@ -680,6 +690,19 @@ def validate_expression(tick: "TickRecord", text: str,
             "completed-action report borrowed a field from current_action"
         )
     return integrity.IntegrityReport(tuple(violations))
+
+
+class TerminalReportExpresser:
+    """Report prior terminal work without giving a model authority over facts."""
+
+    def express(self, tick: "TickRecord") -> str:
+        if tick.terminal_report is None:
+            raise ValueError("terminal report requires typed task evidence")
+        text = integrity.terminal_report_text(tick.terminal_report)
+        report = validate_expression(tick, text)
+        if not report.ok:
+            raise ValueError("; ".join(report.violations))
+        return text
 
 
 class SilentExpresser:
@@ -743,6 +766,11 @@ class ModelExpresser:
     def express(self, tick: "TickRecord") -> str:
         self.used_fallback = False
         self.rejected_violations = ()
+        if tick.terminal_report is not None:
+            text = TerminalReportExpresser().express(tick)
+            self.last_report = validate_expression(tick, text)
+            self.last_telemetry = GenerationTelemetry()
+            return text
         user = render_context(tick) if self.deheaded else render_brief(tick)
         if self.question:
             user += f"\n\nThey asked: {self.question}"

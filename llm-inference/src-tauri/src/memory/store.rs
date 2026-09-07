@@ -81,6 +81,14 @@ pub struct Memory {
 }
 
 impl Memory {
+    /// Memory for one workspace. Lives next to the PTY inbox at `.agent/`.
+    pub fn for_workspace(root: &std::path::Path) -> Result<Self> {
+        let dir = root.join(".agent");
+        std::fs::create_dir_all(&dir)
+            .with_context(|| format!("create {:?}", dir))?;
+        Memory::load(dir.join("memory.json"))
+    }
+
     pub fn load(path: PathBuf) -> Result<Self> {
         let store = if path.exists() {
             let raw = std::fs::read_to_string(&path)
@@ -302,6 +310,49 @@ impl Memory {
     pub fn full_store(&self) -> &MemoryStore {
         &self.store
     }
+
+    /// Absorb facts the PTY agent left in `.agent/pty-inbox.jsonl`.
+    ///
+    /// The Python CLI cannot call Tauri, and must not rewrite `memory.json`
+    /// while this process holds the live store. It appends JSONL; we remember
+    /// each row through `remember` and then delete the inbox.
+    pub fn ingest_inbox(&mut self) -> Result<usize> {
+        let Some(dir) = self.path.parent() else {
+            return Ok(0);
+        };
+        let inbox = dir.join("pty-inbox.jsonl");
+        if !inbox.is_file() {
+            return Ok(0);
+        }
+        let raw = std::fs::read_to_string(&inbox).with_context(|| format!("read {:?}", inbox))?;
+        let mut n = 0usize;
+        for line in raw.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            let key = value.get("key").and_then(|v| v.as_str()).unwrap_or("").trim();
+            let body = value.get("value").and_then(|v| v.as_str()).unwrap_or("").trim();
+            if key.is_empty() || body.is_empty() {
+                continue;
+            }
+            let category = value.get("category").and_then(|v| v.as_str()).unwrap_or("learned");
+            let category = match category {
+                "file" | "code" | "infra" | "user" | "learned" => category,
+                _ => "learned",
+            };
+            let source = value.get("source").and_then(|v| v.as_str()).unwrap_or("pty");
+            let source = if source.is_empty() { "pty" } else { source };
+            let confidence = value.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.8) as f32;
+            self.remember(key, body, category, source, confidence)?;
+            n += 1;
+        }
+        std::fs::remove_file(&inbox).ok();
+        Ok(n)
+    }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -396,5 +447,58 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert!(parsed["facts"].is_array());
         std::fs::remove_file(&m.path).ok();
+    }
+
+    #[test]
+    fn ingest_inbox_remembers_pty_facts_and_deletes_the_file() {
+        let mut m = tmp_memory();
+        let inbox = m.path.parent().unwrap().join("pty-inbox.jsonl");
+        std::fs::write(
+            &inbox,
+            concat!(
+                "{\"key\":\"pty.created.saienttest\",\"value\":\"created /tmp/saient_test\",",
+                "\"category\":\"file\",\"source\":\"pty\",\"confidence\":0.95}\n",
+                "{\"key\":\"pty.last_request\",\"value\":\"make saient_test\",",
+                "\"category\":\"user\",\"source\":\"pty\",\"confidence\":1.0}\n",
+            ),
+        )
+        .unwrap();
+        let n = m.ingest_inbox().unwrap();
+        assert_eq!(n, 2);
+        assert!(!inbox.exists(), "inbox should be consumed");
+        let created = m.recall("saient_test");
+        assert_eq!(created.len(), 2);
+        assert!(created.iter().any(|f| f.category == "file" && f.source == "pty"));
+        assert!(created.iter().any(|f| f.key == "pty.last_request"));
+        std::fs::remove_file(&m.path).ok();
+    }
+
+    #[test]
+    fn ingest_inbox_is_a_noop_when_missing() {
+        let mut m = tmp_memory();
+        assert_eq!(m.ingest_inbox().unwrap(), 0);
+        std::fs::remove_file(&m.path).ok();
+    }
+
+    #[test]
+    fn for_workspace_reads_the_inbox_beside_that_root() {
+        let root = std::env::temp_dir().join(format!(
+            "saient-mem-ws-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join(".agent")).unwrap();
+        std::fs::write(
+            root.join(".agent/pty-inbox.jsonl"),
+            "{\"key\":\"pty.created.demo\",\"value\":\"created demo\",\"category\":\"file\",\"source\":\"pty\",\"confidence\":0.9}\n",
+        )
+        .unwrap();
+        let mut m = Memory::for_workspace(&root).unwrap();
+        assert_eq!(m.ingest_inbox().unwrap(), 1);
+        assert_eq!(m.recall("demo")[0].source, "pty");
+        std::fs::remove_dir_all(&root).ok();
     }
 }

@@ -767,6 +767,7 @@ async fn saient_bind(
     window: WebviewWindow,
     state: State<'_, AppState>,
     binding: State<'_, binding::BindingHandle>,
+    force: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     let port = state
         .engine
@@ -775,7 +776,11 @@ async fn saient_bind(
         .as_ref()
         .map(|engine| engine.port)
         .ok_or("No model loaded — pick a GGUF file first")?;
-    binding.bind(port, Some(window)).await
+    if force.unwrap_or(false) {
+        binding.rebind(port, Some(window)).await
+    } else {
+        binding.bind(port, Some(window)).await
+    }
 }
 
 /// Run one stateful Saient tick through a formally bound loopback host. An
@@ -1153,7 +1158,12 @@ fn set_sandbox_root_impl(
     state.patch.lock().unwrap().set_root(new_root.clone());
     // Sandbox
     state.sandbox.set_root(new_root.clone());
-    *state.sandbox_root.lock().unwrap() = new_root;
+    *state.sandbox_root.lock().unwrap() = new_root.clone();
+    // Memory is per-workspace. Leaving it on the startup root meant the PTY
+    // wrote `.agent/pty-inbox.jsonl` in the open project while ingest looked
+    // next to a different memory.json — the Memory tab stayed empty.
+    *state.memory.lock().unwrap() =
+        Memory::for_workspace(&new_root).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -1423,6 +1433,19 @@ fn mem_context(state: State<'_, AppState>, max_facts: usize) -> String {
 #[command]
 fn mem_store(state: State<'_, AppState>) -> MemoryStore {
     state.memory.lock().unwrap().full_store().clone()
+}
+#[command]
+fn mem_ingest_pty(state: State<'_, AppState>) -> Result<u32, String> {
+    let root = state.sandbox_root.lock().unwrap().clone();
+    let mut memory = state.memory.lock().unwrap();
+    let expected = root.join(".agent").join("memory.json");
+    if memory.path != expected {
+        *memory = Memory::for_workspace(&root).map_err(|e| e.to_string())?;
+    }
+    memory
+        .ingest_inbox()
+        .map(|n| n as u32)
+        .map_err(|e| e.to_string())
 }
 
 // ── Agent: Planner ────────────────────────────────────────────────────────────
@@ -2729,7 +2752,7 @@ fn main() {
             undo_patch, patch_history, diff_files,
             // Agent — Memory
             mem_start_task, mem_finish_task, mem_remember,
-            mem_recall, mem_forget, mem_context, mem_store,
+            mem_recall, mem_forget, mem_context, mem_store, mem_ingest_pty,
             // Agent — Planner
             plan_parse, plan_get, plan_prompt_template,
             plan_execute, agent_run, check_goal_completion, warm_agent_cache,

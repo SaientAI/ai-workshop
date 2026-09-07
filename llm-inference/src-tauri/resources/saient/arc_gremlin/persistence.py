@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-import fcntl
+from runtime_file_lock import exclusive_file_lock
 
 from .state import SystemState, migrate_state
 
@@ -36,8 +36,7 @@ def locked_write(path: str | Path, data: dict[str, Any]) -> None:
     p = Path(path)
     lock_path = p.with_suffix(p.suffix + ".lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("w", encoding="utf-8") as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+    with exclusive_file_lock(lock_path):
         atomic_write(p, data)
 
 

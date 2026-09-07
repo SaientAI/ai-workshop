@@ -52,6 +52,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Offline Saient binding and terminal regressions
+        working-directory: llm-inference
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          python3 tools/test_runtime_file_lock.py
+          python3 tools/test_saient_binding_cache.py
+          python3 tools/test_terminal_completion.py
+          python3 tools/test_terminal_interrupt.py
+          python3 tools/test_terminal_conscience.py
+          python3 tools/test_terminal_report.py
+          python3 tools/test_terminal_windows.py
+          python3 tools/test_release_provenance.py
+
       # Tauri's build needs the WebKitGTK / GTK dev headers. CUDA is NOT needed
       # here — the GPU work lives in the separate tinyq4 crate, not this app.
       - name: Install Tauri system dependencies
@@ -93,3 +111,71 @@ jobs:
       - name: cargo test
         working-directory: llm-inference/src-tauri
         run: cargo test
+
+  windows:
+    name: Windows (runtime regressions · frontend · Rust)
+    runs-on: windows-2022
+    env:
+      PYTHONUTF8: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Preserve source bytes for runtime hash verification
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: llm-inference/package-lock.json
+
+      - name: Native Windows terminal and binding regressions
+        working-directory: llm-inference
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/test_runtime_file_lock.py
+          python tools/test_saient_binding_cache.py
+          python tools/test_terminal_completion.py
+          python tools/test_terminal_interrupt.py
+          python tools/test_terminal_conscience.py
+          python tools/test_terminal_report.py
+          python tools/test_terminal_windows.py
+          python tools/test_release_provenance.py
+
+      - name: Install frontend dependencies
+        working-directory: llm-inference
+        run: npm ci
+
+      - name: Check frontend and platform resource contracts
+        working-directory: llm-inference
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run check
+          npm run test
+          npm run build
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: llm-inference/src-tauri
+
+      - name: Stage placeholders for compile-only engine resources
+        shell: pwsh
+        run: |
+          $engineDir = 'llm-inference/src-tauri/resources/engine'
+          New-Item -ItemType Directory -Force -Path $engineDir | Out-Null
+          foreach ($name in @('tinyq4-cpu.exe', 'tinyq4-cuda.exe', 'cudart64_12.dll')) {
+            New-Item -ItemType File -Force -Path (Join-Path $engineDir $name) | Out-Null
+          }
+
+      - name: Native Windows Rust tests
+        working-directory: llm-inference/src-tauri
+        run: cargo test --locked

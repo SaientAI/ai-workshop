@@ -138,11 +138,11 @@ def _load_manifest(path: pathlib.Path, model: str, fingerprint: str) -> dict[str
         return None
     if payload.get("runtime_fingerprint") != fingerprint or payload.get("model") != model:
         return None
-    # Only successful evidence is reusable. A rejected or unresolved result may
-    # have been caused by an interrupted/overloaded host; caching that forever
-    # would turn a recoverable failure into a persistent regression. Retrying
-    # profiles again at the same unchanged production limits.
-    if payload.get("binding_status") != "bound":
+    # Preserve failed evidence as well as successful evidence. Reopening a
+    # terminal or loading the same model must not silently repeat a long
+    # profile. An explicit rebind can retry transient failures at the same
+    # production limits; only a bound result may authorize inference.
+    if payload.get("binding_status") not in {"bound", "rejected", "unresolved"}:
         return None
     return payload
 
@@ -375,12 +375,28 @@ def profile(endpoint: str, model: str) -> dict[str, Any]:
     return evidence
 
 
-def ensure_binding(endpoint: str, directory: pathlib.Path) -> tuple[dict[str, Any], pathlib.Path]:
+def _require_bound(manifest: dict[str, Any]) -> None:
+    status = manifest["binding_status"]
+    if status != "bound":
+        reason = (manifest.get("profile") or {}).get("dominant_failure") or "binding evidence did not pass"
+        raise BindingError(
+            f"Saient binding is {status}: {reason}. Run an explicit rebind to "
+            "retry this model. No plain-LLM fallback was used."
+        )
+    if not isinstance(manifest.get("preferred_control"), dict):
+        raise BindingError("bound manifest has no preferred control; refusing an invalid binding")
+    if manifest.get("profile_contract") != list(PROFILE_CONTRACT):
+        raise BindingError("bound manifest does not cover the current identity/authority contract")
+
+
+def ensure_binding(endpoint: str, directory: pathlib.Path, *,
+                   force: bool = False) -> tuple[dict[str, Any], pathlib.Path]:
+    """Profile missing evidence during model setup, or retry by explicit request."""
     model = discover(endpoint)
     fingerprint = runtime_fingerprint()
     path = _manifest_path(directory, model, fingerprint)
     manifest = _load_manifest(path, model, fingerprint)
-    if manifest is None:
+    if manifest is None or force:
         evidence = profile(endpoint, model)
         manifest = {
             "manifest_version": MANIFEST_VERSION,
@@ -396,14 +412,7 @@ def ensure_binding(endpoint: str, directory: pathlib.Path) -> tuple[dict[str, An
         }
         _write_manifest(path, manifest)
 
-    status = manifest["binding_status"]
-    if status != "bound":
-        reason = (manifest.get("profile") or {}).get("dominant_failure") or "binding evidence did not pass"
-        raise BindingError(f"Saient binding is {status}: {reason}. No plain-LLM fallback was used.")
-    if not isinstance(manifest.get("preferred_control"), dict):
-        raise BindingError("bound manifest has no preferred control; refusing an invalid binding")
-    if manifest.get("profile_contract") != list(PROFILE_CONTRACT):
-        raise BindingError("bound manifest does not cover the current identity/authority contract")
+    _require_bound(manifest)
     return manifest, path
 
 
@@ -424,10 +433,7 @@ def require_binding(endpoint: str, directory: pathlib.Path) -> tuple[dict[str, A
             "step before chat or agent inference. No profiling or plain-LLM "
             "fallback was run inside this user operation."
         )
-    if not isinstance(manifest.get("preferred_control"), dict):
-        raise BindingError("bound manifest has no preferred control; refusing an invalid binding")
-    if manifest.get("profile_contract") != list(PROFILE_CONTRACT):
-        raise BindingError("bound manifest does not cover the current identity/authority contract")
+    _require_bound(manifest)
     return manifest, path
 
 
@@ -534,7 +540,7 @@ def bound_chat(endpoint: str, directory: pathlib.Path, message: str) -> dict[str
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("bind", "require", "chat"))
+    parser.add_argument("command", choices=("bind", "rebind", "require", "chat"))
     parser.add_argument("--endpoint", required=True)
     parser.add_argument("--manifest-dir", required=True)
     args = parser.parse_args()
@@ -542,8 +548,8 @@ def main() -> int:
     try:
         endpoint = _endpoint(args.endpoint)
         directory = pathlib.Path(args.manifest_dir).expanduser().resolve()
-        if args.command == "bind":
-            manifest, path = ensure_binding(endpoint, directory)
+        if args.command in {"bind", "rebind"}:
+            manifest, path = ensure_binding(endpoint, directory, force=args.command == "rebind")
             output = {**manifest, "manifest": str(path)}
         elif args.command == "require":
             manifest, path = require_binding(endpoint, directory)

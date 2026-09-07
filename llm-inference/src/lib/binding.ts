@@ -17,7 +17,7 @@ export function resetModelBinding() {
  * it must never be hidden inside a user chat request. Existing manifests return
  * quickly; new ones keep chat disabled and visibly report that binding is active.
  */
-export async function bindSaientModel(): Promise<boolean> {
+export async function bindSaientModel(force = false): Promise<boolean> {
   if (!ui.saientEnabled || !model.loaded) {
     resetModelBinding();
     return false;
@@ -30,7 +30,7 @@ export async function bindSaientModel(): Promise<boolean> {
   model.bindingSample = 0;
   model.bindingRung = "";
   try {
-    const manifest = await T.saientBind();
+    const manifest = await T.saientBind(force);
     if (epoch !== model.bindingEpoch || !model.loaded || !ui.saientEnabled) return false;
     if (manifest.binding_status !== "bound" || typeof manifest.model !== "string") {
       throw new Error("Formal binding did not return a bound model manifest.");

@@ -328,7 +328,8 @@ mod tests {
         // which is inside the sandbox — verify it doesn't leave the root
         let result = fs.safe_path("/etc/passwd");
         if let Ok(p) = result {
-            assert!(p.starts_with(&root), "resolved {:?} must be inside {:?}", p, root);
+            // Compare canonical forms: Windows adds an extended path prefix.
+            assert!(p.starts_with(&fs.root), "resolved {:?} must be inside {:?}", p, fs.root);
         }
         std::fs::remove_dir_all(&root).ok();
     }

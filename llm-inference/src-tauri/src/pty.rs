@@ -7,7 +7,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 pub struct PtySession {
     writer: Box<dyn Write + Send>,
@@ -72,7 +72,7 @@ const SAIENT_CLI_PY: &str = r####"#!/usr/bin/env python3
 # Talks to the tinyq4 OpenAI-compatible server the app already manages, and can
 # act on the workspace via a ReAct-style tool loop (read/ls/write/edit/bash).
 # Pure standard library: no pip installs required.
-import sys, os, json, queue, re, signal, shutil, subprocess, tempfile, threading, urllib.request, platform
+import sys, os, json, queue, re, signal, shutil, subprocess, tempfile, threading, urllib.request, platform, shlex, hashlib, base64
 from pathlib import Path
 
 A = "\033[38;2;108;142;245m"   # accent blue
@@ -126,17 +126,33 @@ except Exception as exc:
 def ensure_formal_binding(port):
     """Prove this exact host/runtime pair before any agent inference."""
     global BINDING_ERROR, BINDING_MANIFEST
-    if BINDING_MANIFEST is not None:
-        return True
-    if BINDING_ERROR:
+    if SAIENT_BINDING is None:
         return False
     try:
         config = Path(os.environ.get("SAIENT_CONFIG_DIR", ".")).expanduser().resolve()
-        manifest, _ = SAIENT_BINDING.ensure_binding(
+        manifest, _ = SAIENT_BINDING.require_binding(
             "http://127.0.0.1:%d" % port, config / "bindings")
         BINDING_MANIFEST = manifest
+        BINDING_ERROR = None
         return True
     except Exception as exc:
+        BINDING_MANIFEST = None
+        BINDING_ERROR = "%s: %s" % (type(exc).__name__, exc)
+        return False
+
+def bind_explicitly(port, force=False):
+    """Profiling is an explicit setup operation, never part of a user task."""
+    global BINDING_ERROR, BINDING_MANIFEST
+    if SAIENT_BINDING is None:
+        return False
+    try:
+        config = Path(os.environ.get("SAIENT_CONFIG_DIR", ".")).expanduser().resolve()
+        BINDING_MANIFEST, _ = SAIENT_BINDING.ensure_binding(
+            "http://127.0.0.1:%d" % port, config / "bindings", force=force)
+        BINDING_ERROR = None
+        return True
+    except Exception as exc:
+        BINDING_MANIFEST = None
         BINDING_ERROR = "%s: %s" % (type(exc).__name__, exc)
         return False
 
@@ -169,29 +185,32 @@ a time; Saient's rule policy and conscience decide whether it runs, and the
 controller verifies the result. You work inside this directory:
 __WS__
 
-Operating system: __OS__. When using the bash tool, use commands native to this OS — on Windows use PowerShell/cmd (dir, type, copy, del, findstr, Remove-Item), NEVER Linux commands (ls, cat, rm, grep, touch).
+Operating system: __OS__. Home: __HOME__. Desktop (if present): __DESKTOP__.
+Command shell: __SHELL__. On Windows, the bash tool runs PowerShell: use Get-ChildItem, Set-Content, New-Item and Remove-Item. Use semicolons between commands for Windows PowerShell 5.1 compatibility. Do not send Bash-only flags, printf, touch, or cmd.exe-only syntax. Simple python/python3 commands use an available interpreter or the Python already running this agent.
 
 You can ACT using tools. To use a tool, reply with ONE fenced json block and nothing else:
 ```json
-{"name": "read", "path": "src/main.py"}
+__SHELL_EXAMPLE__
 ```
 
-Tools:
-- env   {"name":"env"}                                         inspect the actual local environment
-- tempdir {"name":"tempdir","prefix":"diagnostic"}          create an isolated temporary workspace as @temp
-- read  {"name":"read","path":"<file>"}                          read a file
-- ls    {"name":"ls","path":"<dir>"}                             list a directory ("." = current)
-- write {"name":"write","path":"<file>","content":"<text>"}      create or overwrite a file
+Tools (only these names; never invent a name such as readal):
+- bash  {"name":"bash","command":"<shell command>"}              run a command (cwd is the workspace; absolute paths are allowed in the command when the user asked for a location outside the workspace)
+- ls    {"name":"ls","path":"<dir>"}                             list a workspace directory ("." = current)
+- read  {"name":"read","path":"<file>"}                          read a workspace file
+- write {"name":"write","path":"<file>","content":"<text>"}      create or overwrite a workspace file
 - edit  {"name":"edit","path":"<file>","old":"<exact>","new":"<replacement>"}  replace text once
-- bash  {"name":"bash","command":"<shell command>"}              run a command in the workspace
+- env   {"name":"env"}                                         inspect the actual local environment
+- tempdir {"name":"tempdir","prefix":"diagnostic"}          create an isolated temporary workspace as @temp — ONLY if the user asked for a temporary/isolated workspace. The host receives only this stable handle, never the random absolute path.
 
 Workflow:
+- If the user asked you to make, create, prepare, install, build, edit, or run something, your first reply MUST be a JSON tool call. A prose claim does not create files or folders.
+- If the user asked for more than one thing (a folder AND a project, files, or a design), mkdir is not completion. Keep emitting tool calls until every clause is done.
+- Use a folder name exactly as written. Underscore, hyphen, and space are different characters. Never insert a space next to `_`. If asked to locate a folder, list the desktop and use that existing path; do not mkdir a new spelling.
+- If SESSION HISTORY is present, treat it as the authoritative record of prior user messages, verified tools, and what Saient said. Answer questions about that record without tools. Do not create @temp or question.txt to recover a question that is already in the history.
 - Emit a SINGLE tool block to gather info or make a change. Planning prose is optional and is not shown to the user.
 - You will receive the tool result, then continue with the next step.
-- Use 'edit' for existing files (include enough surrounding text so 'old' is unique). Use 'write' for new files.
-- Paths are relative to the workspace. Managed temporary paths use the stable
-  `@temp` handle; absolute paths are never accepted from the proposal host.
-- For a temporary diagnostic workspace, call `tempdir`; then use `@temp` or `@temp/file.txt` in every later tool. The host receives only this stable handle, never the random absolute path. Do not invent or copy an absolute temp path and do not create the workspace in the project.
+- Use 'edit' for existing files (include enough surrounding text so 'old' is unique). Use 'write' for new files inside the workspace.
+- Paths for read/ls/write/edit are relative to the workspace, or `@temp/...` after tempdir. Absolute paths are rejected for those tools; use bash when the user named a location outside the workspace (for example the desktop). Quote any path that contains spaces.
 - Preserve exact strings in tool arguments. Never add spaces beside `/`, `.`, `_`, `@`, or `-`, and never HTML-escape shell operators such as `&&`.
 - A command written in prose or a `bash` fence is not executed. Every action must be the single fenced JSON tool block shown above.
 - Do NOT write closing or sign-off lines while you are still working. No "feel
@@ -199,7 +218,7 @@ Workflow:
   "hope this helps". If a tool block follows, the turn is not over, and a
   farewell in the middle of it tells the person you have finished when you have
   not.
-- When the task is fully complete, reply with a short factual draft and NO json block. The controller passes that draft and the verified tool journal to Saient's expression stage; this host never speaks as Saient directly.
+- When the task is fully complete, reply with a short factual draft and NO json block. The draft may only claim work that a verified tool result supports. The controller passes that draft and the verified tool journal to Saient's expression stage; this host never speaks as Saient directly.
 """
 
 def discover_ports():
@@ -259,7 +278,7 @@ def stream(port, messages):
         "http://127.0.0.1:%d/v1/chat/completions" % port,
         data=body, headers={"Content-Type": "application/json"})
     out = ""
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=120) as resp:
         for raw in resp:
             line = raw.decode("utf-8", "replace").strip()
             if not line.startswith("data:"):
@@ -278,24 +297,102 @@ def stream(port, messages):
     return out
 
 # ── Tools ──────────────────────────────────────────────────────────────────
+def path_identity(path):
+    full = os.path.normcase(os.path.realpath(path))
+    # Rust canonicalize returns extended-length Windows paths. Python callers
+    # can address the same file using ordinary drive/UNC spelling.
+    if os.name == "nt":
+        if full.startswith("\\\\?\\unc\\"):
+            full = "\\\\" + full[8:]
+        elif full.startswith("\\\\?\\"):
+            full = full[4:]
+    return full
+
+def path_within(path, root, include_root=True):
+    candidate = path_identity(path)
+    boundary = path_identity(root)
+    try:
+        return os.path.commonpath([candidate, boundary]) == boundary and (include_root or candidate != boundary)
+    except ValueError:  # different Windows drives, or incompatible UNC roots
+        return False
+
 def safe_path(p):
     p = str(p)
-    if p == "@temp" or p.startswith("@temp/"):
+    if p == "@temp" or p.startswith("@temp/") or (os.name == "nt" and p.startswith("@temp\\")):
         if not TEMP_ROOTS:
             raise ValueError("@temp is unavailable until the tempdir tool succeeds")
         suffix = p[len("@temp"):].lstrip("/\\")
         p = os.path.join(TEMP_ROOTS[-1], suffix)
     full = os.path.realpath(os.path.join(WORKSPACE, p))
-    if full == WORKSPACE or full.startswith(WORKSPACE + os.sep):
+    if path_within(full, WORKSPACE):
         return full
     for root in TEMP_ROOTS:
-        if full == root or full.startswith(root + os.sep):
+        if path_within(full, root):
             return full
     raise ValueError("path is outside the workspace and managed temporary directories: %s" % p)
 
 def in_temp(path):
     full = os.path.realpath(path)
-    return any(full == root or full.startswith(root + os.sep) for root in TEMP_ROOTS)
+    return any(path_within(full, root) for root in TEMP_ROOTS)
+
+def shell_words(command):
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|<>")
+    lexer.whitespace_split = True
+    if os.name == "nt":
+        lexer.escape = ""  # backslashes are Windows path characters, not Bash escapes
+    return list(lexer)
+
+def tool_process_command(command):
+    if os.name != "nt":
+        shell = shutil.which("bash")
+        if shell and shutil.which("python") is None:
+            command = "python() { %s \"$@\"; }; %s" % (shlex.quote(sys.executable), command)
+        return command, {"shell": True, "executable": shell, "start_new_session": True}
+
+    options = {"shell": False, "creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
+    # Invoke a single Python command directly. This preserves quoted -c source
+    # on Windows PowerShell 5.1, whose legacy native argument marshaling can
+    # otherwise strip Python string quotes. Compound commands still use the shell.
+    try:
+        words = shell_words(command)
+    except ValueError:
+        words = []
+    if (words and re.fullmatch(r"python(?:3)?(?:\.exe)?", words[0], re.I)
+            and not any(word in (";", "&&", "||", "|", "&", ">", ">>", "<", "<<") for word in words)
+            and not re.search(r"\$[A-Za-z{(]", command)):
+        python = shutil.which(words[0]) or sys.executable
+        return [python, *words[1:]], options
+
+    shell = shutil.which("pwsh") or shutil.which("powershell.exe")
+    if not shell:
+        shell = os.path.join(os.environ.get("SystemRoot", "C:\\Windows"),
+                             "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+        if not os.path.isfile(shell):
+            raise RuntimeError("PowerShell is unavailable; cannot run a Windows shell tool")
+    setup = ["$ErrorActionPreference = 'Stop'",
+             "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding",
+             "$OutputEncoding = [Console]::OutputEncoding"]
+    for alias in ("python", "python3"):
+        if shutil.which(alias) is None:
+            setup.append("Set-Alias -Name %s -Value '%s'" % (alias, sys.executable.replace("'", "''")))
+    script = ("; ".join(setup) + "\n& {\n" + command + "\n}\n"
+              "$saientSucceeded = $?\n"
+              "if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n"
+              "if (-not $saientSucceeded) { exit 1 }\nexit 0\n")
+    encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
+    return [shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], options
+
+def terminate_tool_process(proc):
+    if os.name == "nt":
+        taskkill = os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "System32", "taskkill.exe")
+        result = subprocess.run(
+            [taskkill, "/PID", str(proc.pid), "/T", "/F"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if result.returncode != 0 and proc.poll() is None:
+            raise RuntimeError("Windows process-tree termination failed: " + result.stderr.strip())
+    else:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
 
 def trunc(s):
     return s if len(s) <= MAX_OUT else s[:MAX_OUT] + ("\n…[truncated %d chars]" % (len(s) - MAX_OUT))
@@ -351,16 +448,23 @@ def confirm(summary, yolo):
         return True
     try:
         ans = read_line("   %sallow%s %s %s[y/N]%s " % (Y, X, summary, D, X)).strip().lower()
-    except (EOFError, KeyboardInterrupt):
+    except EOFError:
         print(); return False
     return ans in ("y", "yes")
 
 BASH_TIMEOUT = 600   # seconds — long enough for npm/expo/pip installs
 
+class ToolExecutionInterrupted(Exception):
+    def __init__(self, executed):
+        self.executed = executed
+        super().__init__("interrupted by user; partial changes may remain and were not verified"
+                         if executed else "interrupted by user before tool execution")
+
 # Tools return (label, result_for_model, ok, shown). When shown is True the tool
 # already printed its own ⚙ header + output (used by bash, which streams live).
 def run_tool(obj, yolo):
     name = obj.get("name", "")
+    started = name in ("env", "ls", "read", "tempdir")
     try:
         if name == "env":
             usage = shutil.disk_usage(WORKSPACE)
@@ -370,9 +474,13 @@ def run_tool(obj, yolo):
                 "machine=" + platform.machine(),
                 "python=" + platform.python_version(),
                 "cpu_count=" + str(os.cpu_count() or "unknown"),
+                "home=" + str(Path.home()),
                 "workspace_entries=" + str(len(os.listdir(WORKSPACE))),
                 "workspace_free_bytes=" + str(usage.free),
             ]
+            desktop = desktop_dir()
+            if desktop is not None:
+                facts.append("desktop=" + str(desktop))
             return "env", "\n".join(facts), True, False
         if name == "tempdir":
             prefix = re.sub(r"[^A-Za-z0-9_-]+", "-", str(obj.get("prefix", "work"))).strip("-")[:32] or "work"
@@ -384,7 +492,7 @@ def run_tool(obj, yolo):
             # enters the host prompt. @temp is the controller-owned stable name.
             return "tempdir", "handle=@temp", True, True
         if name == "read":
-            with open(safe_path(obj["path"]), "r", errors="replace") as f:
+            with open(safe_path(obj["path"]), "r", encoding="utf-8", errors="replace", newline="") as f:
                 return "read " + obj["path"], trunc(f.read()), True, False
         if name == "ls":
             d = obj.get("path", ".")
@@ -397,8 +505,9 @@ def run_tool(obj, yolo):
             p = safe_path(rel)
             if not in_temp(p) and not confirm("write %s%s%s (%d bytes)" % (B, rel, X, len(content)), yolo):
                 return "write " + rel, "denied by user", False, False
+            started = True
             os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
-            with open(p, "w") as f:
+            with open(p, "w", encoding="utf-8", newline="") as f:
                 f.write(content)
             return "write " + rel, "wrote %d bytes" % len(content), True, False
         if name == "edit":
@@ -406,35 +515,40 @@ def run_tool(obj, yolo):
             p = safe_path(rel)
             if not in_temp(p) and not confirm("edit %s%s%s" % (B, rel, X), yolo):
                 return "edit " + rel, "denied by user", False, False
-            with open(p, "r", errors="replace") as f:
+            started = True
+            with open(p, "r", encoding="utf-8", newline="") as f:
                 src = f.read()
             n = src.count(old)
             if old == "" or n == 0:
                 return "edit " + rel, "old text not found — adjust and retry", False, False
             if n > 1:
                 return "edit " + rel, "old text appears %d times — add more context to make it unique" % n, False, False
-            with open(p, "w") as f:
+            with open(p, "w", encoding="utf-8", newline="") as f:
                 f.write(src.replace(old, new, 1))
             return "edit " + rel, "replaced 1 occurrence", True, False
         if name == "bash":
             cmd = obj.get("command", "")
             if not confirm("run: %s%s%s" % (B, cmd, X), yolo):
                 return "bash", "denied by user", False, False
+            started = True
             # Stream output live so long installs (npm/expo/pip) show progress,
             # with a watchdog that kills runaway commands after BASH_TIMEOUT.
             print("\n   %s⚙%s %sbash %s%s" % (A, X, B, cmd, X))
-            # start_new_session puts the shell + all its children in one process
-            # group so the watchdog can kill the WHOLE tree (sleep/npm/etc.), not
-            # just the shell — otherwise orphaned children keep the pipe open.
-            proc = subprocess.Popen(cmd, shell=True, cwd=WORKSPACE,
+            command, process_options = tool_process_command(cmd)
+            child_env = os.environ.copy()
+            child_env.update(PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+            proc = subprocess.Popen(command, cwd=WORKSPACE, env=child_env,
                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    text=True, bufsize=1, start_new_session=True)
+                                    text=True, encoding="utf-8", errors="replace", bufsize=1,
+                                    **process_options)
             killed = {"v": False}
             def _kill():
                 killed["v"] = True
                 try:
-                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-                except Exception:
+                    terminate_tool_process(proc)
+                except Exception as exc:
+                    if proc.poll() is None:
+                        print("   process-tree cleanup failed: %s" % exc, file=sys.stderr)
                     try: proc.kill()
                     except Exception: pass
             timer = threading.Timer(BASH_TIMEOUT, _kill); timer.start()
@@ -445,14 +559,27 @@ def run_tool(obj, yolo):
                     cap.append(line)
                     if len(cap) > 400:   # keep the tail; errors usually land last
                         cap.pop(0)
+            except KeyboardInterrupt:
+                _kill()
+                raise
             finally:
-                proc.wait(); timer.cancel()
+                try:
+                    proc.wait()
+                except KeyboardInterrupt:
+                    _kill()
+                    proc.wait()
+                    raise
+                finally:
+                    timer.cancel()
+                    proc.stdout.close()
             rc = proc.returncode if proc.returncode is not None else -1
             tail = "killed: exceeded %ds" % BASH_TIMEOUT if killed["v"] else "exit %d" % rc
             ok = (rc == 0 and not killed["v"])
             print("   %s│ [%s]%s" % ((G if ok else R), tail, X))
             return "bash " + cmd, trunc(("".join(cap).strip() + "\n[%s]" % tail).strip()), ok, True
         return name, "unknown tool", False, False
+    except KeyboardInterrupt:
+        raise ToolExecutionInterrupted(started) from None
     except Exception as e:
         return name, "error: %s" % e, False, False
 
@@ -484,7 +611,7 @@ def verify_tool(obj, result, ok, before=None):
             return (bool(TEMP_ROOTS and os.path.isdir(TEMP_ROOTS[-1])),
                     "managed temporary directory rechecked")
         if name == "read":
-            with open(safe_path(obj["path"]), "r", errors="replace") as f:
+            with open(safe_path(obj["path"]), "r", encoding="utf-8", errors="replace", newline="") as f:
                 actual = trunc(f.read())
             return actual == result, "file content re-read"
         if name == "ls":
@@ -493,13 +620,13 @@ def verify_tool(obj, result, ok, before=None):
             actual = "\n".join((i + "/") if os.path.isdir(os.path.join(p, i)) else i for i in items) or "(empty)"
             return actual == result, "directory listing re-read"
         if name == "write":
-            with open(safe_path(obj["path"]), "r", errors="replace") as f:
+            with open(safe_path(obj["path"]), "r", encoding="utf-8", errors="replace", newline="") as f:
                 actual = f.read()
             return actual == str(obj.get("content", "")), "written content re-read"
         if name == "edit":
             old, new = obj.get("old", ""), obj.get("new", "")
             expected = before.replace(old, new, 1) if isinstance(before, str) else None
-            with open(safe_path(obj["path"]), "r", errors="replace") as f:
+            with open(safe_path(obj["path"]), "r", encoding="utf-8", errors="replace", newline="") as f:
                 actual = f.read()
             return expected is not None and actual == expected, "edited content re-read"
         if name == "bash":
@@ -510,7 +637,7 @@ def verify_tool(obj, result, ok, before=None):
 
 class TerminalToolExecutor:
     """Adapter from a held host proposal to one verified terminal action."""
-    def __init__(self, request, yolo):
+    def __init__(self, request, yolo, user=""):
         self.request = dict(request)
         self.yolo = yolo
         self.label = str(request.get("name", "tool"))
@@ -519,8 +646,32 @@ class TerminalToolExecutor:
         self.verified = False
         self.shown = False
         self.requested_executed = False
+        self.user = user
+        self.artifacts = {}
 
     def execute(self, action, state):
+        try:
+            return self._execute(action, state)
+        except (KeyboardInterrupt, ToolExecutionInterrupted) as exc:
+            selected = str(action.get("type", "idle"))
+            if isinstance(exc, ToolExecutionInterrupted):
+                self.requested_executed = exc.executed and selected == self.request.get("name")
+                self.result = str(exc)
+            else:
+                self.result = "interrupted by user; the tool outcome was not fully verified"
+            self.ok = False
+            self.verified = False
+            self.artifacts = {}
+            # Return through the ordinary tick so the interrupted attempt is
+            # recorded as a failure, including any possible partial mutation.
+            return SAIENT_RUNTIME.ActionResult(
+                action_type=selected, success=False, simulated=False, verified=False,
+                detail={"tool_result": self.result, "tool_label": self.label,
+                        "requested_tool_executed": self.requested_executed,
+                        "interrupted": True,
+                        "verification_failures": ["interrupted before a complete verification"]})
+
+    def _execute(self, action, state):
         requested = str(self.request.get("name", ""))
         selected = str(action.get("type", "idle"))
         safe_analysis = selected == "analyze" and requested in ("env", "ls", "read")
@@ -589,15 +740,23 @@ class TerminalToolExecutor:
         before = None
         if requested == "edit":
             try:
-                with open(safe_path(self.request["path"]), "r", errors="replace") as f:
+                with open(safe_path(self.request["path"]), "r", encoding="utf-8", errors="replace", newline="") as f:
                     before = f.read()
             except Exception:
                 pass
 
+        shell_before = file_snapshot(task_root(self.user)) if requested == "bash" else {}
         self.label, self.result, self.ok, self.shown = run_tool(self.request, self.yolo)
         self.requested_executed = "denied by user" not in self.result
         self.verified, verification = verify_tool(
             self.request, self.result, self.ok, before=before)
+        if self.verified and self.requested_executed:
+            if requested in ("write", "edit"):
+                self.artifacts = inspect_artifact_paths([safe_path(self.request["path"])])
+            elif requested == "bash":
+                after = file_snapshot(task_root(self.user))
+                self.artifacts = inspect_artifact_paths([
+                    path for path, stamp in after.items() if shell_before.get(path) != stamp])
         detail = {"tool_result": self.result, "tool_label": self.label,
                   "verification": verification,
                   "requested_tool_executed": self.requested_executed}
@@ -612,8 +771,8 @@ class TerminalToolExecutor:
             action_type=selected, success=self.ok, simulated=False,
             verified=self.verified, detail=detail)
 
-def run_bound_tool(obj, yolo):
-    executor = TerminalToolExecutor(obj, yolo)
+def run_bound_tool(obj, yolo, user=""):
+    executor = TerminalToolExecutor(obj, yolo, user)
     params = {k: v for k, v in obj.items() if k != "name"}
     reply = SAIENT_BRIDGE.do(str(obj.get("name", "")), executor=executor,
                              params=params)
@@ -662,7 +821,7 @@ def render_diagnostic_report(journal, controller_events):
         artifact_alias = write_rows[-1].get("path") or "@temp/environment_facts.txt"
         try:
             artifact_path = safe_path(artifact_alias)
-            with open(artifact_path, "r", errors="replace") as f:
+            with open(artifact_path, "r", encoding="utf-8", errors="replace", newline="") as f:
                 final_content = f.read()
             read_back = any(row["result"] == trunc(final_content) for row in read_rows)
             evidence.append("- artifact exists=%s" % os.path.isfile(artifact_path))
@@ -687,8 +846,14 @@ def render_diagnostic_report(journal, controller_events):
             + "\n\nEvidence of success or failure\n" + "\n".join(evidence)
             + "\n\nExpected but unavailable\n" + "\n".join(unavailable_lines))
 
-def express_final(port, model, user, journal, draft, controller_events):
+def express_final(port, model, user, journal, draft, controller_events, session=None):
     """Stage 12 speaks from completed, persisted ticks and verified evidence."""
+    session = session or []
+    if is_action_request(user) or any(
+            row.get("proposed") in ("write", "edit", "bash", "tempdir")
+            for row in journal):
+        return SAIENT_BRIDGE.report_terminal(
+            user, evidence=terminal_report_evidence(user, journal))
     diagnostic_report = ("evidence report" in user.lower()
                          and "artifact" in user.lower()
                          and "temporary" in user.lower())
@@ -697,6 +862,13 @@ def express_final(port, model, user, journal, draft, controller_events):
             def express(self, tick):
                 return render_diagnostic_report(journal, controller_events)
         return SAIENT_BRIDGE.say(user, expresser=DiagnosticExpresser())
+
+    direct = direct_session_reply(user, session)
+    if direct is not None:
+        class RecordExpresser:
+            def express(self, tick):
+                return direct
+        return SAIENT_BRIDGE.say(user, expresser=RecordExpresser())
 
     evidence = []
     for row in journal[-12:]:
@@ -707,11 +879,20 @@ def express_final(port, model, user, journal, draft, controller_events):
             "redirected={redirected} proposed_tool_executed={executed} "
             "success={success} verified={verified}\n{result}".format(
                 **values))
-    question = user
+    parts = ["CURRENT USER MESSAGE:\n" + user]
+    history = format_session(session)
+    if history:
+        parts.append(history)
     if evidence:
-        question += ("\n\nVERIFIED TERMINAL JOURNAL:\n" + "\n\n".join(evidence)
-                     + "\n\nHOST DRAFT (use only where the journal supports it):\n"
-                     + draft[:3000])
+        parts.append("VERIFIED TERMINAL JOURNAL:\n" + "\n\n".join(evidence))
+    else:
+        parts.append(
+            "VERIFIED TERMINAL JOURNAL:\n"
+            "(no verified tools ran this turn; do not claim files or folders "
+            "were created, named, or changed)")
+    if draft:
+        parts.append("HOST DRAFT (use only where the journal supports it):\n" + draft[:3000])
+    question = "\n\n".join(parts)
     expresser = ModelExpresser(
         "http://127.0.0.1:%d" % port, model, temperature=0.0,
         max_tokens=700, question=question, deheaded=False,
@@ -801,6 +982,484 @@ def looks_unfinished(text):
             or ("```" in text and any(word in lower for word in
                                        ("write", "read", " ls ", " cat ", "echo "))))
 
+QUESTION_START = (
+    "what", "why", "who", "when", "where", "how", "did", "do", "does",
+    "is", "are", "was", "were", "can", "could", "would", "which",
+)
+
+WORLD_CHANGE = re.compile(
+    r"\b((make|create|prepare|scaffold|init(?:ialize)?)\b.{0,80}\b"
+    r"(folder|directory|dir|project|app|build|workspace|file|repo)\b)"
+    r"|\b(mkdir|npx create-|create-expo|npm init)\b",
+    re.I | re.S)
+
+ACTION_START = re.compile(
+    r"^(?:(?:okay|ok|yes)[,\s]+)?(?:please\s+)?"
+    r"(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?"
+    r"(?:build|implement|fix|repair|scaffold|install|run|execute|test|debug|"
+    r"create|make|prepare|initialize|edit|modify|update|save)\b", re.I)
+
+def is_question(user):
+    text = (user or "").strip()
+    if not text:
+        return False
+    if "?" in text:
+        return True
+    first = re.split(r"\s+", text, maxsplit=1)[0].lower().strip(".,;:!")
+    return first in QUESTION_START
+
+def is_action_request(user):
+    text = (user or "").strip()
+    text = re.sub(r"^I\s+(?:want|need)(?:\s+you)?\s+to\s+", "", text, flags=re.I)
+    if re.match(r"^(?:what|why|who|when|where|how|did|does|is|are|was|were|which)\b", text, re.I):
+        return False
+    if re.search(r"\b(?:poem|haiku|story|joke|song|letter|paragraph|essay)\b", text, re.I) and not re.search(
+            r"\b(?:file|save|desktop|folder|directory)\b", text, re.I):
+        return False
+    return bool(ACTION_START.search(text) or WORLD_CHANGE.search(text)
+                or re.match(r"^(?:please\s+)?write\b.*\b(?:program|script|file|[\w.-]+\.[a-z0-9]+)\b", text, re.I))
+
+def is_tempdir_requested(user):
+    lower = (user or "").lower()
+    return ("temporary" in lower or "tempdir" in lower or "@temp" in lower)
+
+def session_user_messages(session):
+    return [str(row.get("user", "")) for row in session
+            if str(row.get("user", "")).strip()]
+
+def created_paths(journal):
+    names = []
+    for row in journal or []:
+        if not (row.get("executed") and row.get("success") and row.get("verified")):
+            continue
+        proposed = row.get("proposed")
+        path = str(row.get("path") or "").strip()
+        if proposed in ("write", "edit") and path:
+            names.append(path)
+        if proposed == "tempdir":
+            names.append("@temp")
+        if proposed == "bash":
+            cmd = str(row.get("command") or "")
+            # Only parse direct creation commands, never quoted text inside
+            # echo/python or an opaque script. Final reports still re-read files.
+            try:
+                words = shell_words(cmd)
+            except ValueError:
+                words = []
+            at_start = True
+            collecting = False
+            new_item = path_next = False
+            for word in words:
+                if word in ("&&", ";", "||", "|"):
+                    at_start, collecting = True, False
+                    new_item = path_next = False
+                elif at_start:
+                    collecting = word.lower() in ("mkdir", "touch")
+                    new_item = os.name == "nt" and word.lower() == "new-item"
+                    at_start = False
+                elif new_item:
+                    if path_next:
+                        names.append(word)
+                        path_next = False
+                    else:
+                        path_next = word.lower() in ("-path", "-literalpath")
+                elif collecting and not word.startswith("-"):
+                    names.append(word)
+    # A successful process only proves its exit status. A command mentioning
+    # mkdir is not a filesystem observation (e.g. echo 'mkdir imaginary').
+    observed = []
+    for raw in names:
+        try:
+            path = safe_path(raw) if not os.path.isabs(raw) else os.path.realpath(raw)
+            if os.path.exists(path) and path not in observed:
+                observed.append(path)
+        except (OSError, ValueError):
+            continue
+    return observed
+
+def asking_previous_question(user):
+    lower = (user or "").lower()
+    return bool(re.search(
+        r"what (was|is) my (q\w*st\w*n|request|prompt)|what did i (just )?(ask|say|request)",
+        lower))
+
+def asking_created_name(user):
+    lower = (user or "").lower()
+    return bool(re.search(
+        r"what did you (name|call|create|make)|what('s| is) the (folder|file|directory) name|"
+        r"what was the (folder|file|directory) (name|called)",
+        lower))
+
+def format_session(session):
+    if not session:
+        return ""
+    lines = ["SESSION HISTORY (authoritative; do not invent tools to recover this):"]
+    for i, row in enumerate(session[-8:], 1):
+        user = str(row.get("user", "")).replace("\n", " ")[:500]
+        reply = str(row.get("reply", "")).replace("\n", " ")[:400]
+        journal = row.get("journal") or []
+        done = [r for r in journal
+                if r.get("executed") and r.get("success") and r.get("verified")]
+        if done:
+            tools = []
+            for r in done[-8:]:
+                extra = r.get("path") or str(r.get("command", "") or "")[:80]
+                tools.append(("%s %s" % (r.get("proposed"), extra)).strip())
+            tools = ", ".join(tools)
+        else:
+            tools = "(none verified)"
+        lines.append("%d. User: %s" % (i, user))
+        lines.append("   Verified tools: %s" % tools)
+        if reply:
+            lines.append("   Saient said: %s" % reply)
+    return "\n".join(lines)
+
+def direct_session_reply(user, session):
+    prior = session_user_messages(session)
+    journals = []
+    for row in session:
+        journals.extend(row.get("journal") or [])
+    if asking_previous_question(user):
+        if not prior:
+            return "There is no previous request in this session."
+        return "Your previous request was: " + prior[-1]
+    if asking_created_name(user):
+        names = created_paths(journals)
+        if not names:
+            return ("No folder or file was created in this session. "
+                    "No verified write, edit, or bash ran.")
+        return "Verified paths from this session (still present): " + ", ".join(names)
+    return None
+
+def desktop_dir():
+    # Tauri resolves the platform's Desktop, including Windows Known Folder
+    # redirection (e.g. OneDrive), before launching this process.
+    configured = os.environ.get("SAIENT_DESKTOP")
+    path = Path(configured) if configured else Path.home() / "Desktop"
+    return path if path.is_dir() else None
+
+def requested_desktop(user):
+    return bool(re.search(r"\bon(?: the| my| your)? desktop\b|~/Desktop\b|\$HOME/Desktop\b", user or "", re.I))
+
+NAMED_FOLDER = re.compile(
+    r"\b(?:(?:folder|directory|dir) (?:named|called)|name(?:d)? it|call(?:ed)? it)\s+"
+    r"[`'\"]?([A-Za-z0-9][A-Za-z0-9._-]*"
+    r"(?:[ _](?!on\b|then\b|and\b|inside\b|of\b|to\b|for\b)[A-Za-z0-9._-]+)*)[`'\"]?",
+    re.I)
+
+PROJECT_REQUEST = re.compile(
+    r"\b(?:then|and then)\b.{0,120}\b(?:create|make|design|scaffold|build)\b"
+    r"|\b(?:create|make|scaffold|build|design)\b.{0,80}\b(?:project|app|game|tool)\b"
+    r"|\bof your choos",
+    re.I | re.S)
+
+def requested_folder_name(user):
+    match = NAMED_FOLDER.search(user or "")
+    if not match:
+        return None
+    # A period ending a sentence is not part of the folder name. Internal dots
+    # remain valid (e.g. project.v2), and quoted names still retain spaces.
+    name = re.split(r"[.!?]\s+", match.group(1), maxsplit=1)[0]
+    return name.strip().strip(".,;:\"'") or None
+
+def _norm_folder_name(value):
+    return re.sub(r"[^a-z0-9]+", "", (value or "").lower())
+
+def mkdir_targets(journal):
+    found = []
+    for row in journal or []:
+        if row.get("proposed") != "bash":
+            continue
+        for match in re.finditer(
+                r"mkdir(?:\s+-p)?\s+(?:\"([^\"]+)\"|'([^']+)'|([^\s;&|]+))",
+                str(row.get("command") or ""), re.I):
+            found.append(next(g for g in match.groups() if g).strip())
+    return found
+
+def _path_basenames(journal):
+    names = []
+    for raw in mkdir_targets(journal) + created_paths(journal):
+        base = os.path.basename(str(raw).rstrip("/\\"))
+        if base:
+            names.append(base)
+    return names
+
+def journal_used_requested_name(journal, requested):
+    requested = (requested or "").strip()
+    if not requested:
+        return True
+    for path in created_paths(journal) + list(verified_artifacts(journal)):
+        if requested in Path(path).parts:
+            return True
+    return False
+
+def drifted_folder_names(journal, requested):
+    requested = (requested or "").strip()
+    want = _norm_folder_name(requested)
+    if not want:
+        return []
+    seen = []
+    for base in _path_basenames(journal):
+        if base != requested and _norm_folder_name(base) == want:
+            seen.append(base)
+    return seen
+
+def is_locate_request(user):
+    return bool(re.search(
+        r"\b(locate|find|look for)\b.{0,80}\b(folder|directory|dir)\b",
+        user or "", re.I | re.S))
+
+def requested_project(user):
+    return bool(PROJECT_REQUEST.search(user or ""))
+
+def journal_facts(user, journal):
+    """Facts the Memory tab can show, taken only from verified mutations."""
+    completed = [row for row in journal or []
+                 if row.get("executed") and row.get("success") and row.get("verified")
+                 and row.get("proposed") in ("write", "edit", "bash", "tempdir")]
+    if not completed:
+        return []
+    facts = []
+    paths = created_paths(journal)
+    if paths:
+        facts.append({
+            "key": "pty.created." + _norm_folder_name(os.path.basename(paths[-1]))[:48],
+            "value": "verified paths present: " + ", ".join(paths),
+            "category": "file",
+            "source": "pty",
+            "confidence": 0.95,
+        })
+    for row in completed:
+        if row.get("proposed") in ("write", "edit") and row.get("path"):
+            path = str(row.get("path"))
+            facts.append({
+                "key": "pty.file." + path[:80],
+                "value": "%s %s" % (row.get("proposed"), path),
+                "category": "file",
+                "source": "pty",
+                "confidence": 0.9,
+            })
+        if row.get("proposed") == "bash" and row.get("command"):
+            facts.append({
+                "key": "pty.last_bash",
+                "value": str(row.get("command"))[:500],
+                "category": "learned",
+                "source": "pty",
+                "confidence": 0.85,
+            })
+    request = (user or "").strip()
+    if request:
+        facts.append({
+            "key": "pty.last_request",
+            "value": request[:400],
+            "category": "user",
+            "source": "pty",
+            "confidence": 1.0,
+        })
+    return facts
+
+def persist_pty_memory(user, journal):
+    """Append verified-turn facts for the desktop Memory tab to ingest.
+
+    The Rust memory store owns memory.json. This process only writes a sidecar
+    inbox so it cannot clobber an in-memory copy the app still holds.
+    """
+    facts = journal_facts(user, journal)
+    if not facts:
+        return 0
+    inbox = os.path.join(WORKSPACE, ".agent", "pty-inbox.jsonl")
+    os.makedirs(os.path.dirname(inbox), exist_ok=True)
+    with open(inbox, "a", encoding="utf-8", newline="") as handle:
+        for fact in facts:
+            handle.write(json.dumps(fact, separators=(",", ":")) + "\n")
+    return len(facts)
+
+def remember_turn(user, journal):
+    try:
+        n = persist_pty_memory(user, journal)
+    except Exception as exc:
+        print("   %smemory not recorded: %s%s" % (Y, exc, X))
+        return
+    if n:
+        print("   %s· memory %d fact%s%s" % (D, n, "" if n == 1 else "s", X))
+
+def is_mkdir_only_journal(journal):
+    mutations = [row for row in journal or []
+                 if row.get("executed") and row.get("success") and row.get("verified")
+                 and row.get("proposed") in ("write", "edit", "bash", "tempdir")]
+    if not mutations:
+        return True
+    if any(row.get("proposed") in ("write", "edit", "tempdir") for row in mutations):
+        return False
+    for row in mutations:
+        cmd = str(row.get("command") or "").strip()
+        for part in re.split(r"\s*(?:&&|\|\||;)\s*", cmd):
+            part = part.strip()
+            if not part:
+                continue
+            if re.match(r"^(mkdir(?:\s+-p)?|ls|dir|pwd|true)\b", part, re.I):
+                continue
+            return False
+    return True
+
+def journal_used_desktop(journal):
+    desktop = desktop_dir()
+    if desktop is None:
+        return False
+    root = os.path.realpath(str(desktop))
+    for row in journal or []:
+        if not (row.get("executed") and row.get("success") and row.get("verified")):
+            continue
+        for path in created_paths([row]):
+            if path_within(path, root):
+                return True
+    return False
+
+def task_root(user):
+    root = str(desktop_dir()) if requested_desktop(user) and desktop_dir() else WORKSPACE
+    name = requested_folder_name(user)
+    return os.path.realpath(os.path.join(root, name)) if name else root
+
+def file_snapshot(root):
+    """Bounded filesystem observations, not interpretations of shell prose.
+
+    Skipped/overflow files are never evidence. This limits overhead in large
+    workspaces; explicit write/edit tools still verify files individually.
+    """
+    observed = {}
+    remaining = 4000
+    for directory, dirs, files in os.walk(root, followlinks=False):
+        dirs[:] = sorted(d for d in dirs if d not in (
+            ".git", "node_modules", ".agent", ".venv", "target", "__pycache__",
+            ".pytest_cache", ".mypy_cache", ".ruff_cache")
+            and not os.path.islink(os.path.join(directory, d)))
+        remaining -= len(dirs) + len(files)
+        if remaining < 0:
+            break
+        for name in files:
+            path = os.path.join(directory, name)
+            try:
+                if os.path.islink(path):
+                    continue
+                info = os.stat(path)
+                if os.path.isfile(path):
+                    observed[os.path.realpath(path)] = (info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+            except OSError:
+                continue
+    return observed
+
+def inspect_artifact_paths(paths):
+    artifacts = {}
+    for path in paths:
+        try:
+            path = os.path.realpath(path)
+            if not os.path.isfile(path):
+                continue
+            digest = hashlib.sha256()
+            size = 0
+            with open(path, "rb") as handle:
+                for block in iter(lambda: handle.read(65536), b""):
+                    size += len(block)
+                    digest.update(block)
+            artifacts[path] = (size, digest.hexdigest())
+        except OSError:
+            continue
+    return artifacts
+
+def verified_artifacts(journal):
+    """Re-read files tied to a witnessed mutation; unrelated reads prove no build."""
+    expected = {}
+    for row in journal:
+        if not (row.get("executed") and row.get("success") and row.get("verified")):
+            continue
+        expected.update(row.get("artifacts") or {})
+        if row.get("proposed") in ("write", "edit") and row.get("path"):
+            try:
+                expected.setdefault(safe_path(row["path"]), None)
+            except ValueError:
+                continue
+    actual = inspect_artifact_paths(expected)
+    return {path: stamp for path, stamp in actual.items()
+            if expected[path] is None or tuple(expected[path]) == stamp}
+
+def needs_deliverable_files(user):
+    # A verification-only request must not pressure the host to alter the file
+    # it was asked to check. Its evidence consists of the captured checks.
+    if re.match(r"^(?:please\s+)?(?:run|execute|test|verify|check|inspect|read|list|debug)\b", user, re.I):
+        return False
+    return is_action_request(user) and bool(re.search(
+        r"\b(?:build|implement|scaffold|project|program|script|app|application|calculator|website|game|file|artifact)\b"
+        r"|\b[\w-]+\.(?:html|js|ts|py|json|css|md|txt)\b", user, re.I))
+
+def terminal_report_evidence(user, journal):
+    artifacts = verified_artifacts(journal)
+    checks = ["Read %s: %d bytes; SHA-256 %s" % (path, size, digest)
+              for path, (size, digest) in artifacts.items()]
+    for row in journal:
+        if (row.get("proposed") == "bash" and row.get("executed")
+                and row.get("success") and row.get("verified")):
+            checks.append("Captured process exit status 0 for: " + str(row.get("command", "")))
+    unmet = completion_error(user, journal)
+    if not artifacts and not checks and not unmet:
+        unmet = "No artifact or process result was independently verified."
+    return SAIENT_RUNTIME.TerminalReportEvidence(
+        status="incomplete" if unmet else "complete",
+        artifacts=tuple(artifacts), checks=tuple(checks),
+        unmet=(unmet,) if unmet else (),
+        requested_root=str(desktop_dir()) if requested_desktop(user) and desktop_dir() else WORKSPACE)
+
+def verification_command_targets_task(command, user, artifacts):
+    """Conservative check-command eligibility, not proof of test coverage.
+
+    Reject reads/no-ops and quoted claims such as echo 'assert'. Inline probes
+    must name a witnessed artifact. Recognized test runners may discover tests.
+    The report still exposes exact commands; it never infers their correctness.
+    """
+    wanted = requested_folder_name(user)
+    if wanted and wanted not in command and path_identity(WORKSPACE) != path_identity(task_root(user)):
+        return False
+    try:
+        words = shell_words(command)
+    except ValueError:
+        return False
+    segments, current = [], []
+    for word in words + [";"]:
+        if word in (";", "&&", "||", "|"):
+            if current:
+                segments.append(current)
+            current = []
+        else:
+            current.append(word)
+    for args in segments:
+        if os.name == "nt" and args[0] == "&":
+            args = args[1:]
+            if not args:
+                continue
+        executable = os.path.basename(args[0])
+        if os.name == "nt":
+            executable = re.sub(r"\.(?:exe|cmd|bat)$", "", executable, flags=re.I).lower()
+        if executable in ("pytest", "vitest", "jest", "playwright"):
+            return True
+        if executable in ("npm", "pnpm", "yarn", "bun", "cargo", "go", "make") and any(
+                re.fullmatch(r"test(?::[\w-]+)?|check", arg) for arg in args[1:]):
+            return True
+        if re.fullmatch(r"python(?:\d+(?:\.\d+)*)?|node|bun|deno", executable):
+            if "-m" in args and any(arg in ("pytest", "unittest") for arg in args[1:]):
+                return True
+            if any(flag in args for flag in ("-c", "-e", "--eval")):
+                source = " ".join(args[1:])
+                if re.search(r"\bassert\b|\bthrow\s+new\s+Error\b", source) and any(
+                        re.search(r"(?<![\w.-])" + re.escape(os.path.basename(path)) + r"(?![\w.-])", source)
+                        for path in artifacts):
+                    return True
+                continue
+        # Explicit check/test scripts, including project-specific runners.
+        candidates = args[:2] if executable in ("python", "python3", "node", "bash", "sh") else args[:1]
+        if any(re.search(r"(?:^|[-_.])(?:tests?|check|verify)(?:[-_.]|$)",
+                         os.path.basename(arg)) for arg in candidates):
+            return True
+    return False
+
 def completion_error(user, journal):
     """Enforce explicit, mechanically checkable completion requirements.
 
@@ -840,6 +1499,62 @@ def completion_error(user, journal):
                    and row["proposed"] in ("read", "ls")
                    for i, row in enumerate(journal)):
             missing.append("the artifact was not independently read or listed after creation")
+    if is_action_request(user):
+        world = [row for row in completed
+                 if row["proposed"] in ("write", "edit", "bash", "tempdir")]
+        if not world:
+            missing.append("no verified write, edit, bash, or tempdir occurred")
+        elif requested_desktop(user) and desktop_dir() is not None and not journal_used_desktop(journal):
+            missing.append("the desktop path was not used; mkdir in the workspace is not the desktop")
+        wanted_name = requested_folder_name(user)
+        if wanted_name:
+            drifted = drifted_folder_names(journal, wanted_name)
+            if drifted:
+                missing.append("used folder name %r instead of the exact requested %r"
+                               % (drifted[0], wanted_name))
+            elif not journal_used_requested_name(journal, wanted_name):
+                missing.append("the created path does not use the requested folder name %r" % wanted_name)
+            if is_locate_request(user):
+                for target in mkdir_targets(journal):
+                    base = os.path.basename(str(target).rstrip("/\\"))
+                    parent = os.path.dirname(os.path.abspath(str(target)))
+                    desktop = desktop_dir()
+                    if (desktop is not None
+                            and os.path.realpath(parent) == os.path.realpath(str(desktop))
+                            and base != wanted_name):
+                        missing.append("asked to locate an existing folder, not mkdir a new spelling")
+                        break
+        if requested_project(user) and is_mkdir_only_journal(journal):
+            missing.append("a project was requested but only mkdir/ls ran; write or scaffold files in the folder")
+        artifacts = verified_artifacts(journal)
+        if needs_deliverable_files(user) and not artifacts:
+            missing.append("no deliverable file was independently re-read; write the files, or read back shell-created files")
+        if needs_deliverable_files(user):
+            requested_files = re.findall(
+                r"(?<![\w/])([\w./-]+\.(?:html|css|js|ts|py|json|md|txt))\b", user, re.I)
+            for requested_file in requested_files:
+                if not any(path.replace(os.sep, "/").endswith("/" + requested_file)
+                           for path in artifacts):
+                    missing.append("requested file %s was not verified after a mutation" % requested_file)
+            if wanted_name and artifacts and not any(
+                    path_within(path, task_root(user), include_root=False) for path in artifacts):
+                missing.append("verified files are outside the exact requested folder %s" % task_root(user))
+        if requested_desktop(user) and desktop_dir() and artifacts:
+            root = os.path.realpath(str(desktop_dir()))
+            if not any(path_within(path, root, include_root=False) for path in artifacts):
+                missing.append("the verified files are not on the requested Desktop")
+        if needs_deliverable_files(user) and re.search(
+                r"\b(?:tests?|tested|testing|verify|verification|assertions?|checks?)\b", user, re.I):
+            changes = [i for i, row in enumerate(journal)
+                       if row.get("executed") and row.get("success")
+                       and (row.get("proposed") in ("write", "edit")
+                            or bool(row.get("artifacts")))]
+            if not any(row.get("proposed") == "bash" and row.get("executed")
+                       and row.get("success") and row.get("verified")
+                       and (not changes or i > changes[-1])
+                       and verification_command_targets_task(str(row.get("command", "")), user, artifacts)
+                       for i, row in enumerate(journal)):
+                missing.append("no successful verification command targeting this task was captured after the file changes; run an assertion against its files or the project's test runner and inspect output")
     return "; ".join(missing) if missing else None
 
 def artifact_environment_fact_count(journal, write_row=None):
@@ -855,7 +1570,7 @@ def artifact_environment_fact_count(journal, write_row=None):
             return 0
         write_row = writes[-1]
     try:
-        with open(safe_path(write_row.get("path") or ""), "r", errors="replace") as f:
+        with open(safe_path(write_row.get("path") or ""), "r", encoding="utf-8", errors="replace", newline="") as f:
             content = f.read()
     except Exception:
         return 0
@@ -922,8 +1637,20 @@ def diagnostic_recovery_tool(user, journal):
 def main():
     port, model = find_server()
     yolo = False
-    sys_msg = {"role": "system", "content": SYSTEM.replace("__WS__", WORKSPACE).replace("__OS__", platform.system() or "this OS")}
+    home = str(Path.home())
+    desktop = desktop_dir()
+    desktop_s = str(desktop) if desktop is not None else "(none)"
+    sys_msg = {"role": "system", "content": (SYSTEM
+        .replace("__WS__", WORKSPACE)
+        .replace("__OS__", platform.system() or "this OS")
+        .replace("__SHELL__", "PowerShell" if os.name == "nt" else "Bash/sh")
+        .replace("__SHELL_EXAMPLE__", json.dumps({"name": "bash", "command":
+                 "mkdir dest; Get-ChildItem -LiteralPath dest" if os.name == "nt" else "mkdir -p dest && ls dest"}))
+        .replace("__HOME__", home)
+        .replace("__DESKTOP__", desktop_s))}
     header(port, model, yolo)
+    session = []
+    pending = None
     while True:
         try:
             user = read_user_prompt()
@@ -934,6 +1661,8 @@ def main():
         if user in ("/exit", "/quit", "/q"):
             break
         if user in ("/clear", "/reset"):
+            session = []
+            pending = None
             header(port, model, yolo); continue
         if user == "/yolo":
             yolo = not yolo
@@ -942,33 +1671,86 @@ def main():
         if user == "/tools":
             print("   %senv · tempdir · read · ls · write · edit · bash%s\n" % (D, X)); continue
         if user == "/help":
-            print("   %s/yolo · /tools · /clear · /exit%s\n" % (D, X)); continue
+            print("   %s/bind · /rebind · /yolo · /tools · /clear · /exit%s\n" % (D, X)); continue
+        port, model = find_server()
         if not port:
-            port, model = find_server()
-            if not port:
-                print("   %sno server — load a model in Saient first%s\n" % (R, X)); continue
+            print("   %sno server — load a model in Saient first%s\n" % (R, X)); continue
+        if user in ("/bind", "/rebind"):
+            print("   %sformal binding setup — this may take several minutes; Ctrl-C cancels%s" % (Y, X))
+            try:
+                bind_explicitly(port, force=user == "/rebind")
+            except KeyboardInterrupt:
+                print("   %sbinding interrupted%s" % (Y, X))
             header(port, model, yolo)
-        if BINDING_ERROR:
-            print("   %sSaient runtime binding failed; no host fallback was used: %s%s\n" %
-                  (R, BINDING_ERROR, X))
             continue
         if not ensure_formal_binding(port):
-            print("   %sSaient host did not pass formal binding; no host fallback was used: %s%s\n" %
+            print("   %sSaient binding is unavailable; use /bind for setup or /rebind to retry. No host fallback was used: %s%s\n" %
                   (R, BINDING_ERROR, X))
             continue
         if BINDING_MANIFEST is not None:
             print("   %sformal binding %s · %s%s\n" %
                   (G, BINDING_MANIFEST["minimum_interface"], model, X))
-        messages = [sys_msg, {"role": "user", "content": user}]
-        journal = []
+        direct = direct_session_reply(user, session)
+        if direct is not None:
+            try:
+                final_reply = express_final(
+                    port, model, user, [], direct, [], session)
+                spoken = final_reply.text
+            except KeyboardInterrupt:
+                print("%sexpression interrupted%s" % (Y, X))
+                session.append({"user": user, "journal": [], "reply": "expression interrupted"})
+                continue
+            except Exception:
+                spoken = direct
+            print("\r   %ssaient%s  %s" % (A, X, spoken))
+            session.append({"user": user, "journal": [], "reply": spoken})
+            print("\n")
+            continue
+        resumed = pending if pending and re.fullmatch(
+            r"(?:please\s+)?(?:continue|carry on|keep going|resume|try again)[.!]?", user, re.I) else None
+        if resumed:
+            user = resumed["user"]
+            print("   %scontinuing pending request: %s%s" % (D, user, X))
+        pending = None
+        history = format_session(session)
+        content = user if not history else history + "\n\nCURRENT USER MESSAGE:\n" + user
+        notes = []
+        if (requested_desktop(user) and desktop_dir() is not None
+                and path_identity(str(desktop_dir())) != path_identity(WORKSPACE)):
+            notes.append("the workspace is %s, which is not the desktop. The desktop directory is %s. "
+                         "A folder on the desktop requires bash with that absolute path."
+                         % (WORKSPACE, desktop_dir()))
+        wanted_name = requested_folder_name(user)
+        if wanted_name:
+            notes.append("the folder name the user asked for is exactly %r. Preserve every "
+                         "underscore, hyphen, and space; do not invent a space next to _."
+                         % wanted_name)
+            if is_locate_request(user):
+                notes.append("this is a locate request: list the desktop and use the existing "
+                             "directory of that exact name. Do not mkdir a new top-level spelling.")
+        if requested_project(user):
+            notes.append("mkdir alone is not the end of this request; create a real project (files) "
+                         "inside that folder before finishing.")
+        if notes:
+            content += "\n\nCONTROLLER NOTE: " + " ".join(notes)
+        messages = [sys_msg, {"role": "user", "content": content}]
+        journal = list(resumed["journal"]) if resumed else []
+        turn_interrupted = False
+        if journal:
+            messages.append({"role": "user", "content":
+                             "PRIOR VERIFIED TASK JOURNAL:\n" + json.dumps(journal)})
         controller_events = []
         invalid_responses = 0
         premature_finals = 0
         recovery_active = False
         # ── Tool loop ──────────────────────────────────────────────────────
         tool_counts = {}
+        clarify_retry = None
+        clarify_counts = {}
         for _ in range(MAX_STEPS):
-            forced = diagnostic_recovery_tool(user, journal) if recovery_active else None
+            retrying_clarify = clarify_retry is not None
+            forced = clarify_retry or (diagnostic_recovery_tool(user, journal) if recovery_active else None)
+            clarify_retry = None
             if forced is not None:
                 print("\n   %srecovery policy selected %s%s" %
                       (Y, forced["name"], X))
@@ -978,20 +1760,27 @@ def main():
                 try:
                     text = stream(port, messages)
                 except KeyboardInterrupt:
+                    turn_interrupted = True
                     print("%sinterrupted%s" % (Y, X)); break
                 except Exception:
                     np, nm = find_server()
                     if np:
                         port, model = np, nm
+                        if not ensure_formal_binding(port):
+                            print("%sreplacement server is not bound: %s%s" % (R, BINDING_ERROR, X))
+                            break
                         try:
                             text = stream(port, messages)
+                        except KeyboardInterrupt:
+                            turn_interrupted = True
+                            print("%sinterrupted%s" % (Y, X)); break
                         except Exception as e:
                             print("%serror: %s%s" % (R, e, X)); break
                     else:
                         print("%sconnection lost — is a model loaded?%s" % (R, X)); port = None; break
             tool = extract_tool(text)
-            proposal_source = ("deterministic_recovery_policy"
-                               if forced is not None else "host")
+            proposal_source = ("bounded_clarify_retry" if retrying_clarify else
+                               "deterministic_recovery_policy" if forced is not None else "host")
             if not tool:
                 if looks_unfinished(text) and invalid_responses < 3:
                     invalid_responses += 1
@@ -1022,7 +1811,11 @@ def main():
                               (Y, tool["name"], X))
                     else:
                         if premature_finals >= 4:
-                            show_result("stopped incomplete: " + incomplete)
+                            stopped = "stopped incomplete: " + incomplete
+                            show_result(stopped)
+                            remember_turn(user, journal)
+                            session.append({"user": user, "journal": list(journal),
+                                            "reply": stopped})
                             break
                         messages.append({"role": "assistant", "content": text[-2000:]})
                         messages.append({"role": "user", "content":
@@ -1034,15 +1827,30 @@ def main():
                 else:
                     try:
                         final_reply = express_final(
-                            port, model, user, journal, text, controller_events)
+                            port, model, user, journal, text, controller_events,
+                            session)
+                    except KeyboardInterrupt:
+                        turn_interrupted = True
+                        print("%sexpression interrupted%s" % (Y, X))
+                        break
                     except Exception as exc:
                         print("%sexpression failed: %s%s" % (R, exc, X))
+                        remember_turn(user, journal)
+                        session.append({"user": user, "journal": list(journal),
+                                        "reply": "expression failed: %s" % exc})
                         break
                     print("\r   %ssaient%s  %s" % (A, X, final_reply.text))
+                    remember_turn(user, journal)
+                    session.append({"user": user, "journal": list(journal),
+                                    "reply": final_reply.text})
                     break
             invalid_responses = 0
             premature_finals = 0
             problem = tool_argument_error(tool)
+            if (not problem and str(tool.get("name")) == "tempdir"
+                    and not is_tempdir_requested(user)):
+                problem = ("tempdir is only for a user-requested temporary workspace; "
+                           "use ls, read, write, edit, or bash for this task")
             if problem:
                 print("%srejected invalid tool proposal%s" % (R, X))
                 controller_events.append("Invalid tool proposal rejected: " + problem)
@@ -1061,16 +1869,42 @@ def main():
             tool_counts[tool_key] = tool_counts.get(tool_key, 0) + 1
             repeat_count = tool_counts[tool_key]
             if proposal_source == "host" and repeat_count == 3:
-                result = "not executed: this identical tool call has already run twice in this turn; use the existing results and choose a different next step"
-                print("\n   %s⚙%s %srepeat blocked%s" % (R, X, B, X))
-                show_result(result)
-                messages.append({"role": "user", "content": "[controller feedback]\n" + result})
-                continue
+                ran_same = [row for row in journal
+                            if row.get("executed")
+                            and row.get("proposed") == str(tool.get("name", ""))
+                            and str(row.get("command") or "") == str(tool.get("command") or "")
+                            and str(row.get("path") or "") == str(tool.get("path") or "")]
+                if ran_same:
+                    result = "not executed: this identical tool call has already run twice in this turn; use the existing results and choose a different next step"
+                    print("\n   %s⚙%s %srepeat blocked%s" % (R, X, B, X))
+                    show_result(result)
+                    messages.append({"role": "user", "content": "[controller feedback]\n" + result})
+                    continue
             if proposal_source == "host" and repeat_count >= 4:
-                print("\n   %sstopped: the model requested the same tool call four times in one turn%s" % (R, X))
-                break
+                ran_same = [row for row in journal
+                            if row.get("executed")
+                            and row.get("proposed") == str(tool.get("name", ""))]
+                if ran_same:
+                    print("\n   %sstopped: the model requested the same tool call four times in one turn%s" % (R, X))
+                    break
             try:
-                reply, executor = run_bound_tool(tool, yolo)
+                reply, executor = run_bound_tool(tool, yolo, user)
+            except KeyboardInterrupt:
+                # Interruption outside the executor (for example during tick
+                # persistence) leaves the outcome unknown, never successful.
+                turn_interrupted = True
+                result = "tool interrupted; partial changes may remain and the outcome was not verified"
+                journal.append({
+                    "tick": None, "proposed": str(tool.get("name", "")),
+                    "selected": "unknown", "conscience": "unknown", "redirected": False,
+                    "success": False, "verified": False, "executed": False,
+                    "execution_status": "unknown", "interrupted": True,
+                    "implemented_redirect": "", "result": result,
+                    "path": str(tool.get("path", "")), "command": str(tool.get("command", "")),
+                    "source": proposal_source, "artifacts": {},
+                })
+                show_result(result)
+                break
             except Exception as exc:
                 result = "Saient bridge error: %s: %s" % (type(exc).__name__, exc)
                 print("%sbridge error%s" % (R, X))
@@ -1097,9 +1931,24 @@ def main():
                     "implemented_redirect", "")),
                 "result": result,
                 "path": str(tool.get("path", "")),
+                "command": str(tool.get("command", "")),
                 "source": proposal_source,
+                "artifacts": executor.artifacts,
+                "interrupted": bool(reply.detail.get("interrupted")),
             }
             journal.append(row)
+            if row["interrupted"]:
+                turn_interrupted = True
+                break
+            if (not row["executed"] and row["selected"] == "analyze"
+                    and row["success"] and row["verified"]
+                    and row["implemented_redirect"] and row["conscience"] == "clarify"):
+                clarify_counts[tool_key] = clarify_counts.get(tool_key, 0) + 1
+                if clarify_counts[tool_key] <= 2:
+                    # Keep the identical proposal held while the existing
+                    # bounded conscience clarification policy resolves it.
+                    # Interleaving unrelated ls calls resets that policy.
+                    clarify_retry = dict(tool)
             if ("artifact" in user.lower() and "temporary" in user.lower()
                     and (proposal_source == "deterministic_recovery_policy"
                          or not row["executed"] or not row["success"])):
@@ -1108,13 +1957,25 @@ def main():
                              "[Saient tick {tick} · source={source} · conscience={conscience} · selected={selected} · redirected={redirected} · proposed_tool_executed={executed} · success={success} · verified={verified}]\n[tool result · {proposed}]\n{result}".format(**row)})
         else:
             print("\n   %sreached step limit (%d) — type to continue%s" % (Y, MAX_STEPS, X))
+            remember_turn(user, journal)
+            session.append({"user": user, "journal": list(journal),
+                            "reply": "reached step limit (%d)" % MAX_STEPS})
+        unmet = completion_error(user, journal)
+        if turn_interrupted:
+            unmet = unmet or "Interrupted before the task outcome was confirmed."
+            remember_turn(user, journal)
+        if unmet:
+            pending = {"user": user, "journal": list(journal)}
+            if turn_interrupted or not session or session[-1].get("user") != user:
+                session.append({"user": user, "journal": list(journal), "reply": "Incomplete: " + unmet})
+            print("   %sPending task retained. Type continue to resume. %s%s" % (Y, unmet, X))
         print("\n")
 
 def workspace_contract_check():
     """Exercise production path resolution without a model or a mock filesystem."""
     cwd = os.path.realpath(os.getcwd())
     expected = os.path.realpath(os.environ[WORKSPACE_ENV])
-    if WORKSPACE != expected or cwd != expected:
+    if path_identity(WORKSPACE) != path_identity(expected) or path_identity(cwd) != path_identity(expected):
         raise AssertionError("cwd, SAIENT_WORKSPACE and tool root are not identical")
 
     parent = ".saient/path contract begining with spaces"
@@ -1157,9 +2018,160 @@ def workspace_contract_check():
     }, separators=(",", ":")))
     return 0
 
+def controller_check():
+    """Exercise the controller with real temporary files and no model calls."""
+    from unittest.mock import patch
+    with tempfile.TemporaryDirectory(prefix="saient-controller-check-") as fixture:
+        desktop = Path(fixture) / "Desktop"
+        desktop.mkdir()
+        with patch.dict(globals(), {"WORKSPACE": fixture,
+                                    "desktop_dir": lambda: desktop}):
+            return _controller_check_fixture()
+
+def _controller_check_fixture():
+    import contextlib
+    import io
+    import shlex
+    request = ("please make a folder on the desktop and prepare it "
+               "for a mobile expo build")
+    session = [{
+        "user": request,
+        "journal": [],
+        "reply": "I made a folder on the desktop and prepared it for a mobile expo build.",
+    }]
+    failures = []
+    checks = 0
+
+    def expect(cond, msg):
+        nonlocal checks
+        checks += 1
+        if not cond:
+            failures.append(msg)
+
+    def executed(tool):
+        with contextlib.redirect_stdout(io.StringIO()):
+            _, result, success, _ = run_tool(tool, True)
+        verified, _ = verify_tool(tool, result, success)
+        expect(success and verified, "fixture tool failed: %r: %s" % (tool, result))
+        return {"proposed": tool["name"], "executed": True,
+                "success": success, "verified": verified,
+                "command": tool.get("command", ""), "path": tool.get("path", ""),
+                "result": result, "source": "host", "tick": checks,
+                "selected": tool["name"], "conscience": "allow", "redirected": False}
+
+    desktop = desktop_dir()
+    spoken = ("create folder on desktop call it saients test "
+              "then desing somthing of your choice")
+    expect(is_action_request(spoken), "create folder on desktop should be an action")
+    expect(requested_desktop(spoken), "on desktop without 'the' still counts")
+    live = ("please create a folder on the desktop and name it saients test "
+            "then create a project of your choosing")
+    expect(requested_folder_name(live) == "saients test",
+           "must keep the requested folder name: %r" % requested_folder_name(live))
+    expect(requested_project(live), "then create a project must stay open")
+    mkdir_only = [executed({"name": "bash", "command":
+                           "mkdir %s; ls %s" % (shlex.quote(str(desktop / "saient_test")),
+                                                shlex.quote(str(desktop)))})]
+    live_err = completion_error(live, mkdir_only)
+    expect(bool(live_err) and "requested folder name" in live_err,
+           "wrong folder name must stay incomplete: %r" % live_err)
+    expect(bool(live_err) and "project was requested" in live_err,
+           "mkdir-only must not finish a project request: %r" % live_err)
+    expect(is_mkdir_only_journal(mkdir_only), "mkdir && ls is mkdir-only")
+    locate = ("please locate the folder named saients_test on the desktop "
+              "then create a mini project inside of it of your choosing")
+    expect(requested_folder_name(locate) == "saients_test",
+           "locate must keep underscores: %r" % requested_folder_name(locate))
+    expect(is_locate_request(locate), "locate the folder is a locate request")
+    drifted = [executed({"name": "bash", "command":
+                        "mkdir %s; mkdir %s" % (
+                            shlex.quote(str(desktop / "saients_ test")),
+                            shlex.quote(str(desktop / "saients_ test" / "src")))})]
+    drift_err = completion_error(locate, drifted)
+    expect(bool(drift_err) and "saients_ test" in drift_err and "saients_test" in drift_err,
+           "underscore-plus-space must not count as saients_test: %r" % drift_err)
+    expect(journal_facts("how do you feel", []) == [],
+           "a question with no tools must not invent facts")
+    project_dir = desktop / "saient_test" / "my_project"
+    project_rows = [executed({"name": "bash", "command":
+                              "mkdir %s" % shlex.quote(str(project_dir))}),
+                    executed({"name": "write", "path": str(project_dir / "README.md"),
+                              "content": "This is a controller test fixture.\n"})]
+    recorded = journal_facts(
+        "please create a folder on the desktop and name it saient_test then create a project",
+        project_rows)
+    keys = [row["key"] for row in recorded]
+    expect(any(k.startswith("pty.created") for k in keys), "must record created paths: %r" % keys)
+    expect(any(row["key"] == "pty.last_request" and "saient_test" in row["value"]
+               for row in recorded), "must record the user request")
+    expect(all(row["source"] == "pty" for row in recorded), "facts must be sourced as pty")
+    written = persist_pty_memory("please create a folder named saient_test", project_rows)
+    inbox = os.path.join(WORKSPACE, ".agent", "pty-inbox.jsonl")
+    expect(written >= 1 and os.path.isfile(inbox), "inbox must exist after a verified turn")
+    expect(is_action_request(request), "folder+expo request should be an action")
+    expect(not is_question(request), "imperative should not be a question")
+    err = completion_error(request, [])
+    expect(bool(err) and "no verified write, edit, bash, or tempdir occurred" in err,
+           "empty journal must be incomplete: %r" % err)
+
+    relative = [executed({"name": "bash", "command": "mkdir saient-verify-mkdir"})]
+    rel_err = completion_error(request, relative)
+    expect(bool(rel_err) and "desktop path was not used" in rel_err,
+           "relative mkdir must not satisfy an on-desktop request: %r" % rel_err)
+    journal = [executed({"name": "bash", "command":
+                         "mkdir %s" % shlex.quote(str(desktop / "expo-mobile"))})]
+    expo_err = completion_error(request, journal)
+    expect(bool(expo_err) and "no deliverable file" in expo_err,
+           "a real folder alone must not satisfy the Expo build: %r" % expo_err)
+    folder_request = "please make a folder on the desktop named expo-mobile"
+    expect(completion_error(folder_request, journal) is None,
+           "a verified real folder should satisfy a folder-only request")
+
+    follow = "what was my qustion"
+    expect(is_question(follow), "follow-up should be a question")
+    expect(not is_action_request(follow), "follow-up should not demand tools")
+    expect(completion_error(follow, []) is None, "questions must not require tools")
+    expect(diagnostic_recovery_tool(follow, []) is None,
+           "questions must not start diagnostic recovery")
+    reply = direct_session_reply(follow, session)
+    expect(bool(reply) and "make a folder" in reply,
+           "must recall the previous request: %r" % reply)
+
+    named = direct_session_reply("what did you name the folder", session)
+    expect(bool(named) and "No folder" in named,
+           "empty journal must not invent a folder name: %r" % named)
+
+    session_done = [{"user": folder_request, "journal": journal,
+                     "reply": "Created " + str(desktop / "expo-mobile")}]
+    named2 = direct_session_reply("what did you name the folder", session_done)
+    expect(bool(named2) and "expo-mobile" in named2,
+           "must report the mkdir path: %r" % named2)
+
+    expect(not is_tempdir_requested(follow),
+           "ordinary questions are not tempdir requests")
+    expect(is_tempdir_requested("create a temporary workspace and an artifact"),
+           "diagnostic wording still requests tempdir")
+    expect(diagnostic_recovery_tool(
+        "create a temporary workspace and an artifact with three real facts", [])
+        == {"name": "env"}, "diagnostic recovery still starts at env")
+
+    history = format_session(session)
+    expect("make a folder" in history, "session history must include the user request")
+    expect("(none verified)" in history, "empty journal must be visible in history")
+    expect("write a haiku about rust" and not is_action_request("write a haiku about rust"),
+           "prose 'write' must not be treated as a world-change request")
+
+    if failures:
+        print(json.dumps({"result": "FAIL", "failures": failures}))
+        return 1
+    print(json.dumps({"result": "PASS", "checks": checks}))
+    return 0
+
 if __name__ == "__main__":
     if "--workspace-contract-check" in sys.argv:
         raise SystemExit(workspace_contract_check())
+    if "--controller-check" in sys.argv:
+        raise SystemExit(controller_check())
     main()
 "####;
 
@@ -1263,6 +2275,9 @@ pub async fn pty_spawn(
 
     cmd.cwd(&workspace);
     cmd.env("SAIENT_WORKSPACE", workspace.as_os_str());
+    if let Ok(desktop) = window.path().desktop_dir() {
+        cmd.env("SAIENT_DESKTOP", desktop.as_os_str());
+    }
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
     cmd.env(crate::paths::DATA_DIR_ENV, crate::paths::data_dir().to_string_lossy().into_owned());
@@ -1276,6 +2291,8 @@ pub async fn pty_spawn(
     cmd.env(crate::saient_loop::STATE_DIR_ENV,
             crate::saient_loop::state_dir().to_string_lossy().into_owned());
     cmd.env("PYTHONDONTWRITEBYTECODE", "1");
+    cmd.env("PYTHONUTF8", "1");
+    cmd.env("PYTHONIOENCODING", "utf-8");
     // The terminal agent is allowed to reach only the selected numeric
     // loopback model endpoint. Never inherit a proxy that could redirect it.
     cmd.env("NO_PROXY", "127.0.0.1,::1");
@@ -1386,7 +2403,7 @@ mod tests {
         assert!(SAIENT_CLI_PY.contains("SAIENT_BRIDGE.say"));
         assert!(SAIENT_CLI_PY.contains("ensure_formal_binding(port)"));
         assert!(SAIENT_CLI_PY.contains("formally bound"));
-        assert!(SAIENT_CLI_PY.contains("no host fallback was used"));
+        assert!(SAIENT_CLI_PY.contains("SAIENT_BINDING.require_binding("));
         assert!(!SAIENT_CLI_PY.contains("You are Saient, a local coding agent"));
     }
 
@@ -1394,6 +2411,47 @@ mod tests {
     fn generated_cli_keeps_random_temp_paths_out_of_host_context() {
         assert!(SAIENT_CLI_PY.contains("return \"tempdir\", \"handle=@temp\", True, True"));
         assert!(SAIENT_CLI_PY.contains("never the random absolute path"));
+    }
+
+    #[test]
+    fn generated_cli_keeps_session_history_and_rejects_fake_completions() {
+        assert!(SAIENT_CLI_PY.contains("def format_session("));
+        assert!(SAIENT_CLI_PY.contains("def direct_session_reply("));
+        assert!(SAIENT_CLI_PY.contains("def is_action_request("));
+        assert!(SAIENT_CLI_PY.contains("CURRENT USER MESSAGE:"));
+        assert!(SAIENT_CLI_PY.contains(
+            "no verified write, edit, bash, or tempdir occurred"));
+        assert!(SAIENT_CLI_PY.contains(
+            "tempdir is only for a user-requested temporary workspace"));
+        assert!(SAIENT_CLI_PY.contains("def controller_check():"));
+        assert!(SAIENT_CLI_PY.contains("session = []"));
+        assert!(SAIENT_CLI_PY.contains("def persist_pty_memory("));
+        assert!(SAIENT_CLI_PY.contains("pty-inbox.jsonl"));
+    }
+
+    #[test]
+    fn generated_cli_session_controller_passes_without_a_model() {
+        let temporary = tempfile::tempdir().unwrap();
+        let workspace = temporary.path().join("agent session");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let script = temporary.path().join("saient_cli.py");
+        std::fs::write(&script, SAIENT_CLI_PY).unwrap();
+        let python = crate::resolve::find_python().unwrap();
+        let output = std::process::Command::new(python)
+            .arg(&script)
+            .arg("--controller-check")
+            .current_dir(&workspace)
+            .env("SAIENT_WORKSPACE", std::fs::canonicalize(&workspace).unwrap())
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let payload: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(payload["result"], "PASS");
     }
 
     #[test]

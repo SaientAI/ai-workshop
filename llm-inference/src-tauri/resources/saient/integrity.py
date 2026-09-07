@@ -19,13 +19,14 @@ than papered over with fuzzy matching.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from orchestrator import TickRecord
+    from orchestrator import TerminalReportEvidence, TickRecord
 
 
 @dataclass(slots=True, frozen=True)
@@ -35,6 +36,53 @@ class IntegrityReport:
     @property
     def ok(self) -> bool:
         return not self.violations
+
+
+def terminal_report_text(evidence: "TerminalReportEvidence") -> str:
+    """Canonical task report. Every variable string is quoted inert evidence.
+
+    This boundary deliberately transcribes only the controller's typed result;
+    there is no model draft, inferred path, or tick-level verification flag.
+    A file read-back or command exit proves only that particular check, not
+    every aspect of an application. The controller owns requirement coverage.
+    """
+    lines = ["Mechanical completion status: " + evidence.status.upper() + "."]
+    if evidence.requested_root is not None:
+        lines.append("Requested location (not itself evidence of creation): "
+                     + json.dumps(evidence.requested_root, ensure_ascii=False))
+    if evidence.artifacts:
+        lines.append("Artifacts independently read back:")
+        lines.extend("- " + json.dumps(path, ensure_ascii=False)
+                     for path in evidence.artifacts)
+    else:
+        lines.append("No artifacts independently verified.")
+    if evidence.checks:
+        lines.append("Verified checks (only the scope stated in each check):")
+        lines.extend("- " + json.dumps(check, ensure_ascii=False)
+                     for check in evidence.checks)
+    else:
+        lines.append("No execution or functional checks verified.")
+    if evidence.unmet:
+        lines.append("Unmet requirements:")
+        lines.extend("- " + json.dumps(item, ensure_ascii=False)
+                     for item in evidence.unmet)
+    elif evidence.status == "incomplete":
+        lines.append("Task completion has not been verified.")
+    lines.append("Read-back and command exit status do not by themselves establish "
+                 "functional correctness beyond the checks listed above.")
+    return "\n".join(lines)
+
+
+def validate_terminal_report(tick: "TickRecord", text: str) -> IntegrityReport:
+    """Require exact task evidence, including failure and verification scope."""
+    if tick.terminal_report is None:
+        return IntegrityReport(("terminal report is missing typed task evidence",))
+    if text != terminal_report_text(tick.terminal_report):
+        return IntegrityReport((
+            "terminal report did not preserve the authoritative task evidence; "
+            "message receipt does not verify earlier work",
+        ))
+    return IntegrityReport()
 
 
 #: Negations that flip an assertion, checked over a window rather than a fixed
@@ -102,6 +150,8 @@ def _names_action(action: str, text: str) -> bool:
 
 def validate(tick: "TickRecord", text: str) -> IntegrityReport:
     """Check a candidate expression against the record it claims to describe."""
+    if tick.terminal_report is not None:
+        return validate_terminal_report(tick, text)
     if not text.strip():
         return IntegrityReport()          # silence makes no false claim
 

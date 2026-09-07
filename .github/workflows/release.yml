@@ -21,7 +21,12 @@ env:
   # back to the local-dev default sm_120, which nvcc 12.6 rejects. Both names
   # are exported so either engine revision builds.
   QUARTZ_CUDA_ARCH: all-major
-  TINYQ4_REPO: staticplayHub/tinyq4
+  TINYQ4_REPO: SaientAI/saient-quartz
+  # Same engine revision verified in both public 1.0.23 build logs. Both
+  # platforms must build one immutable source revision, not moving branches.
+  TINYQ4_REF: 5a2a82387b9548c6c165eb50880a5f49c54ef1ff
+  PYTHONDONTWRITEBYTECODE: '1'
+  PYTHONUTF8: '1'
   # 12.6.x is broadly supported by the toolkit action and, with all-major, still runs on
   # Blackwell (RTX 50xx) via PTX JIT. For native sm_120 SASS, bump to 12.8.x AND bump the
   # Jimver/cuda-toolkit tag below to a version that knows 12.8.
@@ -40,8 +45,21 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ env.TINYQ4_REPO }}
+          ref: ${{ env.TINYQ4_REF }}
           ssh-key: ${{ secrets.TINYQ4_DEPLOY_KEY }}
           path: tinyq4-src
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Runtime regression gate
+        working-directory: llm-inference
+        run: |
+          set -euo pipefail
+          for suite in runtime_file_lock saient_binding_cache terminal_completion terminal_interrupt terminal_conscience terminal_report terminal_windows release_provenance; do
+            python tools/test_${suite}.py
+          done
 
       - name: Tauri + AppImage system deps
         run: |
@@ -74,7 +92,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: llm-inference/package-lock.json
 
@@ -84,15 +102,28 @@ jobs:
 
       - name: Tauri build (deb / appimage)
         working-directory: llm-inference
-        run: npm run tauri -- build --bundles deb,appimage
+        run: npm run tauri -- build --bundles deb,appimage --ci -- --locked
+
+      - name: Collect this version's Linux bundles
+        run: |
+          set -euo pipefail
+          release_version=$(node -p "require('./llm-inference/src-tauri/tauri.conf.json').version")
+          mkdir -p release-provenance/linux
+          cp "llm-inference/src-tauri/target/release/bundle/deb/Saient_${release_version}_amd64.deb" release-provenance/linux/
+          cp "llm-inference/src-tauri/target/release/bundle/appimage/Saient_${release_version}_amd64.AppImage" release-provenance/linux/
+
+      - name: Capture final Linux checksums and source provenance
+        run: >-
+          python llm-inference/tools/release_provenance.py
+          --repo-root . --engine-root tinyq4-src --platform linux
+          --artifact-dir release-provenance/linux
+          --output-dir release-provenance/linux
 
       - name: Upload Linux bundles
         uses: actions/upload-artifact@v4
         with:
           name: saient-linux
-          path: |
-            llm-inference/src-tauri/target/release/bundle/deb/*.deb
-            llm-inference/src-tauri/target/release/bundle/appimage/*.AppImage
+          path: release-provenance/linux/*
           if-no-files-found: error
 
   # ── Windows: NSIS installer (.exe) ────────────────────────────────────────────
@@ -110,6 +141,9 @@ jobs:
       SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
       SIGNPATH_ORGANIZATION_ID: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
     steps:
+      - name: Preserve source bytes for runtime hash verification
+        run: git config --global core.autocrlf false
+
       - name: Checkout app
         uses: actions/checkout@v4
 
@@ -117,8 +151,22 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ env.TINYQ4_REPO }}
+          ref: ${{ env.TINYQ4_REF }}
           ssh-key: ${{ secrets.TINYQ4_DEPLOY_KEY }}
           path: tinyq4-src
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Native Windows runtime regression gate
+        working-directory: llm-inference
+        shell: bash
+        run: |
+          set -euo pipefail
+          for suite in runtime_file_lock saient_binding_cache terminal_completion terminal_interrupt terminal_conscience terminal_report terminal_windows release_provenance; do
+            python tools/test_${suite}.py
+          done
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -145,7 +193,8 @@ jobs:
           Push-Location tinyq4-src
           # CPU build (separate target dir so it doesn't clobber the CUDA build)
           $env:CARGO_TARGET_DIR = "$env:RUNNER_TEMP\tq4-cpu"
-          cargo build --release
+          cargo build --release --locked
+          if ($LASTEXITCODE -ne 0) { throw 'CPU engine build failed' }
           $cpuBin = @("$env:RUNNER_TEMP\tq4-cpu\release\quartz.exe","$env:RUNNER_TEMP\tq4-cpu\release\tinyq4.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $cpuBin) { Get-ChildItem "$env:RUNNER_TEMP\tq4-cpu\release"; throw "no engine binary (cpu)" }
           Copy-Item $cpuBin "..\$eng\tinyq4-cpu.exe"
@@ -158,7 +207,8 @@ jobs:
           # all-major emits SASS for every major arch and JITs on Blackwell.
           $env:TINYQ4_CUDA_ARCH = "${{ env.TINYQ4_CUDA_ARCH }}"
           $env:QUARTZ_CUDA_ARCH = "${{ env.QUARTZ_CUDA_ARCH }}"
-          cargo build --release --features cuda
+          cargo build --release --locked --features cuda
+          if ($LASTEXITCODE -ne 0) { throw 'CUDA engine build failed' }
           $cudaBin = @("target\release\quartz.exe","target\release\tinyq4.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $cudaBin) { Get-ChildItem "target\release"; throw "no engine binary (cuda)" }
           Copy-Item $cudaBin "..\$eng\tinyq4-cuda.exe"
@@ -169,7 +219,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: llm-inference/package-lock.json
 
@@ -185,7 +235,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npm run tauri -- build --bundles nsis
+        run: npm run tauri -- build --bundles nsis --ci -- --locked
 
       # ── Authenticode signing ──────────────────────────────────────────────
       # Free OSS certificate from the SignPath Foundation; see
@@ -219,33 +269,50 @@ jobs:
           wait-for-completion: true
           output-artifact-directory: signed
 
-      - name: Upload Windows installer (signed)
-        if: env.SIGNPATH_API_TOKEN != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: saient-windows
-          path: signed/*-setup.exe
-          if-no-files-found: error
+      - name: Collect final Windows installer and updater signature
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          $finalDir = 'release-provenance/windows'
+          New-Item -ItemType Directory -Force -Path $finalDir | Out-Null
+          $sourceDir = if ($env:SIGNPATH_API_TOKEN) { 'signed' } else { 'llm-inference/src-tauri/target/release/bundle/nsis' }
+          $releaseVersion = (Get-Content llm-inference/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $installers = @(Get-ChildItem $sourceDir -Filter "Saient_${releaseVersion}_x64-setup.exe")
+          if ($installers.Count -ne 1) { throw 'Expected exactly one final Windows installer' }
+          $installer = $installers[0]
+          if ($env:SIGNPATH_API_TOKEN) {
+            # Authenticode changes the bytes. Sign those FINAL bytes for the
+            # updater instead of reusing the pre-Authenticode signature.
+            Push-Location llm-inference
+            npm run tauri -- signer sign $installer.FullName
+            if ($LASTEXITCODE -ne 0) { throw 'Final installer updater signing failed' }
+            Pop-Location
+          }
+          $signature = $installer.FullName + '.sig'
+          if (-not (Test-Path $signature)) { throw 'Final installer updater signature is missing' }
+          Copy-Item $installer.FullName $finalDir
+          Copy-Item $signature $finalDir
 
-      # *-setup.exe* rather than *-setup.exe: the updater .sig sits beside the
-      # installer and the update feed is useless without it.
-      #
-      # NOTE for when SignPath goes live: the updater signature must be taken
-      # over the FINAL bytes, so once Authenticode signing is in the path the
-      # .sig has to be regenerated after SignPath returns the signed installer,
-      # not carried over from this step.
-      - name: Upload Windows installer (unsigned)
-        if: env.SIGNPATH_API_TOKEN == ''
+      - name: Capture final Windows checksums and source provenance
+        run: >-
+          python llm-inference/tools/release_provenance.py
+          --repo-root . --engine-root tinyq4-src --platform windows
+          --artifact-dir release-provenance/windows
+          --output-dir release-provenance/windows
+
+      - name: Upload Windows installer and provenance
         uses: actions/upload-artifact@v4
         with:
           name: saient-windows
-          path: llm-inference/src-tauri/target/release/bundle/nsis/*-setup.exe*
+          path: release-provenance/windows/*
           if-no-files-found: error
 
   # ── Draft GitHub Release with all bundles (tag builds only) ────────────────────
   release:
     name: Draft release
-    if: startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     needs: [linux, windows]
     runs-on: ubuntu-latest
     permissions:

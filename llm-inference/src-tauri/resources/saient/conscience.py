@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fcntl
 import json
 import math
 import os
@@ -16,6 +15,7 @@ from functools import lru_cache
 from typing import Any, Callable
 
 from arc_gremlin.persistence import locked_write, load_json
+from runtime_file_lock import exclusive_file_lock
 
 try:
     import torch
@@ -455,7 +455,12 @@ def build_action_proposal(action: dict[str, Any], goal: dict[str, Any], state: d
     efficiency = float(drives.get("efficiency", 0.5))
     autonomy = float(drives.get("autonomy", 0.5))
     info = float(drives.get("information_depth", 0.5))
-    recent_failures = _recent_failures(history, action_type)
+    # bash hosts many unrelated operations. A missing executable must not make
+    # the corrected command (or every other command) inherit its failure risk.
+    # Keep the penalty on the concrete failed proposal; all baseline/advisory
+    # risk estimates and decision thresholds still apply to the repair.
+    command = action.get("command") if action_type == "bash" else None
+    recent_failures = _recent_failures(history, action_type, command=command)
 
     base_harm = {
         "stabilize": 0.02,
@@ -484,6 +489,11 @@ def build_action_proposal(action: dict[str, Any], goal: dict[str, Any], state: d
         # never been told this action existed.
         "edit": 0.11,
         "write": 0.16,      # creates something new rather than amending
+        # Same registration hole as edit/write: the terminal agent's primary
+        # tool is `bash`, and leaving it out priced every mkdir/npm/git call
+        # at the unknown-action default. Conscience then redirected the only
+        # way the agent can act outside read/write of workspace files.
+        "bash": 0.17,
         "self_direct": 0.18,
         "arc_attempt": 0.08,
         # Answering someone. Also absent, so a plain "hello" scored 0.20 —
@@ -719,8 +729,7 @@ def append_audit_record(record: dict[str, Any], log_dir: str | Path = DEFAULT_AU
     root.mkdir(parents=True, exist_ok=True)
     path = root / f"{datetime.now(timezone.utc).strftime('%Y%m%d')}.ndjson"
     lock_path = path.with_suffix(path.suffix + ".lock")
-    with lock_path.open("w", encoding="utf-8") as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+    with exclusive_file_lock(lock_path):
         with path.open("a", encoding="utf-8") as fp:
             fp.write(json.dumps(record, sort_keys=True, default=str) + "\n")
     return path
@@ -772,6 +781,7 @@ def _action_value_vector(action_type: str) -> ValueVector:
         # `optimize`; creating something new is slightly more self-directed.
         "edit": ValueVector(0.60, 0.85, 0.60, 0.65, 0.45, 0.75),
         "write": ValueVector(0.50, 0.75, 0.75, 0.55, 0.60, 0.60),
+        "bash": ValueVector(0.48, 0.70, 0.80, 0.50, 0.55, 0.55),
         "respond": ValueVector(0.80, 0.90, 0.45, 0.90, 0.55, 0.75),
         "self_direct": ValueVector(0.45, 0.65, 0.95, 0.35, 0.65, 0.45),
         "arc_attempt": ValueVector(0.55, 0.90, 0.65, 0.55, 0.80, 0.65),
@@ -936,13 +946,16 @@ def _clean_decision_window(raw: Any, limit: int = DEFAULT_ADAPTIVE_WINDOW) -> li
     return [str(item) for item in raw if str(item) in DECISIONS][-max(1, int(limit)) :]
 
 
-def _recent_failures(history: list[Any], action_type: str, window: int = 12) -> int:
+def _recent_failures(history: list[Any], action_type: str, window: int = 12,
+                     *, command: str | None = None) -> int:
     total = 0
     for row in history[-window:]:
         if not isinstance(row, dict):
             continue
         action = row.get("action") or {}
         result = row.get("result") or {}
+        if command is not None and action.get("command") != command:
+            continue
         if action.get("type") == action_type and not result.get("success", True):
             total += 1
     return total

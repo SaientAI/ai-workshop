@@ -76,6 +76,16 @@ impl BindingHandle {
         self.run("bind", port, None, progress).await
     }
 
+    /// Explicitly retry a completed profile, including a cached rejection.
+    /// This uses the same production acceptance limits as the initial bind.
+    pub async fn rebind(
+        &self,
+        port: u16,
+        progress: Option<tauri::WebviewWindow>,
+    ) -> Result<serde_json::Value, String> {
+        self.run("rebind", port, None, progress).await
+    }
+
     pub async fn chat(&self, port: u16, message: String) -> Result<BindingReply, String> {
         let value = self.run("chat", port, Some(message), None).await?;
         serde_json::from_value(value)
@@ -360,7 +370,7 @@ mod tests {
         assert!(bridge.contains("functioning_state_grounding"));
         assert!(bridge.contains("\"voice_guard.py\""));
         assert!(bridge.contains("def require_binding"));
-        assert!(bridge.contains("choices=(\"bind\", \"require\", \"chat\")"));
+        assert!(bridge.contains("choices=(\"bind\", \"rebind\", \"require\", \"chat\")"));
     }
 
     #[test]
