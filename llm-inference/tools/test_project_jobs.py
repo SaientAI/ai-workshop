@@ -96,7 +96,7 @@ class ProjectJobsTests(unittest.TestCase):
         env = dict(os.environ, PROJECT_JOB_TEST="héllo ∑", PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
         job = self.start("import os; print(os.getcwd()); print(os.environ['PROJECT_JOB_TEST'])", env=env)
         result = self.assert_final(job, "completed", 0)
-        self.assertIn(str(self.root), result["tail"])
+        self.assertTrue(os.path.samefile(result["tail"].splitlines()[0], self.root))
         self.assertIn("héllo ∑", result["tail"])
         self.assertEqual(result["tail"], job.log_path.read_bytes().decode("utf-8"))
         record = job.metadata_path.read_text()
@@ -356,6 +356,9 @@ class ProjectJobsTests(unittest.TestCase):
         pid = int((self.root / "orphan-child.pid").read_text())
         self.until(lambda: jobs.ManagedJob.inspect_record(path)["status"] == "timed_out", timeout=6)
         self.until(lambda: not executing(pid))
+        # Final command metadata can precede the detached worker releasing its
+        # lock. Verify shutdown before the fixture removes its evidence tree.
+        self.until(lambda: jobs.ManagedJob.inspect_record(path)["supervisor_active"] is False)
         record = jobs.ManagedJob.inspect_record(path)
         self.assertEqual(record["timeout_reason"], "wall")
         self.assertIsNone(record["cleanup_error"])

@@ -6,6 +6,7 @@ project controller, durable SQLite store and background job worker are exercised
 This does not substitute for a live-model or multi-day target-platform soak.
 """
 import contextlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
 import json
 import os
@@ -167,6 +168,50 @@ class ProjectControllerTests(unittest.TestCase):
             self.assertEqual(store.snapshot()["status"], "STOPPED")
         stopper.join(2)
         self.assertFalse((self.workspace / "notes.txt").exists())
+
+    def test_stop_unblocks_actual_silent_http_response(self):
+        ready, release, finished = threading.Event(), threading.Event(), threading.Event()
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                self.wfile.flush()
+                ready.set()
+                release.wait(5)
+            def log_message(self, *_):
+                pass
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        serving = threading.Thread(target=server.serve_forever, daemon=True)
+        serving.start()
+        actual_stream = self.cli["stream"]
+        def stream(*args, **kwargs):
+            try:
+                return actual_stream(*args, **kwargs)
+            finally:
+                finished.set()
+        self.cli["stream"] = stream
+        self.cli["find_server"] = lambda: (server.server_port, "local HTTP fixture")
+        def stop():
+            if ready.wait(3):
+                self.cli["INPUT_QUEUE"].put("/project stop")
+        stopper = threading.Thread(target=stop)
+        stopper.start()
+        try:
+            with ProjectStore(self.state_dir, self.workspace) as store:
+                store.create("Inspect workspace", {"max_seconds": 5})
+                with contextlib.redirect_stdout(self.output):
+                    ProjectRunner(self.cli, store).run()
+                self.assertEqual(store.snapshot()["status"], "STOPPED")
+                self.assertTrue(finished.wait(1), "HTTP response did not unblock after cancellation")
+        finally:
+            release.set()
+            server.shutdown()
+            server.server_close()
+            serving.join(2)
+            stopper.join(2)
 
     def test_stop_during_command_retains_unknown_outcome_for_review(self):
         command = 'python -c "from pathlib import Path; import time; Path(\'started\').write_text(\'yes\'); time.sleep(30); Path(\'late\').write_text(\'bad\')"'

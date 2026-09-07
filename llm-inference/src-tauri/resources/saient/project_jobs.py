@@ -87,12 +87,7 @@ class _WindowsContainment:
             _fields_ = [("BasicLimitInformation", BasicLimits), ("IoInfo", ctypes.c_ulonglong * 6),
                         ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
                         ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
-        class Accounting(ctypes.Structure):
-            _fields_ = [("TotalUserTime", ctypes.c_longlong), ("TotalKernelTime", ctypes.c_longlong),
-                        ("ThisPeriodTotalUserTime", ctypes.c_longlong), ("ThisPeriodTotalKernelTime", ctypes.c_longlong),
-                        ("TotalPageFaultCount", wintypes.DWORD), ("TotalProcesses", wintypes.DWORD),
-                        ("ActiveProcesses", wintypes.DWORD), ("TotalTerminatedProcesses", wintypes.DWORD)]
-        self.accounting_type = Accounting
+        self.wintypes = wintypes
         self.kernel = ctypes.WinDLL("kernel32", use_last_error=True)
         self.kernel.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
         self.kernel.CreateJobObjectW.restype = wintypes.HANDLE
@@ -104,6 +99,12 @@ class _WindowsContainment:
         self.kernel.QueryInformationJobObject.restype = wintypes.BOOL
         self.kernel.GetCurrentProcess.restype = wintypes.HANDLE
         self.kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        self.kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        self.kernel.OpenProcess.restype = wintypes.HANDLE
+        self.kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        self.kernel.WaitForSingleObject.restype = wintypes.DWORD
+        self.kernel.IsProcessInJob.argtypes = [wintypes.HANDLE, wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL)]
+        self.kernel.IsProcessInJob.restype = wintypes.BOOL
         self.handle = self.kernel.CreateJobObjectW(None, None)
         if not self.handle:
             raise ctypes.WinError(ctypes.get_last_error())
@@ -116,10 +117,43 @@ class _WindowsContainment:
             raise error  # Fail before launching an uncontained command.
 
     def remaining_children(self):
-        info = self.accounting_type()
-        if not self.kernel.QueryInformationJobObject(self.handle, 1, self.ctypes.byref(info), self.ctypes.sizeof(info), None):
-            raise self.ctypes.WinError(self.ctypes.get_last_error())
-        return info.ActiveProcesses > 1  # The supervisor itself remains associated.
+        # Job accounting can lag process exit. Inspect current native handles
+        # instead of treating a stale count as a surviving command tree. These
+        # IDs come from this live Job Object, never persisted PID metadata.
+        ctypes, wintypes = self.ctypes, self.wintypes
+        capacity = 64
+        while capacity <= 65536:
+            class ProcessList(ctypes.Structure):
+                _fields_ = [("assigned", wintypes.DWORD), ("count", wintypes.DWORD),
+                            ("ids", ctypes.c_size_t * capacity)]
+            info = ProcessList()
+            ok = self.kernel.QueryInformationJobObject(self.handle, 3, ctypes.byref(info), ctypes.sizeof(info), None)
+            if not ok and ctypes.get_last_error() != 234:  # ERROR_MORE_DATA
+                raise ctypes.WinError(ctypes.get_last_error())
+            if not ok or info.count < info.assigned:
+                capacity = max(capacity * 2, info.assigned)
+                continue
+            for pid in info.ids[:info.count]:
+                if pid == os.getpid():
+                    continue  # The supervisor itself remains associated.
+                handle = self.kernel.OpenProcess(0x00101000, False, pid)  # SYNCHRONIZE | QUERY_LIMITED_INFORMATION
+                if not handle:
+                    if ctypes.get_last_error() == 87:  # Process already vanished.
+                        continue
+                    raise ctypes.WinError(ctypes.get_last_error())
+                try:
+                    member = wintypes.BOOL()
+                    if not self.kernel.IsProcessInJob(handle, self.handle, ctypes.byref(member)):
+                        raise ctypes.WinError(ctypes.get_last_error())
+                    status = self.kernel.WaitForSingleObject(handle, 0)
+                    if status not in (0, 258):
+                        raise ctypes.WinError(ctypes.get_last_error())
+                    if member.value and status == 258:
+                        return True
+                finally:
+                    self.kernel.CloseHandle(handle)
+            return False
+        raise RuntimeError("Windows job process list exceeded its inspection bound")
 
 
 def _duration(value, name):
