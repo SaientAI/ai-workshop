@@ -152,7 +152,7 @@
     },
     "project_controller.py": {
       "source_sha256": null,
-      "bundled_sha256": "93cca39d0d4f728a47ef68fe9756a8d8e786ed325e2d2ef7f4a07dd7ee48abd0",
+      "bundled_sha256": "5c8282793f156bfccee6463f350b563dbb3e3432b440dfca0159af3e14e8ca8b",
       "source": "Saient Desktop opt-in durable project controller; not present in the captured upstream revision"
     },
     "project_jobs.py": {

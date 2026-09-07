@@ -158,24 +158,34 @@ class InferenceControl:
     def __init__(self):
         self.cancelled = threading.Event()
         self.response = None
+        self._lock = threading.Lock()
 
     def attach(self, response):
-        self.response = response
+        with self._lock:
+            self.response = response
         if self.cancelled.is_set():
             self.cancel()
 
     def cancel(self):
         self.cancelled.set()
-        response = self.response
-        if response is not None:
+        with self._lock:
+            response = self.response
             # urllib's buffered reader can hold a read lock; shutting down its
-            # own socket first unblocks that read before closing the response.
+            # socket avoids acquiring that lock. Also detach/close the actual
+            # socket handle: socket.close() alone is deferred while makefile
+            # references exist, and Windows needs the pending receive closed.
             stream_socket = getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
             if stream_socket is not None:
                 try:
                     stream_socket.shutdown(socket.SHUT_RDWR)
                 except OSError:
                     pass  # An already-closed connection is already cancelled.
+                try:
+                    descriptor = stream_socket.detach()
+                    if descriptor != -1:
+                        socket.close(descriptor)
+                except OSError:
+                    pass  # Another close already released this request handle.
 
 
 class ProjectRunner:
