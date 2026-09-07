@@ -257,6 +257,14 @@ class ProjectJobsTests(unittest.TestCase):
             job = self.start("import ctypes; k=ctypes.WinDLL('kernel32'); k.GetConsoleWindow.restype=ctypes.c_void_p; assert not k.GetConsoleWindow()")
             self.assert_final(job, "completed", 0)
 
+    @unittest.skipUnless(os.name == "nt", "native Windows job shutdown")
+    def test_windows_finished_root_waits_for_brief_descendant_shutdown(self):
+        child = "import time,pathlib; pathlib.Path('brief-child-started').touch(); time.sleep(0.15)"
+        source = ("import subprocess,sys,time,pathlib; subprocess.Popen([sys.executable,'-u','-c',%r],"
+                  "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); "
+                  "\nwhile not pathlib.Path('brief-child-started').exists(): time.sleep(0.01)" % child)
+        self.assert_final(self.start(source), "completed", 0)
+
     def test_history_never_assumes_ownership_of_persisted_pid(self):
         job = self.start("import time; time.sleep(30)")
         self.until(lambda: job.poll()["status"] == "running")

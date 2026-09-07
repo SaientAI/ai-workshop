@@ -157,7 +157,7 @@
     },
     "project_jobs.py": {
       "source_sha256": null,
-      "bundled_sha256": "acc2e0ce44088a146ccf9a3d4390121cb31b00f876b736466148b8f1234a866d",
+      "bundled_sha256": "274b0a044b4ca77803259ca8166e1b12d1670059163de04f3dadda0669db1062",
       "source": "Saient Desktop durable command supervisor; not present in the captured upstream revision"
     },
     "project_store.py": {

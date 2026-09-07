@@ -155,4 +155,4 @@ Logs are not automatically deleted. `/project archive` backs up project state bu
 
 ## Verification boundary
 
-The development tests exercise deterministic proposals with real local files, SQLite and subprocesses, including persistence, permission failures, recovery and repeated calls. Model/binding fixtures do not demonstrate real-model task quality. Native Windows installation/runtime tests and an actual multi-day uninterrupted project run remain outstanding. The public 1.0.24 release remains separate from this development feature.
+The development tests exercise deterministic proposals with real local files, SQLite and subprocesses, including persistence, permission failures, recovery and repeated calls. Model/binding fixtures do not demonstrate real-model task quality; consult the matching build's verification record for direct local-model and native Windows CI results. CI checks are not installed Windows GUI/model validation, and short smoke tests are not an actual multi-day uninterrupted run. The public 1.0.24 release remains separate from this development feature.

@@ -469,6 +469,8 @@ class _OwnedJob:
                 with self._lock:
                     cancelled, last_output = self._cancel_requested, self._last_output
                 rc = self._process.poll()
+                if rc is not None and ended_at is None:
+                    ended_at = now
                 if rc is not None and self._reader_done.is_set():
                     if os.name == "nt":
                         residual = _WINDOWS_JOB is not None and _WINDOWS_JOB.remaining_children()
@@ -479,14 +481,21 @@ class _OwnedJob:
                         except ProcessLookupError:
                             residual = False
                     if residual:
+                        # Windows may still be shutting down a console/helper
+                        # after the command handle signals. Observe actual job
+                        # liveness for a bounded grace period; do not declare
+                        # success while a descendant is still active.
+                        if (os.name == "nt" and now - ended_at < 1 and not cancelled
+                                and now - self._started < self._timeout):
+                            self._wake.wait(0.05)
+                            self._wake.clear()
+                            continue
                         self._error = "command exited while descendants were still running; owned tree terminated"
                         self._terminate_tree()
                         self._finish("failed")
                     else:
                         self._finish("completed" if rc == 0 else "failed")
                     return
-                if rc is not None and ended_at is None:
-                    ended_at = now
                 reason = None
                 if cancelled:
                     reason = "cancelled"
