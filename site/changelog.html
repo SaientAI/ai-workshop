@@ -65,6 +65,18 @@
   <p class="sub">What's new in each release of Saient.</p>
 
   <div class="rel">
+    <h2>1.0.24 <span class="date">7 September 2026</span></h2>
+    <ul>
+      <li><b>Evidence-based terminal reports:</b> file read-back, exact paths and the scope of checks are recorded separately from message delivery. Empty folders and unrelated successful commands no longer establish task completion.</li>
+      <li><b>Workspace and binding:</b> workspace input is committed only after the backend accepts it; stale folder results are isolated. Rejected bindings require an explicit retry instead of hidden repeat profiling.</li>
+      <li><b>Cancellation:</b> interrupted work remains unverified and child-process cleanup is checked.</li>
+      <li><b>Windows portability:</b> native PowerShell execution, Python quoting and exit codes, UTF-8 file tools, redirected Desktop paths and cross-process file locking are covered by native Windows CI.</li>
+      <li><b>Release identity:</b> Linux and Windows builds use one application commit and a pinned engine commit. Final bundle hashes and all 48 runtime file hashes accompany the downloads.</li>
+      <li><b>Verification limits:</b> native Windows runtime, frontend and Rust tests pass; an installed Windows desktop/GPU session has not been verified for this release. Windows engines require Microsoft's Visual C++ v14 Redistributable (x64). Authenticode signing remains unavailable; updater signatures are separate.</li>
+    </ul>
+  </div>
+
+  <div class="rel">
     <h2>1.0.20 <span class="date">13 August 2026</span></h2>
     <ul>
       <li><b>Installed model selected automatically:</b> after downloading a suggested base model, Image Gen switches away from any stale checkpoint selection and selects the complete Diffusers folder</li>

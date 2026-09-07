@@ -1,11 +1,11 @@
 {
-  "version": "1.0.23",
-  "notes": "Removes explicit anatomy wording that had been left in the shipped default prompts from video testing. Also carries the saient:// deep link and, on Windows, the CUDA inference engine.",
-  "pub_date": "2026-08-28T15:31:45Z",
+  "version": "1.0.24",
+  "notes": "Repairs terminal evidence and cancellation, workspace updates, explicit binding retries, and Windows shell, paths, Unicode and file locking. Linux and Windows builds share pinned source revisions; see the release manifest for hashes and verification limits.",
+  "pub_date": "2026-09-07T12:37:51Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTcmZ5RU1kUFBPUHNlcEpOclEzc3dzbURxRlcyRVltbXV0RlY3am1GZW51NnRvQStGYnYvQXhzdC9jaEpzMitvOU40UkRPRFRMK2IzZ1Nia09wNXVXcE9SMTRKSEE2alFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3OTMwOTExCWZpbGU6U2FpZW50XzEuMC4yM194NjQtc2V0dXAuZXhlCnBudHFUVEpQQmFtQ0l1T2RYNFF6dit3bklGejNhQm5uSXdWOTc3RDZmMTdZak9TUko2bGNRNCtLTk12RUV5dzhSOXB2bitEQlYzUlN2OGkyMEZlV0RBPT0K",
-      "url": "https://saient.co.uk/downloads/Saient_1.0.23_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTcmZ5RU1kUFBPUHFBQnJHbHlGZmorT3NHSklCWHFMbUtTQ2VJUUJxQ2psZzUwem9RY29YcXpjY3ZZR2UvdGxPSUxBRzNSUGRQT1BxR1BTbTdDbFZmMXhiYXl2c2F2c2dNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4Nzg0MzI2CWZpbGU6U2FpZW50XzEuMC4yNF94NjQtc2V0dXAuZXhlCmJKVzIzV2kycXgxMURHZW4rSkIyWkJTcjAvNHBFOFlnTkJzRVhLWC80Q0JmdVZMdlJpQkJBQzNQT2VmN3hLWml1R2NmNkdGT3l4b252OERvdHp5b0NRPT0K",
+      "url": "https://saient.co.uk/downloads/Saient_1.0.24_x64-setup.exe"
     }
   }
 }

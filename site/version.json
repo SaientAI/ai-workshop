@@ -1,5 +1,5 @@
 {
-  "version": "1.0.23",
+  "version": "1.0.24",
   "url": "https://saient.co.uk/#download",
-  "notes": "Removes explicit anatomy wording that had been left in the shipped default prompts from video testing. Also carries the saient:// deep link and, on Windows, the CUDA inference engine."
+  "notes": "Repairs terminal evidence and cancellation, workspace updates, explicit binding retries, and Windows shell, paths, Unicode and file locking. Linux and Windows builds share pinned source revisions; see the release manifest for hashes and verification limits."
 }

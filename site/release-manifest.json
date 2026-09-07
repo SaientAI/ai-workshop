@@ -1,50 +1,66 @@
 {
-  "release": "1.0.23",
-  "published_at": "2026-08-28",
+  "release": "1.0.24",
+  "published_at": "2026-09-07",
   "artifact": {
     "platform": "Debian/Ubuntu amd64",
-    "url": "https://saient.co.uk/downloads/Saient_1.0.23_amd64.deb",
-    "bytes": 12869240,
-    "sha256": "f5f7de724e2ea1abaa6e76429a0dc88ae307287a3ea868e86063ce10ff1f1596",
-    "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTcmZ5RU1kUFBPUHZlYUFkSWYxaWlOR3EyRWQyeE1IUVpXUzMzL1Q1STR0SVFIdTRaeWU3bzZFTGQxVmJmazF0ZldVZnZZSEFBczV5ekZBVmtsRVQreDRIQkZIakFyMEEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3OTMxMDY4CWZpbGU6U2FpZW50XzEuMC4yM19hbWQ2NC5kZWIKSjJVMm5FelRZWUtiaWZMVCtrN0l2dFRsNGlDbmlLOGdMT1NKdEtIN0Q3em5CNWNEOW40NmVyV1pSaFVIYmtkMjg1d3BoeEU2RjI0SmlENTlCZkpnREE9PQo="
+    "url": "https://saient.co.uk/downloads/Saient_1.0.24_amd64.deb",
+    "bytes": 12868374,
+    "sha256": "393f4576d468a0e1fbf8388fc8112ea9979530a460583fe69a1208bbe08862e0",
+    "signature": "o7HHu62blnrmNqEtscil+7tfDmArazQTSGfF6lzS/ttOXuQZ1jbx3JQgU6B10anveP0Qy8TKFiaVCoQ90GDBCw=="
   },
   "appimage_artifact": {
     "platform": "Linux x86_64 (AppImage)",
-    "url": "https://saient.co.uk/downloads/Saient_1.0.23_amd64.AppImage",
-    "bytes": 100076024,
-    "sha256": "2c800b9374a1c92c997194951e497b696281b31180ee22b993d1ae6fd5846f53"
+    "url": "https://saient.co.uk/downloads/Saient_1.0.24_amd64.AppImage",
+    "bytes": 100051448,
+    "sha256": "4fd30e91007e522a775f521d0ce5c3f462bd8b8c5d8b92b8bf5b2910c05f0f0b"
   },
   "windows_artifact": {
     "platform": "Windows x86_64",
-    "status": "built on Windows by CI; 1.0.22 was installed and confirmed running on Windows x64, 1.0.23 not yet",
-    "url": "https://saient.co.uk/downloads/Saient_1.0.23_x64-setup.exe",
-    "bytes": 7291766,
-    "sha256": "bf6d34b8176a3caafc5dcc2c50e6d6f662ab2a877c5a55ef6f93ec96744559b0",
-    "updater_signature_url": "https://saient.co.uk/downloads/Saient_1.0.23_x64-setup.exe.sig",
+    "url": "https://saient.co.uk/downloads/Saient_1.0.24_x64-setup.exe",
+    "bytes": 7297261,
+    "sha256": "dd1404a3e69c75039cb2db50e41146d5d82756706d288b322d91240752cc99d9",
+    "status": "built and tested on native Windows CI; installer contents and updater signature verified; installed GUI/GPU runtime not verified at 1.0.24",
+    "updater_signature_url": "https://saient.co.uk/downloads/Saient_1.0.24_x64-setup.exe.sig",
+    "updater_signature_sha256": "8c8613cade3d6909dbf3c9dfc75515800e39aee26a0a55a047c9759a6e76424d",
     "updater_signature_verified": true,
     "authenticode_signed": false,
     "bundled_gguf_engine": "CPU + CUDA (all-major)",
     "build_host": "Windows Server 2022 (GitHub Actions)",
-    "rust_target": "x86_64-pc-windows-msvc"
+    "rust_target": "x86_64-pc-windows-msvc",
+    "prerequisites": [
+      "Microsoft Visual C++ v14 Redistributable (x64)",
+      "Python 3.10+ for the terminal agent and Image/TTS/LoRA tools",
+      "Compatible NVIDIA driver for optional CUDA inference; CUDA runtime is bundled"
+    ]
   },
   "source": {
-    "base_commit": "5e41ae412498e0831223f0b065931410249a4bdb",
-    "state": "artifacts built by GitHub Actions from this commit; the updater signatures were produced locally with the configured key",
-    "package_lock_sha256": "d6e9932df28996a1aff3bced1d957ed009b49b74c161517a5b398f21080cc2cb",
-    "cargo_lock_sha256": "e4853771580f0ac198a2539581c7b95ca0ca5a4e6363194a74f8dddaa624f40a",
-    "tauri_config_sha256": "5b71c77dd72f40370a5d12a7119cf479cf453effa877bd9b74a72b764e898c9d",
+    "base_commit": "893a368beaeb7f824d0569042c5d7f3372a70ddf",
+    "engine_commit": "5a2a82387b9548c6c165eb50880a5f49c54ef1ff",
+    "state": "All three installers were built by the linked GitHub Actions run from base_commit. Later publication commits change only website/release metadata and documentation, not the built app. Windows updater signature is from the build; the Debian manifest is signed with the existing configured Linux updater key.",
+    "package_lock_sha256": "ea60ef5d10c217dc95699356d132b63d735baa3595c836d0f84c90bf51dc535a",
+    "cargo_lock_sha256": "a207554493f6f337fefbe32204486950e429e89506d0f094ceef550d1bfd65ed",
+    "tauri_config_sha256": "1c8d517c96c111be710e9fc407feb8bd43715167d3d4d99981c7ee97fccc87b3",
     "windows_config_sha256": "7492f1c2a1abdf2eb527ef66b195241e8f965850102827888ec09bcd80f8a189",
-    "linux_config_sha256": "07b37c6c2ec1ff83a8abf90059e0cb6efea6dc59f7d652c1d12a4d6664268216"
+    "linux_config_sha256": "07b37c6c2ec1ff83a8abf90059e0cb6efea6dc59f7d652c1d12a4d6664268216",
+    "runtime_manifest_sha256": "cc0dc178381b02d8199fba90d58041c0e9dcef13b019c0feaa4ce1552f5234e6",
+    "embedded_terminal_cli_sha256": "b25da2f7bc6ed09dbd89c3939574202146eca478b1a6bf896eb31f7b205b67af",
+    "linux_provenance_url": "https://saient.co.uk/downloads/release-provenance-linux-1.0.24.json",
+    "windows_provenance_url": "https://saient.co.uk/downloads/release-provenance-windows-1.0.24.json",
+    "checksums_url": "https://saient.co.uk/downloads/SHA256SUMS-1.0.24.txt"
   },
   "verification": {
-    "workflow_run": "https://github.com/SaientAI/ai-workshop/actions/runs/33182952906",
+    "workflow_run": "https://github.com/SaientAI/ai-workshop/actions/runs/34120892156",
+    "ci_workflow_run": "https://github.com/SaientAI/ai-workshop/actions/runs/34120830389",
     "linux_bundle": "success",
     "windows_bundle": "success",
-    "updater_signature_key_id": "matches the public key configured in tauri.windows.conf.json",
-    "deb_scheme_handler": "Exec=llm-inference %u with MimeType=x-scheme-handler/saient present in the packaged desktop entry",
+    "native_windows_tests": "Python: 114 passed, 1 POSIX-only skip. Rust: 131 passed, 6 existing ignored. Frontend checks, tests and build passed.",
+    "updater_signature_key_id": "Windows minisign verification matches the public key configured in tauri.windows.conf.json",
+    "linux_updater_signature": "Raw Ed25519 signature over canonical saient-update-v1 metadata, using the existing public key configured in update.rs",
+    "packaged_runtime": "All 48 Python runtime files, runtime manifest and embedded terminal CLI match source/provenance in Debian, AppImage and Windows NSIS packages",
     "windows_bundled_engines": "tinyq4-cpu.exe, tinyq4-cuda.exe and cudart64_12.dll confirmed present inside the installer",
-    "deep_link": "saient:// verified end to end on Linux (deb) and on Windows x64 using the 1.0.20 installer",
-    "windows_install_and_runtime": "not verified at 1.0.23; verified at 1.0.22 on Windows x64",
-    "authenticode": "not signed; SignPath project approval outstanding"
+    "windows_install_and_runtime": "Installed GUI and GPU inference not verified at 1.0.24",
+    "linux_install_and_runtime": "Final 1.0.24 packages inspected; earlier local repair build exercised on Linux. Final CI packages not installed during publication.",
+    "authenticode": "Not signed; Windows SmartScreen warnings remain possible",
+    "dependency_audit": "6 existing findings (3 moderate, 3 high) remain; no dependency upgrade included in this release"
   }
 }

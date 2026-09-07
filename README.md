@@ -23,7 +23,7 @@ Everything is GPU-accelerated and fully offline.
 ## Quick start
 
 ### 1. Install
-Grab the latest release (`.deb` / `.rpm` / `.AppImage`) from the [Releases](../../releases) page, or [build from source](#build-from-source).
+Grab the published Linux (`.deb` / `.AppImage`) or Windows installer from [saient.co.uk](https://saient.co.uk/#download), with exact source revisions and checksums in its [release manifest](https://saient.co.uk/release-manifest.json), or [build from source](#build-from-source).
 
 ### 2. First-run setup wizard
 On first launch a wizard detects your system and sets everything up for you — **no dependency wrangling**:
@@ -48,9 +48,10 @@ Pick a model in the sidebar → **Start server** → type. That's it.
 
 - **GPU:** NVIDIA recommended (CUDA). The app detects your CUDA version and installs a matched PyTorch — including **cu126/cu128 for RTX 50-series (Blackwell)**. No GPU works too (CPU fallback, slower).
 - **OS:** Linux or Windows.
-- **Python:** 3.10+ (only needed for Image/TTS/LoRA; the wizard builds its own venv).
+- **Windows engine runtime:** [Microsoft Visual C++ v14 Redistributable (x64)](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist) must be installed; it is not bundled in the installer.
+- **Python:** 3.10+ is required for the Saient terminal and Image/TTS/LoRA. The wizard creates a managed venv from an available Python installation.
 
-The NVIDIA *driver* must already be installed (it's a kernel module) — the wizard checks for it and tells you if it's missing. Everything else it handles.
+The NVIDIA *driver* must already be installed (it's a kernel module) — the wizard checks for it and tells you if it's missing. The wizard manages the Python venv and optional ML dependencies; the base Python and Windows Visual C++ runtime are prerequisites.
 
 ---
 

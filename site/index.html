@@ -29,6 +29,7 @@
       "email": "chrishall@staticplay.co.uk",
       "sameAs": [
         "https://github.com/SaientAI",
+        "https://github.com/SaientAI/ai-agent-persistence",
         "https://github.com/SaientAI/saient-quartz",
         "https://github.com/SaientAI/saient",
         "https://github.com/SaientAI/saient-releases",
@@ -40,7 +41,10 @@
         "Wan2.1",
         "GGUF quantization",
         "Vulkan compute",
-        "Rust inference engines"
+        "Rust inference engines",
+        "AI agent persistence",
+        "long-term AI memory",
+        "goal persistence"
       ]
     },
     {
@@ -482,6 +486,7 @@
       <a class="card reveal" href="/run-wan-locally"><div class="ic">Wn</div><h3>Run Wan locally</h3><p>Text-to-video, image-to-video, actual model routes, memory boundaries and MP4 proof.</p><div class="tags"><span class="tag">Wan2.1</span><span class="tag">Wan2.2</span></div></a>
       <a class="card reveal" href="/run-llm-locally"><div class="ic">LLM</div><h3>Run an LLM locally</h3><p>GGUF setup, architecture support, RAM/VRAM sizing and a live local response check.</p><div class="tags"><span class="tag">GGUF</span><span class="tag">tinyq4</span></div></a>
       <a class="card reveal" href="/local-ai-agent"><div class="ic">⌘</div><h3>Saient agent</h3><p>The direct boundary between host-model proposals and Saient's tools, state, memory and control loop.</p><div class="tags"><span class="tag">terminal</span><span class="tag">memory</span></div></a>
+      <a class="card reveal" href="/agent-persistence"><div class="ic">P6</div><h3>AI agent persistence</h3><p>A full evidence-first paper on durable memory, checkpoints, goal continuity, long-horizon agency and the failures behind the claims.</p><div class="tags"><span class="tag">research</span><span class="tag">open evidence</span></div></a>
       <a class="card reveal" href="/train-lora-locally"><div class="ic">Lo</div><h3>Train an SDXL LoRA</h3><p>Dataset preparation, exact trainer scope, hardware unknowns and the current proof boundary.</p><div class="tags"><span class="tag">SDXL</span><span class="tag">training</span></div></a>
       <a class="card reveal" href="/merge-ai-models"><div class="ic">Σ</div><h3>Merge AI models</h3><p>Weighted and add-difference checkpoint merges, memory behavior and the confirmed v1.0.10 picker defect.</p><div class="tags"><span class="tag">honest status</span><span class="tag">safetensors</span></div></a>
       <a class="card reveal" href="/local-text-to-speech"><div class="ic">♪</div><h3>Local text-to-speech</h3><p>Kokoro voices, CPU execution, WAV output and current evidence status.</p><div class="tags"><span class="tag">Kokoro</span><span class="tag">WAV</span></div></a>
@@ -550,17 +555,19 @@
     <h2 class="reveal">Saient is ready.</h2>
     <p class="reveal">Download the free desktop app, add the models you choose, and run supported AI workflows on your own hardware.</p>
     <div class="hero-cta reveal">
-      <a class="btn btn-primary" href="/downloads/Saient_1.0.23_amd64.deb" download>↓ Debian / Ubuntu · amd64</a>
-      <a class="btn btn-primary" href="/downloads/Saient_1.0.23_amd64.AppImage" download>↓ Linux · AppImage</a>
-      <a class="btn btn-primary" href="/downloads/Saient_1.0.23_x64-setup.exe" download>↓ Windows · x64</a>
+      <a class="btn btn-primary" href="/downloads/Saient_1.0.24_amd64.deb" download>↓ Debian / Ubuntu · amd64</a>
+      <a class="btn btn-primary" href="/downloads/Saient_1.0.24_amd64.AppImage" download>↓ Linux · AppImage</a>
+      <a class="btn btn-primary" href="/downloads/Saient_1.0.24_x64-setup.exe" download>↓ Windows · x64</a>
       <a class="btn" href="/release-manifest.json">Release details + SHA-256</a>
     </div>
-    <div style="margin-top:14px;font-size:12.5px;color:var(--text3)">v1.0.23 · free and no-key · packages hosted directly on saient.co.uk · <a href="/changelog" style="color:var(--text2)">release notes</a> · <a href="https://github.com/SaientAI/ai-workshop/blob/master/CODE_SIGNING_POLICY.md" style="color:var(--text2)">Code signing policy</a></div>
+    <div style="margin-top:14px;font-size:12.5px;color:var(--text3)">v1.0.24 · free and no-key · packages hosted directly on saient.co.uk · <a href="/changelog" style="color:var(--text2)">release notes</a> · <a href="https://github.com/SaientAI/ai-workshop/blob/master/CODE_SIGNING_POLICY.md" style="color:var(--text2)">Code signing policy</a></div>
 
     <div class="dl-notes">
       <p><strong>On code signing — we’re on it.</strong> The Windows installer is not yet Authenticode-signed, so Windows will warn about an “Unknown publisher” and SmartScreen may ask you to confirm. That is a certificate we are actively working to put in place, not a corner we cut. The release pipeline is already wired to sign automatically the moment one is available, so this notice disappears on its own. Until then every download is listed with its SHA-256 in the <a href="/release-manifest.json">release manifest</a> so you can check what you got.</p>
 
-      <p><strong>Linux got the closer attention, and shipped first.</strong> It is what Saient is developed and tested on every day, and it is the build that has had the detail work. The Windows installer is newer ground: 1.0.22 is the first one built on Windows rather than cross-compiled from Linux, and the first to ship the GPU inference engine — earlier Windows packages ran on CPU only, which is why they felt slow. It has still had far less real-world running than the Linux packages, so expect rougher edges there. We would rather say that plainly than let you find out after installing.</p>
+      <p><strong>Platform verification.</strong> Both packages contain the same terminal and runtime repairs. Version 1.0.24 passes native Windows runtime, frontend and Rust CI checks; an installed Windows desktop/GPU session has not been verified for this version. Linux desktop testing remains the more extensive of the two. Exact source revisions, checksums and verification limits are recorded in the release manifest.</p>
+
+      <p><strong>Windows prerequisites.</strong> The bundled inference engines require the <a href="https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist">Microsoft Visual C++ v14 Redistributable (x64)</a>. Install it from Microsoft if it is missing. Python 3.10+ is also required for the Saient terminal. NVIDIA GPU acceleration requires a compatible NVIDIA driver. The CUDA runtime library is bundled; the CUDA toolkit is not required.</p>
 
       <p><strong>Thank you.</strong> To everyone who has downloaded Saient, reported something broken, or just followed along — genuinely, it helps, and it is the reason the rough edges get found at all.</p>
     </div>
@@ -578,6 +585,7 @@
       <a href="/run-wan2-1-locally-on-android">Wan2.1 on Android</a>
       <a href="/how-wan-2-1-runs-on-a-phone">How Wan2.1 works</a>
       <a href="/local-ai-agent">Agent</a>
+      <a href="/agent-persistence">Agent persistence</a>
       <a href="/quartz-engine">Quartz</a>
       <a href="/comfyui-alternative">Compare</a>
       <a href="/help">Help</a>
