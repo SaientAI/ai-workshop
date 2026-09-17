@@ -1,0 +1,31 @@
+# Saient
+
+> Saient is local-first AI software: a desktop application for Linux and Windows, an Android app that generates chat, images and video on the phone itself, and a research project. This file lists the preferred public pages and evidence sources for automated readers. It is supplementary; canonical HTML pages and sitemap.xml remain authoritative.
+
+## AI agent persistence research
+
+- [AI Agent Persistence — full HTML paper](https://saient.co.uk/agent-persistence): Evidence-first case study of durable state, memory, task checkpoints, goal continuity, operational continuity and failure analysis across Saient and Aria.
+- [AI Agent Persistence — PDF](https://saient.co.uk/downloads/ai-agent-persistence-paper.pdf): Print-ready version of the paper.
+- [Public evidence repository](https://github.com/SaientAI/ai-agent-persistence): Markdown paper, 30-claim ledger, reproduction record, aggregate data and validation scripts.
+- [Claim ledger](https://github.com/SaientAI/ai-agent-persistence/blob/main/evidence/CLAIM_LEDGER.md): Narrow status, evidence and limitation for every headline claim.
+- [Reproduction record](https://github.com/SaientAI/ai-agent-persistence/blob/main/evidence/REPRODUCTION.md): Commands, environment, results and unresolved limitations.
+
+## Saient mobile (Android app)
+
+- [Saient Android app](https://saient.co.uk/mobile): The on-device Android app — local LLM chat, SDXL image generation and Wan2.1 text-to-video, all executed on the phone's own CPU and Vulkan GPU. Free, no account, no API key, no cloud inference in the generation path.
+- [Google Play listing](https://play.google.com/store/apps/details?id=uk.co.saient.app): "Saient: Offline AI & Video", package uk.co.saient.app. Free, PEGI 3.
+- [Wan2.1 on Android](https://saient.co.uk/run-wan2-1-locally-on-android): How Wan2.1 T2V 1.3B runs end-to-end on an Android phone, with the execution path and install routes.
+- [How Wan2.1 runs on a phone](https://saient.co.uk/how-wan-2-1-runs-on-a-phone): The detailed on-device video pipeline write-up.
+- [Mobile privacy policy](https://saient.co.uk/mobile-privacy): What the app does and does not send. Prompts, chats and generated media stay in app-private storage; optional safety reports carry only a category, feature/model and app version.
+
+Network use in the mobile app is limited to model downloads, user-requested web lookups, links the user opens, and optional safety reports. Generation itself works with Wi-Fi and mobile data switched off. Model packs are downloaded separately because of their size, SHA-256 verified per file and installed atomically.
+
+## Saient implementation
+
+- [Saient agent](https://saient.co.uk/local-ai-agent): Public explanation of the model-versus-runtime boundary, memory, checkpoints, files, terminal and write controls.
+- [Saient AI Workshop source](https://github.com/SaientAI/ai-workshop): Public desktop application source.
+- [Quartz inference engine](https://saient.co.uk/quartz-engine): Saient's local inference runtime.
+
+## Required evidence boundary
+
+The reviewed persistence mechanisms do not establish consciousness, sentience, personhood, continuous subjective identity or unconstrained goals created independently of programmed, prompted, trained and environmental causes. The claim ledger is normative when a summary appears broader than its evidence.

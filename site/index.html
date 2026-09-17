@@ -71,6 +71,25 @@
       }
     },
     {
+      "@type": "MobileApplication",
+      "@id": "https://saient.co.uk/mobile#app",
+      "name": "Saient: Offline AI & Video",
+      "applicationCategory": "MultimediaApplication",
+      "operatingSystem": "Android",
+      "url": "https://saient.co.uk/mobile",
+      "installUrl": "https://play.google.com/store/apps/details?id=uk.co.saient.app",
+      "downloadUrl": "https://play.google.com/store/apps/details?id=uk.co.saient.app",
+      "sameAs": "https://play.google.com/store/apps/details?id=uk.co.saient.app",
+      "description": "The Saient Android app: local AI chat, SDXL image generation and Wan2.1 text-to-video, all running on the phone's own GPU with no cloud inference.",
+      "publisher": {"@id": "https://saient.co.uk/#organization"},
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "GBP",
+        "availability": "https://schema.org/InStock"
+      }
+    },
+    {
       "@type": "SoftwareSourceCode",
       "name": "Quartz",
       "alternateName": "saient-quartz",
@@ -355,6 +374,7 @@
       <a class="link" href="#features">Features</a>
       <a class="link" href="#guides">Guides</a>
       <a class="link" href="#agent">Agent</a>
+      <a class="link" href="/mobile">Android app</a>
       <a class="link" href="/comfyui-alternative">Compare</a>
       <a class="link" href="/help">Help</a>
       <a class="btn btn-primary" href="#download">Free download</a>
@@ -482,6 +502,7 @@
     <p class="sec-lede">Step-by-step pages with real screenshots, exact model boundaries, hardware notes, proof status, downloads and source links.</p>
 
     <div class="features">
+      <a class="card reveal" href="/mobile"><div class="ic">And</div><h3>Saient for Android</h3><p>The free phone app: AI chat, SDXL images and Wan2.1 text-to-video, all generated on the device itself. On Google Play.</p><div class="tags"><span class="tag">Android</span><span class="tag">offline</span></div></a>
       <a class="card reveal" href="/run-sdxl-locally"><div class="ic">SD</div><h3>Run SDXL locally</h3><p>Install, add a model, choose CUDA or CPU, tune settings and inspect a real image output.</p><div class="tags"><span class="tag">SDXL</span><span class="tag">how-to</span></div></a>
       <a class="card reveal" href="/run-wan-locally"><div class="ic">Wn</div><h3>Run Wan locally</h3><p>Text-to-video, image-to-video, actual model routes, memory boundaries and MP4 proof.</p><div class="tags"><span class="tag">Wan2.1</span><span class="tag">Wan2.2</span></div></a>
       <a class="card reveal" href="/run-llm-locally"><div class="ic">LLM</div><h3>Run an LLM locally</h3><p>GGUF setup, architecture support, RAM/VRAM sizing and a live local response check.</p><div class="tags"><span class="tag">GGUF</span><span class="tag">tinyq4</span></div></a>
@@ -560,6 +581,10 @@
       <a class="btn btn-primary" href="/downloads/Saient_1.0.24_x64-setup.exe" download>↓ Windows · x64</a>
       <a class="btn" href="/release-manifest.json">Release details + SHA-256</a>
     </div>
+    <div style="margin-top:20px;font-size:14px;color:var(--text2)">
+      <strong style="color:var(--text)">On a phone?</strong> <a href="/mobile" style="color:var(--accent)">Saient: Offline AI &amp; Video</a> is the free Android app — chat, images and text-to-video generated on the device, with no account and no cloud inference.
+      <a href="https://play.google.com/store/apps/details?id=uk.co.saient.app" target="_blank" rel="noopener" style="color:var(--accent)">Get it on Google Play</a>.
+    </div>
     <div style="margin-top:14px;font-size:12.5px;color:var(--text3)">v1.0.24 · free and no-key · packages hosted directly on saient.co.uk · <a href="/changelog" style="color:var(--text2)">release notes</a> · <a href="https://github.com/SaientAI/ai-workshop/blob/master/CODE_SIGNING_POLICY.md" style="color:var(--text2)">Code signing policy</a></div>
 
     <div class="dl-notes">
@@ -582,6 +607,7 @@
       <a href="/run-sdxl-locally">Run SDXL</a>
       <a href="/run-wan-locally">Run Wan</a>
       <a href="/run-llm-locally">Run LLMs</a>
+      <a href="/mobile">Android app</a>
       <a href="/run-wan2-1-locally-on-android">Wan2.1 on Android</a>
       <a href="/how-wan-2-1-runs-on-a-phone">How Wan2.1 works</a>
       <a href="/local-ai-agent">Agent</a>
